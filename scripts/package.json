@@ -1,0 +1,15 @@
+{
+  "name": "agent-skills-scripts",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Build scripts for the agent-skills repo",
+  "scripts": {
+    "build": "tsx build-agents.ts",
+    "build:watch": "tsx watch build-agents.ts",
+    "test": "node --import tsx --test scripts/test/*.test.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}
