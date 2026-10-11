@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsx build-agents.ts",
     "build:watch": "tsx watch build-agents.ts",
-    "test": "node --import tsx --test scripts/test/*.test.ts"
+    "test": "node --import tsx --test \"test/*.test.ts\""
   },
   "devDependencies": {
     "tsx": "^4.0.0",
