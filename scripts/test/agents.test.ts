@@ -68,6 +68,19 @@ test('generateAgentsMd numbers rules and strips body heading + impact line', () 
   assert.ok(!out.includes('## Rule One'));
 });
 
+test('generateAgentsMd strips body heading on CRLF rule content and normalizes to LF', () => {
+  const crlfRule: Rule = {
+    filename: 'arch-crlf.md',
+    frontmatter: { title: 'Crlf Rule', impact: 'HIGH' },
+    content: '## Crlf Rule\r\n\r\n**Impact: HIGH**\r\n\r\ncrlf body\r\n',
+    section: sections[0],
+    ruleNumber: '',
+  };
+  const out = generateAgentsMd([crlfRule], metadata, sections);
+  assert.ok(out.includes('### 1.1 Crlf Rule\n\n**Impact: HIGH**\n\ncrlf body\n'));
+  assert.ok(!out.includes('\r'), 'output should contain no carriage returns');
+});
+
 test('generateAgentsMd omits empty sections', () => {
   const out = generateAgentsMd(rules, metadata, sections);
   assert.ok(!out.includes('## 3. Empty Section'));

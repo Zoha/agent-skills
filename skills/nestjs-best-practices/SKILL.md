@@ -44,73 +44,73 @@ Reference these guidelines when:
 <!-- GENERATED:START:rules -->
 ### 1. Architecture (CRITICAL)
 
-- `arch-avoid-circular-deps` - Avoid circular module dependencies
-- `arch-feature-modules` - Organize by feature, not technical layer
-- `arch-module-sharing` - Proper module exports/imports, avoid duplicate providers
-- `arch-schema-evolution` - Schema evolution and deprecation strategies
-- `arch-single-responsibility` - Focused services over "god services"
-- `arch-use-repository-pattern` - Abstract database logic for testability
-- `arch-use-events` - Event-driven architecture for decoupling
+- `arch-avoid-circular-deps` - Avoid Circular Dependencies
+- `arch-feature-modules` - Organize by Feature Modules
+- `arch-module-sharing` - Use Proper Module Sharing Patterns
+- `arch-schema-evolution` - Use Schema Evolution for Breaking Changes
+- `arch-single-responsibility` - Single Responsibility for Services
+- `arch-use-events` - Use Event-Driven Architecture for Decoupling
+- `arch-use-repository-pattern` - Use Repository Pattern for Data Access
 
 ### 2. Dependency Injection (CRITICAL)
 
-- `di-avoid-service-locator` - Avoid service locator anti-pattern
-- `di-interface-segregation` - Interface Segregation Principle (ISP)
-- `di-liskov-substitution` - Liskov Substitution Principle (LSP)
-- `di-prefer-constructor-injection` - Constructor over property injection
-- `di-scope-awareness` - Understand singleton/request/transient scopes
-- `di-use-interfaces-tokens` - Use injection tokens for interfaces
+- `di-avoid-service-locator` - Avoid Service Locator Anti-Pattern
+- `di-interface-segregation` - Apply Interface Segregation Principle
+- `di-liskov-substitution` - Honor Liskov Substitution Principle
+- `di-prefer-constructor-injection` - Prefer Constructor Injection
+- `di-scope-awareness` - Understand Provider Scopes
+- `di-use-interfaces-tokens` - Use Injection Tokens for Interfaces
 
 ### 3. Error Handling (HIGH)
 
-- `error-use-exception-filters` - Centralized exception handling
-- `error-throw-graphql-errors` - Throw GraphQL errors properly
-- `error-handle-async-errors` - Handle async errors properly
+- `error-handle-async-errors` - Handle Async Errors Properly
+- `error-throw-graphql-errors` - Throw GraphQL Errors from Services
+- `error-use-exception-filters` - Use Exception Filters for Error Handling
 
 ### 4. Security (HIGH)
 
-- `security-auth-jwt` - Secure JWT authentication
-- `security-validate-all-input` - Validate with class-validator
-- `security-use-guards` - Authentication and authorization guards
-- `security-sanitize-output` - Prevent XSS attacks
-- `security-rate-limiting` - Implement rate limiting
+- `security-auth-jwt` - Implement Secure JWT Authentication
+- `security-rate-limiting` - Implement Rate Limiting
+- `security-sanitize-output` - Sanitize Output to Prevent XSS
+- `security-use-guards` - Use Guards for Authentication and Authorization
+- `security-validate-all-input` - Validate All Input with Input Types and Pipes
 
 ### 5. Performance (HIGH)
 
-- `perf-async-hooks` - Proper async lifecycle hooks
-- `perf-use-caching` - Implement caching strategies
-- `perf-optimize-database` - Optimize database queries
-- `perf-lazy-loading` - Lazy load modules for faster startup
+- `perf-async-hooks` - Use Async Lifecycle Hooks Correctly
+- `perf-lazy-loading` - Use Lazy Loading for Large Modules
+- `perf-optimize-database` - Optimize Database Queries
+- `perf-use-caching` - Use Caching Strategically
 
 ### 6. Testing (MEDIUM-HIGH)
 
-- `test-use-testing-module` - Use NestJS testing utilities
-- `test-e2e-supertest` - E2E testing with Supertest
-- `test-mock-external-services` - Mock external dependencies
+- `test-e2e-supertest` - Use Supertest for E2E Testing
+- `test-mock-external-services` - Mock External Services in Tests
+- `test-use-testing-module` - Use Testing Module for Unit Tests
 
 ### 7. Database & ORM (MEDIUM-HIGH)
 
-- `db-use-transactions` - Transaction management
-- `db-avoid-n-plus-one` - Avoid N+1 query problems
-- `db-use-migrations` - Use migrations for schema changes
+- `db-avoid-n-plus-one` - Avoid N+1 Query Problems
+- `db-use-migrations` - Use Database Migrations
+- `db-use-transactions` - Use Transactions for Multi-Step Operations
 
 ### 8. Cross-Cutting Concerns (MEDIUM)
 
-- `use-pipes` - Input transformation with pipes
-- `use-interceptors` - Cross-cutting concerns
-- `use-types-serialization` - Type design and serialization
+- `use-interceptors` - Use Interceptors for Cross-Cutting Concerns
+- `use-pipes` - Use Pipes for Input Transformation
+- `use-types-serialization` - Use Types and Serialization for GraphQL Responses
 
 ### 9. Microservices (MEDIUM)
 
-- `micro-use-patterns` - Message and event patterns
-- `micro-use-health-checks` - Health checks for orchestration
-- `micro-use-queues` - Background job processing
+- `micro-use-health-checks` - Implement Health Checks for Microservices
+- `micro-use-patterns` - Use Message and Event Patterns Correctly
+- `micro-use-queues` - Use Message Queues for Background Jobs
 
 ### 10. DevOps & Deployment (LOW-MEDIUM)
 
-- `devops-use-config-module` - Environment configuration
-- `devops-use-logging` - Structured logging
-- `devops-graceful-shutdown` - Zero-downtime deployments
+- `devops-graceful-shutdown` - Implement Graceful Shutdown
+- `devops-use-config-module` - Use ConfigModule for Environment Configuration
+- `devops-use-logging` - Use Structured Logging
 <!-- GENERATED:END:rules -->
 
 ## How to Use

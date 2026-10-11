@@ -106,6 +106,15 @@ test('regenerateSkillMd preserves hand-written prose outside markers', () => {
   assert.ok(out.includes('Hand-written usage prose that must survive.'));
 });
 
+test('regenerateSkillMd handles CRLF line endings', () => {
+  const crlf = skillMd.replace(/\n/g, '\r\n');
+  const out = regenerateSkillMd(crlf, metadata, rules, sections);
+  assert.ok(out.includes('  version: "9.9.9"\r\n'));
+  assert.ok(out.includes('| 1 | Architecture | CRITICAL | `arch-` |'));
+  assert.ok(out.includes('- `arch-alpha` - Alpha Rule'));
+  assert.ok(out.includes('<!-- GENERATED:START:sections -->\r\n'));
+});
+
 test('regenerateSkillMd throws when a marker pair is missing', () => {
   const noMarkers = skillMd
     .replace('<!-- GENERATED:START:sections -->', '')

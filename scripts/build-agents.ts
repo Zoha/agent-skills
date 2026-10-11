@@ -147,6 +147,7 @@ function slug(value: string): string {
 
 function stripRuleBody(content: string): string {
   return content
+    .replace(/\r\n/g, '\n')
     .replace(/^#{1,2}\s+.*\n+/, '')
     .replace(/^\*\*Impact:.*\*\*.*\n+/, '')
     .trim();
@@ -260,16 +261,18 @@ function buildQuickReference(rules: Rule[], sections: Section[]): string {
   return blocks.join('\n\n');
 }
 
-function replaceMarkers(doc: string, name: string, content: string): string {
+function replaceMarkers(doc: string, name: string, content: string, eol: string): string {
   const re = new RegExp(
-    `<!-- GENERATED:START:${name} -->\\n[\\s\\S]*?\\n<!-- GENERATED:END:${name} -->`,
+    `<!-- GENERATED:START:${name} -->\\r?\\n[\\s\\S]*?\\r?\\n<!-- GENERATED:END:${name} -->`,
   );
   if (!re.test(doc)) {
     throw new Error(`SKILL.md is missing the GENERATED:${name} marker pair`);
   }
+  const normalized = content.split('\n').join(eol);
   return doc.replace(
     re,
-    () => `<!-- GENERATED:START:${name} -->\n${content}\n<!-- GENERATED:END:${name} -->`,
+    () =>
+      `<!-- GENERATED:START:${name} -->${eol}${normalized}${eol}<!-- GENERATED:END:${name} -->`,
   );
 }
 
@@ -279,16 +282,132 @@ export function regenerateSkillMd(
   rules: Rule[],
   sections: Section[],
 ): string {
+  const eol = skillMd.includes('\r\n') ? '\r\n' : '\n';
+
   // Sync the frontmatter version (only within the leading --- block).
   let out = skillMd;
   const fmMatch = skillMd.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (fmMatch) {
-    const newFm = fmMatch[1].replace(/^([ \t]*version:[ \t]*).*$/m, `$1"${metadata.version}"`);
-    out = `---\n${newFm}\n---` + skillMd.slice(fmMatch[0].length);
+    const newFm = fmMatch[1].replace(/^([ \t]*version:[ \t]*).*/m, `$1"${metadata.version}"`);
+    out = `---${eol}${newFm}${eol}---` + skillMd.slice(fmMatch[0].length);
   }
 
-  out = replaceMarkers(out, 'sections', buildSectionsTable(sections));
-  out = replaceMarkers(out, 'rules', buildQuickReference(rules, sections));
+  out = replaceMarkers(out, 'sections', buildSectionsTable(sections), eol);
+  out = replaceMarkers(out, 'rules', buildQuickReference(rules, sections), eol);
 
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Skill discovery & loading
+// ---------------------------------------------------------------------------
+
+export function discoverSkills(skillsRoot: string): string[] {
+  if (!fs.existsSync(skillsRoot)) return [];
+  return fs
+    .readdirSync(skillsRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => path.join(skillsRoot, entry.name))
+    .filter(
+      (dir) =>
+        fs.existsSync(path.join(dir, 'rules')) && fs.existsSync(path.join(dir, 'SKILL.md')),
+    )
+    .sort();
+}
+
+export function readMetadata(skillDir: string): SkillMetadata {
+  return JSON.parse(
+    fs.readFileSync(path.join(skillDir, 'metadata.json'), 'utf-8'),
+  ) as SkillMetadata;
+}
+
+export function readRules(
+  skillDir: string,
+  sections: Section[],
+): { rules: Rule[]; skipped: string[] } {
+  const rulesDir = path.join(skillDir, 'rules');
+  const files = fs
+    .readdirSync(rulesDir)
+    .filter((file) => file.endsWith('.md') && !file.startsWith('_'));
+
+  const rules: Rule[] = [];
+  const skipped: string[] = [];
+
+  for (const file of files) {
+    const { frontmatter, body } = parseFrontmatter(
+      fs.readFileSync(path.join(rulesDir, file), 'utf-8'),
+    );
+    if (!frontmatter || !frontmatter.title) {
+      skipped.push(file);
+      continue;
+    }
+    const section = sections.find((s) => file.startsWith(s.prefix));
+    if (!section) {
+      skipped.push(file);
+      continue;
+    }
+    rules.push({ filename: file, frontmatter, content: body, section, ruleNumber: '' });
+  }
+
+  return { rules, skipped };
+}
+
+export function buildSkill(skillDir: string): { ruleCount: number; skipped: string[] } {
+  const metadata = readMetadata(skillDir);
+  const sections = parseSections(
+    fs.readFileSync(path.join(skillDir, 'rules', '_sections.md'), 'utf-8'),
+  );
+  const { rules, skipped } = readRules(skillDir, sections);
+
+  // Compute both outputs before writing so a failure leaves no partial output.
+  const agentsMd = generateAgentsMd(rules, metadata, sections);
+  const skillMdPath = path.join(skillDir, 'SKILL.md');
+  const newSkillMd = regenerateSkillMd(
+    fs.readFileSync(skillMdPath, 'utf-8'),
+    metadata,
+    rules,
+    sections,
+  );
+
+  fs.writeFileSync(path.join(skillDir, 'AGENTS.md'), agentsMd);
+  fs.writeFileSync(skillMdPath, newSkillMd);
+
+  return { ruleCount: rules.length, skipped };
+}
+
+export function buildAll(skillsRoot: string): { built: string[]; failed: string[] } {
+  const built: string[] = [];
+  const failed: string[] = [];
+
+  for (const skillDir of discoverSkills(skillsRoot)) {
+    try {
+      const { ruleCount, skipped } = buildSkill(skillDir);
+      built.push(skillDir);
+      console.log(`  ${path.basename(skillDir)}: ${ruleCount} rules`);
+      for (const file of skipped) {
+        console.warn(`    warning: skipped ${file} (no frontmatter or unknown prefix)`);
+      }
+    } catch (err) {
+      failed.push(skillDir);
+      console.error(`  ${path.basename(skillDir)}: FAILED — ${(err as Error).message}`);
+    }
+  }
+
+  return { built, failed };
+}
+
+function main(): void {
+  const skillsRoot = path.join(__dirname, '..', 'skills');
+  console.log('Building agent skills...\n');
+
+  const { built, failed } = buildAll(skillsRoot);
+
+  console.log(`\nBuilt ${built.length} skill(s), ${failed.length} failed.`);
+  if (failed.length > 0) {
+    process.exit(1);
+  }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  main();
 }
