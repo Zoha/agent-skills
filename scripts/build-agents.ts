@@ -235,3 +235,60 @@ ${metadata.abstract}
 
   return doc;
 }
+
+// ---------------------------------------------------------------------------
+// SKILL.md regeneration
+// ---------------------------------------------------------------------------
+
+function buildSectionsTable(sections: Section[]): string {
+  let table = '| Priority | Category | Impact | Prefix |\n';
+  table += '|----------|----------|--------|--------|\n';
+  for (const s of sections) {
+    table += `| ${s.number} | ${s.name} | ${s.impact} | \`${s.prefix}\` |\n`;
+  }
+  return table.trimEnd();
+}
+
+function buildQuickReference(rules: Rule[], sections: Section[]): string {
+  const groups = rulesBySection(rules, sections);
+  const blocks = groups.map(({ section, rules: sectionRules }) => {
+    const items = sectionRules
+      .map((r) => `- \`${r.filename.replace(/\.md$/, '')}\` - ${r.frontmatter.title}`)
+      .join('\n');
+    return `### ${section.number}. ${section.name} (${section.impact})\n\n${items}`;
+  });
+  return blocks.join('\n\n');
+}
+
+function replaceMarkers(doc: string, name: string, content: string): string {
+  const re = new RegExp(
+    `<!-- GENERATED:START:${name} -->\\n[\\s\\S]*?\\n<!-- GENERATED:END:${name} -->`,
+  );
+  if (!re.test(doc)) {
+    throw new Error(`SKILL.md is missing the GENERATED:${name} marker pair`);
+  }
+  return doc.replace(
+    re,
+    () => `<!-- GENERATED:START:${name} -->\n${content}\n<!-- GENERATED:END:${name} -->`,
+  );
+}
+
+export function regenerateSkillMd(
+  skillMd: string,
+  metadata: SkillMetadata,
+  rules: Rule[],
+  sections: Section[],
+): string {
+  // Sync the frontmatter version (only within the leading --- block).
+  let out = skillMd;
+  const fmMatch = skillMd.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (fmMatch) {
+    const newFm = fmMatch[1].replace(/^([ \t]*version:[ \t]*).*$/m, `$1"${metadata.version}"`);
+    out = `---\n${newFm}\n---` + skillMd.slice(fmMatch[0].length);
+  }
+
+  out = replaceMarkers(out, 'sections', buildSectionsTable(sections));
+  out = replaceMarkers(out, 'rules', buildQuickReference(rules, sections));
+
+  return out;
+}
