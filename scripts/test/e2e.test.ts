@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { buildAll, buildSkill } from '../build-agents.ts';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const scriptsDir = path.join(__dirname, '..');
 
 function writeFiles(root: string, files: Record<string, string>): void {
   for (const [rel, content] of Object.entries(files)) {
@@ -73,6 +78,7 @@ test('buildAll generates AGENTS.md + SKILL.md, skips bad rules, isolates failure
       'demo/rules/arch-alpha.md': rule('Alpha Rule', 'HIGH'),
       'demo/rules/arch-beta.md': rule('Beta Rule', 'LOW'),
       'demo/rules/xyz-unknown.md': rule('Unknown Rule', 'MEDIUM'),
+      'demo/rules/arch-no-impact.md': '---\ntitle: No Impact Rule\n---\n\n## No Impact Rule\n\nbody\n',
       'demo/rules/broken.md': 'no frontmatter here',
       'not-a-skill/README.md': 'not a skill',
       'broken-skill/SKILL.md': '# No markers here\n',
@@ -103,7 +109,53 @@ test('buildAll generates AGENTS.md + SKILL.md, skips bad rules, isolates failure
 
     const { ruleCount, skipped } = buildSkill(demoDir);
     assert.equal(ruleCount, 2);
-    assert.deepEqual(skipped.sort(), ['broken.md', 'xyz-unknown.md']);
+    assert.deepEqual(skipped.sort(), ['arch-no-impact.md', 'broken.md', 'xyz-unknown.md']);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('main exits 0 for a healthy tree and 1 for a broken tree', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-skills-main-'));
+  try {
+    writeFiles(root, {
+      'demo/SKILL.md': demoSKill,
+      'demo/metadata.json': demoMetadata,
+      'demo/rules/_sections.md': demoSections,
+      'demo/rules/arch-alpha.md': rule('Alpha Rule', 'HIGH'),
+    });
+    const run = () =>
+      spawnSync('node', ['--import', 'tsx', 'build-agents.ts'], {
+        cwd: scriptsDir,
+        env: { ...process.env, SKILLS_ROOT: root },
+        encoding: 'utf-8',
+      });
+
+    const ok = run();
+    assert.equal(ok.status, 0, ok.stderr);
+
+    fs.writeFileSync(path.join(root, 'demo', 'SKILL.md'), '# no markers\n');
+    const bad = run();
+    assert.equal(bad.status, 1, bad.stderr);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('buildAll fails a skill whose _sections.md parses to zero sections', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-skills-e2e-'));
+  try {
+    writeFiles(root, {
+      'no-sections/SKILL.md': demoSKill,
+      'no-sections/metadata.json': demoMetadata,
+      'no-sections/rules/_sections.md': '# Sections\n\nno valid headings here\n',
+      'no-sections/rules/arch-alpha.md': rule('Alpha Rule', 'HIGH'),
+    });
+
+    const result = buildAll(root);
+    assert.deepEqual(result.built, []);
+    assert.deepEqual(result.failed, [path.join(root, 'no-sections')]);
+    assert.ok(!fs.existsSync(path.join(root, 'no-sections', 'AGENTS.md')));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

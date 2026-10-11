@@ -337,7 +337,7 @@ export function readRules(
     const { frontmatter, body } = parseFrontmatter(
       fs.readFileSync(path.join(rulesDir, file), 'utf-8'),
     );
-    if (!frontmatter || !frontmatter.title) {
+    if (!frontmatter || !frontmatter.title || !frontmatter.impact) {
       skipped.push(file);
       continue;
     }
@@ -357,6 +357,9 @@ export function buildSkill(skillDir: string): { ruleCount: number; skipped: stri
   const sections = parseSections(
     fs.readFileSync(path.join(skillDir, 'rules', '_sections.md'), 'utf-8'),
   );
+  if (sections.length === 0) {
+    throw new Error('rules/_sections.md parsed to zero sections');
+  }
   const { rules, skipped } = readRules(skillDir, sections);
 
   // Compute both outputs before writing so a failure leaves no partial output.
@@ -396,16 +399,15 @@ export function buildAll(skillsRoot: string): { built: string[]; failed: string[
   return { built, failed };
 }
 
-function main(): void {
-  const skillsRoot = path.join(__dirname, '..', 'skills');
+export function main(
+  skillsRoot: string = process.env.SKILLS_ROOT ?? path.join(__dirname, '..', 'skills'),
+): void {
   console.log('Building agent skills...\n');
 
   const { built, failed } = buildAll(skillsRoot);
 
   console.log(`\nBuilt ${built.length} skill(s), ${failed.length} failed.`);
-  if (failed.length > 0) {
-    process.exit(1);
-  }
+  process.exitCode = failed.length > 0 ? 1 : 0;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
