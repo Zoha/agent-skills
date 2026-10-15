@@ -14,8 +14,8 @@ per parent — the N+1 problem. A `DataLoader` batches those per-parent loads wi
 tick into one query and memoizes them for the request. Loaders live in the feature's `loaders/`
 folder, are created per request, and are exposed through the GraphQL context.
 
-**Placement.** `modules/<feature>/loaders/<feature>.loader.ts`; wired in
-`infra/graphql/graphql.context.ts`.
+**Placement.** `modules/<feature>/loaders/<feature>.loader.ts`, provided request-scoped in the
+owning feature module and injected into the field resolvers that use it.
 
 **Responsibilities.**
 
@@ -44,24 +44,19 @@ export class OrdersLoader {
 Why it is wrong: as a singleton, one request's cached data can be served to another, and the
 batch function still issues one query per key, so N+1 is not solved.
 
-**Correct (request-scoped loader that batches into one query):**
+**Correct (request-scoped loader provider, injected where used):**
 
 ```typescript
-// loaders/orders.loader.ts
+// loaders/orders.loader.ts — one instance per request
 @Injectable({ scope: Scope.REQUEST })
 export class OrdersLoader {
   constructor(private readonly ordersService: OrdersService) {}
 
-  private readonly byUser = new DataLoader<string, Order[]>(async (userIds) => {
-    const orders = await this.ordersService.findByUserIds([...userIds]); // ONE query
-    const grouped = new Map<string, Order[]>();
-    for (const order of orders) {
-      const list = grouped.get(order.userId) ?? [];
-      list.push(order);
-      grouped.set(order.userId, list);
-    }
-    return userIds.map((id) => grouped.get(id) ?? []);
-  });
+  // The batch function itself — group keys, return results in input-key order —
+  // is a performance concern covered by nestjs-best-practices -> db-avoid-n-plus-one.
+  private readonly byUser = new DataLoader<string, Order[]>((userIds) =>
+    this.ordersService.findByUserIds([...userIds]),
+  );
 
   loadByUserId(id: string): Promise<Order[]> {
     return this.byUser.load(id);
@@ -69,7 +64,10 @@ export class OrdersLoader {
 }
 ```
 
-Why it is right: all per-parent loads in one tick collapse into a single query, results come
-back in input-key order, and request scope confines the cache to one request.
+Why it is right: the loader lives in `loaders/`, is request-scoped so its cache never crosses
+requests, and is injected into the field resolver that needs it. The batching/grouping
+implementation itself is owned by `db-avoid-n-plus-one`.
 
 Reference: [graphql/dataloader](https://github.com/graphql/dataloader)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `db-avoid-n-plus-one` for the batch function itself.

@@ -96,7 +96,7 @@ src/
 │   │   └── migrations/            # DB migrations
 │   ├── graphql/
 │   │   ├── graphql.module.ts      # GraphQLModule.forRootAsync + schema config
-│   │   └── graphql.context.ts     # per-request context: user + DataLoaders
+│   │   └── graphql.context.ts     # per-request context: request + authenticated user
 │   └── <cache|queue|…>/           # other one-time infra
 └── modules/
     └── <feature>/                 # one folder per bounded context
@@ -395,6 +395,8 @@ only lists features and infrastructure.
 
 Reference: [NestJS Modules](https://docs.nestjs.com/modules)
 
+**Behavioral depth.** See `nestjs-best-practices` -> `arch-feature-modules` and `arch-module-sharing`.
+
 ---
 
 ## 3. Services
@@ -481,6 +483,8 @@ Why it is right: each service has one reason to change and one dependency set; t
 registers them side by side and each resolver depends only on the service it needs.
 
 Reference: [NestJS Providers](https://docs.nestjs.com/providers)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `arch-single-responsibility`.
 
 ---
 
@@ -992,6 +996,8 @@ and depends on an injected repository that is trivial to mock.
 
 Reference: [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb) | [Repository pattern](https://martinfowler.com/eaaCatalog/repository.html)
 
+**Behavioral depth.** See `nestjs-best-practices` -> `arch-use-repository-pattern`.
+
 ---
 
 ## 7. Relations & Cross-Module
@@ -1063,6 +1069,8 @@ one-directional reactions use events, so the module graph stays acyclic.
 module nor events are possible — and the cycle should be recorded as debt to remove.
 
 Reference: [NestJS Circular Dependency](https://docs.nestjs.com/fundamentals/circular-dependency)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `arch-avoid-circular-deps`.
 
 ---
 
@@ -1136,6 +1144,8 @@ freely.
 
 Reference: [NestJS Modules](https://docs.nestjs.com/modules)
 
+**Behavioral depth.** See `nestjs-best-practices` -> `arch-module-sharing`.
+
 ---
 
 ### 7.3 Batch Relations with a Per-Request DataLoader
@@ -1147,8 +1157,8 @@ per parent — the N+1 problem. A `DataLoader` batches those per-parent loads wi
 tick into one query and memoizes them for the request. Loaders live in the feature's `loaders/`
 folder, are created per request, and are exposed through the GraphQL context.
 
-**Placement.** `modules/<feature>/loaders/<feature>.loader.ts`; wired in
-`infra/graphql/graphql.context.ts`.
+**Placement.** `modules/<feature>/loaders/<feature>.loader.ts`, provided request-scoped in the
+owning feature module and injected into the field resolvers that use it.
 
 **Responsibilities.**
 
@@ -1177,24 +1187,19 @@ export class OrdersLoader {
 Why it is wrong: as a singleton, one request's cached data can be served to another, and the
 batch function still issues one query per key, so N+1 is not solved.
 
-**Correct (request-scoped loader that batches into one query):**
+**Correct (request-scoped loader provider, injected where used):**
 
 ```typescript
-// loaders/orders.loader.ts
+// loaders/orders.loader.ts — one instance per request
 @Injectable({ scope: Scope.REQUEST })
 export class OrdersLoader {
   constructor(private readonly ordersService: OrdersService) {}
 
-  private readonly byUser = new DataLoader<string, Order[]>(async (userIds) => {
-    const orders = await this.ordersService.findByUserIds([...userIds]); // ONE query
-    const grouped = new Map<string, Order[]>();
-    for (const order of orders) {
-      const list = grouped.get(order.userId) ?? [];
-      list.push(order);
-      grouped.set(order.userId, list);
-    }
-    return userIds.map((id) => grouped.get(id) ?? []);
-  });
+  // The batch function itself — group keys, return results in input-key order —
+  // is a performance concern covered by nestjs-best-practices -> db-avoid-n-plus-one.
+  private readonly byUser = new DataLoader<string, Order[]>((userIds) =>
+    this.ordersService.findByUserIds([...userIds]),
+  );
 
   loadByUserId(id: string): Promise<Order[]> {
     return this.byUser.load(id);
@@ -1202,10 +1207,13 @@ export class OrdersLoader {
 }
 ```
 
-Why it is right: all per-parent loads in one tick collapse into a single query, results come
-back in input-key order, and request scope confines the cache to one request.
+Why it is right: the loader lives in `loaders/`, is request-scoped so its cache never crosses
+requests, and is injected into the field resolver that needs it. The batching/grouping
+implementation itself is owned by `db-avoid-n-plus-one`.
 
 Reference: [graphql/dataloader](https://github.com/graphql/dataloader)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `db-avoid-n-plus-one` for the batch function itself.
 
 ---
 
@@ -1303,6 +1311,8 @@ exported service instead (see `relations-cross-module-service`).
 
 Reference: [NestJS Events](https://docs.nestjs.com/techniques/events)
 
+**Behavioral depth.** See `nestjs-best-practices` -> `arch-use-events`.
+
 ---
 
 ### 7.5 Resolve Relations with @ResolveField
@@ -1362,6 +1372,8 @@ Why it is right: the relation is resolved only when the client asks for the fiel
 parent object already in hand and a batched loader rather than a per-parent query.
 
 Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `db-avoid-n-plus-one`.
 
 ---
 
@@ -1497,6 +1509,8 @@ Why it is right: one typed source of truth, validated once at boot, injected whe
 
 Reference: [NestJS Configuration](https://docs.nestjs.com/techniques/configuration)
 
+**Behavioral depth.** See `nestjs-best-practices` -> `devops-use-config-module`.
+
 ---
 
 ### 8.3 Put Database Setup and Migrations in infra/database/
@@ -1558,6 +1572,8 @@ only the collections it owns.
 
 Reference: [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb)
 
+**Behavioral depth.** See `nestjs-best-practices` -> `db-use-migrations`.
+
 ---
 
 ### 8.4 Put GraphQL Setup in infra/graphql/
@@ -1574,15 +1590,15 @@ the per-request DataLoaders.
 **Responsibilities.**
 
 - Configure `GraphQLModule.forRootAsync` (driver, `autoSchemaFile`, global options).
-- Build the request context: `req`, `user`, and fresh `loaders`.
+- Build the request context: `req` and the authenticated `user`.
 - Register global field middleware or custom scalars if needed.
 
 **Never.**
 
 - Scatter `GraphQLModule.forRoot` across feature modules.
 - Build the context ad hoc inside resolvers.
-- Create DataLoaders anywhere but the context — they must be per request (see
-  `relations-dataloader`).
+- Hold request-scoped state as a singleton. DataLoaders are request-scoped providers injected
+  where used (see `relations-dataloader`), never application singletons.
 
 **Incorrect (context assembled per resolver, loader lifetime uncontrolled):**
 
@@ -1618,16 +1634,13 @@ export class GraphqlInfraModule {}
 
 // infra/graphql/graphql.context.ts
 export function buildContext(req: Request) {
-  return {
-    req,
-    user: req.user,
-    loaders: createRequestLoaders(), // fresh loader instances per request
-  };
+  return { req, user: req.user }; // request-scoped providers (e.g. loaders) are injected where used
 }
 ```
 
-Why it is right: the GraphQL server is configured once, and every request gets its own context
-with its own loaders, so no cache leaks between requests.
+Why it is right: the GraphQL server is configured once and every request gets its own context
+object; request-scoped providers such as DataLoaders are injected where they are used, so no
+cache leaks between requests.
 
 Reference: [NestJS GraphQL Quick Start](https://docs.nestjs.com/graphql/quick-start)
 

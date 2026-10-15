@@ -84,3 +84,5 @@ Why it is right: the feature owns its wiring, exposes a minimal interface, and `
 only lists features and infrastructure.
 
 Reference: [NestJS Modules](https://docs.nestjs.com/modules)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `arch-feature-modules` and `arch-module-sharing`.

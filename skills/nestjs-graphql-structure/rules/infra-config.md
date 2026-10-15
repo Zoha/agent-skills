@@ -77,3 +77,5 @@ export class PaymentsService {
 Why it is right: one typed source of truth, validated once at boot, injected where needed.
 
 Reference: [NestJS Configuration](https://docs.nestjs.com/techniques/configuration)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `devops-use-config-module`.

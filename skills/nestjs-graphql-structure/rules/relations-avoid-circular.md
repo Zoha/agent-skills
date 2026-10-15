@@ -70,3 +70,5 @@ one-directional reactions use events, so the module graph stays acyclic.
 module nor events are possible — and the cycle should be recorded as debt to remove.
 
 Reference: [NestJS Circular Dependency](https://docs.nestjs.com/fundamentals/circular-dependency)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `arch-avoid-circular-deps`.

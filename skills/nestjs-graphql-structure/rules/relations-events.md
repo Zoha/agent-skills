@@ -98,3 +98,5 @@ For a synchronous cross-module dependency where a value is needed, inject the ow
 exported service instead (see `relations-cross-module-service`).
 
 Reference: [NestJS Events](https://docs.nestjs.com/techniques/events)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `arch-use-events`.

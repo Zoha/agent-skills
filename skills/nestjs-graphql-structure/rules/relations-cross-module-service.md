@@ -74,3 +74,5 @@ feature depends on that contract, so the boundary stays intact and orders storag
 freely.
 
 Reference: [NestJS Modules](https://docs.nestjs.com/modules)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `arch-module-sharing`.

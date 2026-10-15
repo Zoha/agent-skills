@@ -62,3 +62,5 @@ Why it is right: the relation is resolved only when the client asks for the fiel
 parent object already in hand and a batched loader rather than a per-parent query.
 
 Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `db-avoid-n-plus-one`.

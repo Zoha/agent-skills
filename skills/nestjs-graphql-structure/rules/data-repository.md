@@ -86,3 +86,5 @@ Why it is right: persistence detail lives in one place; the service reads as bus
 and depends on an injected repository that is trivial to mock.
 
 Reference: [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb) | [Repository pattern](https://martinfowler.com/eaaCatalog/repository.html)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `arch-use-repository-pattern`.

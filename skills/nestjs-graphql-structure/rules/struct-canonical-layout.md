@@ -42,7 +42,7 @@ src/
 │   │   └── migrations/            # DB migrations
 │   ├── graphql/
 │   │   ├── graphql.module.ts      # GraphQLModule.forRootAsync + schema config
-│   │   └── graphql.context.ts     # per-request context: user + DataLoaders
+│   │   └── graphql.context.ts     # per-request context: request + authenticated user
 │   └── <cache|queue|…>/           # other one-time infra
 └── modules/
     └── <feature>/                 # one folder per bounded context

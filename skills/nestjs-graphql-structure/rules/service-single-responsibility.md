@@ -85,3 +85,5 @@ Why it is right: each service has one reason to change and one dependency set; t
 registers them side by side and each resolver depends only on the service it needs.
 
 Reference: [NestJS Providers](https://docs.nestjs.com/providers)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `arch-single-responsibility`.

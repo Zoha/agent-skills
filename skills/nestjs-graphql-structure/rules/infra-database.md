@@ -63,3 +63,5 @@ Why it is right: the connection is configured once from typed config, and each f
 only the collections it owns.
 
 Reference: [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `db-use-migrations`.

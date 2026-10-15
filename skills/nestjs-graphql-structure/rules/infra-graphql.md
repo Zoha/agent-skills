@@ -19,15 +19,15 @@ the per-request DataLoaders.
 **Responsibilities.**
 
 - Configure `GraphQLModule.forRootAsync` (driver, `autoSchemaFile`, global options).
-- Build the request context: `req`, `user`, and fresh `loaders`.
+- Build the request context: `req` and the authenticated `user`.
 - Register global field middleware or custom scalars if needed.
 
 **Never.**
 
 - Scatter `GraphQLModule.forRoot` across feature modules.
 - Build the context ad hoc inside resolvers.
-- Create DataLoaders anywhere but the context — they must be per request (see
-  `relations-dataloader`).
+- Hold request-scoped state as a singleton. DataLoaders are request-scoped providers injected
+  where used (see `relations-dataloader`), never application singletons.
 
 **Incorrect (context assembled per resolver, loader lifetime uncontrolled):**
 
@@ -63,15 +63,12 @@ export class GraphqlInfraModule {}
 
 // infra/graphql/graphql.context.ts
 export function buildContext(req: Request) {
-  return {
-    req,
-    user: req.user,
-    loaders: createRequestLoaders(), // fresh loader instances per request
-  };
+  return { req, user: req.user }; // request-scoped providers (e.g. loaders) are injected where used
 }
 ```
 
-Why it is right: the GraphQL server is configured once, and every request gets its own context
-with its own loaders, so no cache leaks between requests.
+Why it is right: the GraphQL server is configured once and every request gets its own context
+object; request-scoped providers such as DataLoaders are injected where they are used, so no
+cache leaks between requests.
 
 Reference: [NestJS GraphQL Quick Start](https://docs.nestjs.com/graphql/quick-start)
