@@ -95,7 +95,7 @@ Why it is right: the users service emits and moves on, and each new reaction is 
 that never touches the actor.
 
 For a synchronous cross-module dependency where a value is needed, inject the owning module's
-exported service instead (see `relations-cross-module-service`).
+exported service instead (see `module-export-policy`).
 
 Reference: [NestJS Events](https://docs.nestjs.com/techniques/events)
 

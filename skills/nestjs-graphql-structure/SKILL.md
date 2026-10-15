@@ -79,10 +79,10 @@ Reference these guidelines when:
 ### 7. Relations & Cross-Module (CRITICAL)
 
 - `relations-avoid-circular` - Resolve Circular Module Dependencies
-- `relations-cross-module-service` - Resolve Cross-Module Fields via the Owning Service
 - `relations-dataloader` - Batch Relations with a Per-Request DataLoader
 - `relations-events` - Decouple Modules with Events
 - `relations-field-resolvers` - Resolve Relations with @ResolveField
+- `relations-owning-module` - Put a Relation Field in the Module That Owns Its Data
 
 ### 8. Config, Common & Infra (MEDIUM)
 

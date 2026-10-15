@@ -15,9 +15,8 @@ tick into one query and memoizes them for the request. Loaders live in the featu
 folder, are created per request, and are exposed through the GraphQL context.
 
 **Placement.** `modules/<feature>/loaders/<feature>.loader.ts`, provided request-scoped by the
-module that declares the field and injected into the field resolvers that use it. For a
-cross-module relation, the declaring (consuming) module owns the loader and wraps the owning
-module's exported service.
+module that declares the field — the module that owns the data — and injected into the field
+resolvers that use it; it batches that module's own service.
 
 **Responsibilities.**
 

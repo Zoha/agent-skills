@@ -44,7 +44,7 @@ Why it is wrong: the filename does not say what the file is or where it belongs.
 | Feature module | `<feature>.module.ts` | `<Feature>Module` |
 | Query resolver | `<feature>.query.resolver.ts` | `<Feature>QueryResolver` |
 | Mutation resolver | `<feature>.mutation.resolver.ts` | `<Feature>MutationResolver` |
-| Field resolver | `<feature>.field.resolver.ts` | `<Feature>FieldResolver` |
+| Relation field resolver | `<type>-<feature>.resolver.ts` | `<Type><Feature>Resolver` |
 | Service | `<feature>.service.ts` / `<feature>-<concern>.service.ts` | `<Feature>Service` |
 | Repository | `<feature>.repository.ts` | `<Feature>Repository` |
 | Entity | `<feature>.entity.ts` | `<Feature>` |

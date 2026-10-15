@@ -12,7 +12,8 @@ tags: circular-dependency, modules, forwardRef
 **Purpose.** A circular dependency is when module A imports module B and B imports A, directly
 or transitively. It is an architecture problem: the two modules are really one, or the shared
 piece belongs in a third module. Fix the structure first; `forwardRef` is a last resort that
-hides the cycle rather than removing it.
+hides the cycle rather than removing it. Relation fields rarely cause cycles, because the module
+that owns the data owns the field (see `relations-owning-module`).
 
 **Placement.** The fix is structural — extract a shared module, invert the dependency with
 events, or depend on a service contract.
