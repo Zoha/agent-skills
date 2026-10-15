@@ -52,6 +52,7 @@ File-placement and anatomy guide for NestJS GraphQL applications, designed for A
    - 8.2 [Put Typed Configuration in config/](#82-put-typed-configuration-in-config-)
    - 8.3 [Put Database Setup and Migrations in infra/database/](#83-put-database-setup-and-migrations-in-infra-database-)
    - 8.4 [Put GraphQL Setup in infra/graphql/](#84-put-graphql-setup-in-infra-graphql-)
+   - 8.5 [Use a SharedModule for Cross-Cutting Services](#85-use-a-sharedmodule-for-cross-cutting-services)
 9. [Conventions & Testing](#9-conventions-testing) — **MEDIUM**
    - 9.1 [Use the Nest CLI Generator, Then Adjust](#91-use-the-nest-cli-generator-then-adjust)
    - 9.2 [Keep Constants and Enums Out of Class Files](#92-keep-constants-and-enums-out-of-class-files)
@@ -93,6 +94,8 @@ src/
 │   ├── interceptors/              # logging, transform
 │   ├── pipes/                     # shared validation/parse pipes
 │   ├── scalars/                   # custom GraphQL scalars
+│   ├── services/                  # shared services (hashing, ids, mailer wrapper)
+│   ├── shared.module.ts           # provides + exports the shared services
 │   └── utils/
 ├── infra/                         # one-time infrastructure, imported by the composition root
 │   ├── database/
@@ -173,6 +176,8 @@ full tree, and the linked rule gives the file's purpose and examples.
 | Domain event / listener | `modules/<f>/events/` | `relations-events` |
 | Config namespace | `config/` | `infra-config` |
 | Shared guard/filter/interceptor/pipe/scalar | `common/` | `infra-common` |
+| Shared service | `common/services/<name>.service.ts` | `infra-shared-module` |
+| Shared module | `common/shared.module.ts` | `infra-shared-module` |
 | GraphQL setup / context | `infra/graphql/` | `infra-graphql` |
 | DB setup / migrations | `infra/database/` | `infra-database` |
 | Bootstrap | `main.ts` | `module-bootstrap` |
@@ -1761,7 +1766,8 @@ about any feature. Features import them; they never import a feature.
 **Responsibilities.**
 
 - Provide feature-agnostic, reusable helpers.
-- Expose provider-based helpers through a shared module if they need DI.
+- Expose provider-based helpers (and shared services) through `common/shared.module.ts` when they
+  need DI — see `infra-shared-module`.
 
 **Never.**
 
@@ -2010,6 +2016,79 @@ object; request-scoped providers such as DataLoaders are injected where they are
 cache leaks between requests.
 
 Reference: [NestJS GraphQL Quick Start](https://docs.nestjs.com/graphql/quick-start)
+
+---
+
+### 8.5 Use a SharedModule for Cross-Cutting Services
+
+**Impact: MEDIUM-HIGH** — one home for shared providers; explicit by default
+
+**Purpose.** Stateless services that many features use — hashing, id generation, a thin mailer or
+HTTP wrapper, a clock — do not each need their own module, but they also do not belong to any one
+feature. They live in a single `SharedModule`. By default, other modules **import** it; mark it
+`@Global()` only for providers that genuinely every module needs.
+
+**Placement.** `common/shared.module.ts`; the shared service classes under `common/services/`
+(for example `common/services/hashing.service.ts`).
+
+**Responsibilities.**
+
+- Provide and export the shared, feature-agnostic services.
+- Be imported explicitly by the features that use it.
+- Become `@Global()` only when its providers are injected almost everywhere — logger, hashing,
+  id generation, config. Register a global module once, in `AppModule`.
+
+**Never.**
+
+- Hold a service owned by one feature — that belongs in the feature's `services/`.
+- Hold one-time infrastructure (DB connection, `GraphQLModule`, config registration) — that is
+  `infra/`, imported once by the composition root.
+- Go `@Global()` "to avoid writing imports" — that recreates the everywhere-is-available problem
+  modules exist to prevent.
+- Register a plain class that needs no injection — it does not need a module at all.
+
+**Incorrect (a global module that swallows feature services and infrastructure):**
+
+```typescript
+// common/shared.module.ts
+@Global()
+@Module({
+  imports: [MongooseModule.forRoot(process.env.MONGO_URI)], // infrastructure — belongs in infra/
+  providers: [HashingService, UsersService, OrdersService], // feature services — belong to features
+  exports: [HashingService, UsersService, OrdersService],
+})
+export class SharedModule {}
+```
+
+Why it is wrong: infrastructure is initialized outside `infra/`, feature services lose their module
+boundary, and everything is global — so nothing is encapsulated.
+
+**Correct (explicit SharedModule; @Global() only when genuinely app-wide):**
+
+```typescript
+// common/shared.module.ts
+@Module({
+  providers: [HashingService, SlugService, IdGeneratorService],
+  exports: [HashingService, SlugService, IdGeneratorService],
+})
+export class SharedModule {}
+
+// a feature imports it explicitly
+@Module({ imports: [SharedModule], providers: [UsersService] })
+export class UsersModule {}
+
+// Only for truly app-wide providers, mark it global and register it once in AppModule:
+// @Global()
+// @Module({ providers: [AppLogger], exports: [AppLogger] })
+// export class SharedModule {}
+```
+
+Why it is right: shared providers have one home; features declare the dependency by importing the
+module; and `@Global()` is reserved for the handful of providers every module injects.
+
+Reference: [NestJS Modules — Shared modules](https://docs.nestjs.com/modules#shared-modules) | [NestJS Modules — Global modules](https://docs.nestjs.com/modules#global-modules)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `arch-module-sharing`.
 
 ---
 

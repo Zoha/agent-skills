@@ -34,6 +34,8 @@ full tree, and the linked rule gives the file's purpose and examples.
 | Domain event / listener | `modules/<f>/events/` | `relations-events` |
 | Config namespace | `config/` | `infra-config` |
 | Shared guard/filter/interceptor/pipe/scalar | `common/` | `infra-common` |
+| Shared service | `common/services/<name>.service.ts` | `infra-shared-module` |
+| Shared module | `common/shared.module.ts` | `infra-shared-module` |
 | GraphQL setup / context | `infra/graphql/` | `infra-graphql` |
 | DB setup / migrations | `infra/database/` | `infra-database` |
 | Bootstrap | `main.ts` | `module-bootstrap` |

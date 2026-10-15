@@ -34,6 +34,8 @@ src/
 │   ├── interceptors/              # logging, transform
 │   ├── pipes/                     # shared validation/parse pipes
 │   ├── scalars/                   # custom GraphQL scalars
+│   ├── services/                  # shared services (hashing, ids, mailer wrapper)
+│   ├── shared.module.ts           # provides + exports the shared services
 │   └── utils/
 ├── infra/                         # one-time infrastructure, imported by the composition root
 │   ├── database/

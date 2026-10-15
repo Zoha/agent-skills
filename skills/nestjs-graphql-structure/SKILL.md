@@ -92,6 +92,7 @@ Reference these guidelines when:
 - `infra-config` - Put Typed Configuration in config/
 - `infra-database` - Put Database Setup and Migrations in infra/database/
 - `infra-graphql` - Put GraphQL Setup in infra/graphql/
+- `infra-shared-module` - Use a SharedModule for Cross-Cutting Services
 
 ### 9. Conventions & Testing (MEDIUM)
 

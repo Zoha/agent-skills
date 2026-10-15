@@ -18,7 +18,8 @@ about any feature. Features import them; they never import a feature.
 **Responsibilities.**
 
 - Provide feature-agnostic, reusable helpers.
-- Expose provider-based helpers through a shared module if they need DI.
+- Expose provider-based helpers (and shared services) through `common/shared.module.ts` when they
+  need DI — see `infra-shared-module`.
 
 **Never.**
 
