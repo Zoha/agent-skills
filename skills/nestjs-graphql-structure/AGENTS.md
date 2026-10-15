@@ -21,8 +21,10 @@ File-placement and anatomy guide for NestJS GraphQL applications, designed for A
 
 1. [Application Structure](#1-application-structure) — **CRITICAL**
    - 1.1 [Canonical Application Structure](#11-canonical-application-structure)
+   - 1.2 [Locate and Policy the Generated Schema Artifact](#12-locate-and-policy-the-generated-schema-artifact)
 2. [Modules & Bootstrap](#2-modules-bootstrap) — **CRITICAL**
-   - 2.1 [The Feature Module File](#21-the-feature-module-file)
+   - 2.1 [Keep main.ts and app.module.ts Thin](#21-keep-main-ts-and-app-module-ts-thin)
+   - 2.2 [The Feature Module File](#22-the-feature-module-file)
 3. [Services](#3-services) — **HIGH**
    - 3.1 [Multiple Focused Services per Module](#31-multiple-focused-services-per-module)
 4. [GraphQL Resolvers](#4-graphql-resolvers) — **HIGH**
@@ -40,6 +42,11 @@ File-placement and anatomy guide for NestJS GraphQL applications, designed for A
    - 7.3 [Batch Relations with a Per-Request DataLoader](#73-batch-relations-with-a-per-request-dataloader)
    - 7.4 [Decouple Modules with Events](#74-decouple-modules-with-events)
    - 7.5 [Resolve Relations with @ResolveField](#75-resolve-relations-with-resolvefield)
+8. [Config, Common & Infra](#8-config-common-infra) — **MEDIUM**
+   - 8.1 [Put Shared Building Blocks in common/](#81-put-shared-building-blocks-in-common-)
+   - 8.2 [Put Typed Configuration in config/](#82-put-typed-configuration-in-config-)
+   - 8.3 [Put Database Setup and Migrations in infra/database/](#83-put-database-setup-and-migrations-in-infra-database-)
+   - 8.4 [Put GraphQL Setup in infra/graphql/](#84-put-graphql-setup-in-infra-graphql-)
 
 ---
 
@@ -124,11 +131,139 @@ Reference: [NestJS Modules](https://docs.nestjs.com/modules) | [NestJS GraphQL R
 
 ---
 
+### 1.2 Locate and Policy the Generated Schema Artifact
+
+**Impact: MEDIUM** — the SDL is generated, not hand-edited
+
+**Purpose.** In code-first GraphQL, the SDL is generated from the decorators according to
+`autoSchemaFile`. The generated file has one documented home (commonly `src/schema.gql`) and a
+team policy: commit it so schema changes appear in reviewable diffs, or ignore it and
+regenerate. Either way it is never hand-edited.
+
+**Placement.** The path set in `autoSchemaFile` in `infra/graphql/graphql.module.ts`.
+
+**Responsibilities.**
+
+- Generate the SDL to a single, documented path.
+- Keep one policy: commit the file for reviewable schema diffs, or gitignore it.
+
+**Never.**
+
+- Hand-edit the generated SDL — change the classes instead.
+- Generate to multiple paths or commit conflicting copies.
+- Generate into ephemeral build output only and lose the schema diff.
+
+**Incorrect (schema file edited by hand):**
+
+```graphql
+# src/schema.gql — a field added by hand
+type User {
+  id: ID!
+  email: String!
+  nickname: String   # not backed by any @ObjectType field; lost on next build
+}
+```
+
+Why it is wrong: the change is invisible to the code that generates the schema and disappears
+the next time the app starts.
+
+**Correct (change the class; the SDL regenerates):**
+
+```typescript
+@ObjectType()
+export class User {
+  @Field() id: string;
+  @Field() email: string;
+  @Field() nickname: string;
+}
+// schema.gql is regenerated from this at startup/build and reviewed as a diff
+```
+
+Why it is right: the schema is derived from the code, the artifact always reflects the code,
+and its diff shows exactly what changed in the public API.
+
+Reference: [NestJS GraphQL Quick Start](https://docs.nestjs.com/graphql/quick-start)
+
+---
+
 ## 2. Modules & Bootstrap
 
 **Section Impact: CRITICAL**
 
-### 2.1 The Feature Module File
+### 2.1 Keep main.ts and app.module.ts Thin
+
+**Impact: CRITICAL** — bootstrap and composition, nothing else
+
+**Purpose.** `main.ts` creates the application and registers cross-cutting concerns — global
+pipes, filters, and interceptors. `app.module.ts` is the composition root: it imports feature
+modules and infrastructure modules. Neither contains business logic or feature wiring.
+
+**Placement.** `src/main.ts`, `src/app.module.ts`.
+
+**Responsibilities.**
+
+- `main.ts`: create the app, register global pipes/filters/interceptors, enable shutdown hooks,
+  listen.
+- `app.module.ts`: import config, infrastructure, and feature modules.
+
+**Never.**
+
+- Register a feature's providers in `AppModule`.
+- Put domain logic in `main.ts`.
+- List individual providers rather than importing the modules that own them.
+
+**Incorrect (logic in bootstrap, feature internals in AppModule):**
+
+```typescript
+// main.ts
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  const user = await app.get(UsersService).findById('1'); // domain work in bootstrap
+  app.listen(3000);
+}
+
+// app.module.ts — lists every provider of every feature
+@Module({ providers: [UsersService, OrdersService, UsersRepository] })
+export class AppModule {}
+```
+
+Why it is wrong: `main.ts` does work that belongs to a service, and `AppModule` knows feature
+internals it should never see.
+
+**Correct (bootstrap and composition only):**
+
+```typescript
+// main.ts
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  app.useGlobalPipes(
+    new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }),
+  );
+  app.enableShutdownHooks();
+  await app.listen(process.env.PORT ?? 3000);
+}
+
+// app.module.ts
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    DatabaseModule,
+    GraphqlInfraModule,
+    UsersModule,
+    OrdersModule,
+  ],
+})
+export class AppModule {}
+```
+
+Why it is right: `main.ts` only bootstraps and registers global concerns; `AppModule` lists
+modules, not providers, so each feature stays encapsulated.
+
+Reference: [NestJS First Steps](https://docs.nestjs.com/first-steps) | [NestJS Modules](https://docs.nestjs.com/modules)
+
+---
+
+### 2.2 The Feature Module File
 
 **Impact: CRITICAL** — a module declares its own providers and exports
 
@@ -1175,6 +1310,274 @@ Why it is right: the relation is resolved only when the client asks for the fiel
 parent object already in hand and a batched loader rather than a per-parent query.
 
 Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
+
+---
+
+## 8. Config, Common & Infra
+
+**Section Impact: MEDIUM**
+
+### 8.1 Put Shared Building Blocks in common/
+
+**Impact: MEDIUM** — reusable, feature-agnostic helpers live here
+
+**Purpose.** Cross-cutting building blocks that any feature may use — decorators, exception
+filters, guards, interceptors, pipes, and custom scalars — live in `common/`. They know nothing
+about any feature. Features import them; they never import a feature.
+
+**Placement.** `src/common/{decorators,filters,guards,interceptors,pipes,scalars,utils}/`.
+
+**Responsibilities.**
+
+- Provide feature-agnostic, reusable helpers.
+- Expose provider-based helpers through a shared module if they need DI.
+
+**Never.**
+
+- Import a feature module — `common/` sits below features in the dependency direction.
+- Hold feature-specific logic; that belongs in the feature.
+- Duplicate a helper into each feature; define it once here.
+
+**Incorrect (a cross-cutting decorator copy-pasted per feature):**
+
+```typescript
+// modules/users/decorators/current-user.decorator.ts
+export const CurrentUser = createParamDecorator(/* ... */);
+
+// modules/orders/decorators/current-user.decorator.ts
+export const CurrentUser = createParamDecorator(/* ... */); // the same code again
+```
+
+Why it is wrong: the same helper exists in several places and drifts as each copy is edited.
+
+**Correct (one shared decorator in common/):**
+
+```typescript
+// common/decorators/current-user.decorator.ts
+import { createParamDecorator, ExecutionContext } from '@nestjs/common';
+import { GqlExecutionContext } from '@nestjs/graphql';
+
+export const CurrentUser = createParamDecorator(
+  (_data: unknown, context: ExecutionContext) =>
+    GqlExecutionContext.create(context).getContext().req.user,
+);
+
+// features import the one definition
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+```
+
+Why it is right: defined once, used everywhere, and `common/` has no dependency on any feature.
+
+Reference: [NestJS Custom Decorators](https://docs.nestjs.com/custom-decorators) | [NestJS Guards](https://docs.nestjs.com/guards)
+
+---
+
+### 8.2 Put Typed Configuration in config/
+
+**Impact: MEDIUM** — no process.env scattered through the app
+
+**Purpose.** Configuration lives in `config/` as typed namespaces plus a validation schema.
+Modules inject `ConfigService` (or a namespaced config type) instead of reading `process.env`
+directly, and validation runs at startup so a missing variable fails fast rather than in
+production under load.
+
+**Placement.** `src/config/app.config.ts`, `src/config/database.config.ts`,
+`src/config/validation.schema.ts`.
+
+**Responsibilities.**
+
+- Define typed namespaces with `registerAs`.
+- Validate required environment variables at startup (Joi or Zod).
+- Load once and expose globally.
+
+**Never.**
+
+- Read `process.env` inside services or resolvers.
+- Hardcode secrets or defaults at the point of use.
+- Parse numbers or booleans ad hoc at each call site.
+
+**Incorrect (scattered, unvalidated environment access):**
+
+```typescript
+@Injectable()
+export class PaymentsService {
+  charge() {
+    const key = process.env.STRIPE_KEY;                     // untyped, unvalidated
+    const retries = parseInt(process.env.RETRIES ?? '3');   // parsed at every call site
+    // ...
+  }
+}
+```
+
+Why it is wrong: configuration has no single source of truth, typos fail silently at runtime,
+and a missing variable is discovered only when that code path runs.
+
+**Correct (typed namespaces, validated once, injected):**
+
+```typescript
+// config/app.config.ts
+export const appConfig = registerAs('app', () => ({
+  port: parseInt(process.env.PORT ?? '3000', 10),
+  stripeKey: process.env.STRIPE_KEY,
+}));
+
+// config/validation.schema.ts
+export const validationSchema = Joi.object({
+  PORT: Joi.number().default(3000),
+  STRIPE_KEY: Joi.string().required(),
+});
+
+// app.module.ts
+ConfigModule.forRoot({ isGlobal: true, load: [appConfig], validationSchema });
+
+// services/payments.service.ts
+@Injectable()
+export class PaymentsService {
+  constructor(private readonly config: ConfigService) {}
+
+  charge() {
+    const key = this.config.get<string>('app.stripeKey'); // typed, validated at startup
+  }
+}
+```
+
+Why it is right: one typed source of truth, validated once at boot, injected where needed.
+
+Reference: [NestJS Configuration](https://docs.nestjs.com/techniques/configuration)
+
+---
+
+### 8.3 Put Database Setup and Migrations in infra/database/
+
+**Impact: MEDIUM** — the connection is configured once
+
+**Purpose.** The database connection and migrations live in `infra/database/`. The module
+configures the connection from typed config; migrations live in a subfolder; feature modules
+declare only their own collections/entities via `forFeature`.
+
+**Placement.** `src/infra/database/database.module.ts`, `database.providers.ts`, `migrations/`.
+
+**Responsibilities.**
+
+- Configure the connection from `ConfigService` (once).
+- Export the connection module for features to import.
+- Hold migration files.
+
+**Never.**
+
+- Configure the database in a feature module.
+- Dump migrations at the repository root.
+- Read database environment variables directly — use `config/`.
+
+**Incorrect (a feature configures the whole database):**
+
+```typescript
+// modules/users/users.module.ts
+@Module({ imports: [MongooseModule.forRoot(process.env.MONGO_URI)] })
+export class UsersModule {}
+
+// migrations/0001-init.ts at the repository root, beside unrelated folders
+```
+
+Why it is wrong: an arbitrary feature owns the connection, and migrations have no home.
+
+**Correct (one infrastructure module, features register only their own schema):**
+
+```typescript
+// infra/database/database.module.ts
+@Module({
+  imports: [
+    MongooseModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({ uri: config.get<string>('database.uri') }),
+    }),
+  ],
+  exports: [MongooseModule],
+})
+export class DatabaseModule {}
+
+// a feature declares only its own collection
+@Module({ imports: [MongooseModule.forFeature([{ name: User.name, schema: UserSchema }])] })
+export class UsersModule {}
+```
+
+Why it is right: the connection is configured once from typed config, and each feature registers
+only the collections it owns.
+
+Reference: [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb)
+
+---
+
+### 8.4 Put GraphQL Setup in infra/graphql/
+
+**Impact: MEDIUM** — one place configures the server and its context
+
+**Purpose.** The `GraphQLModule` configuration and the per-request context factory live in
+`infra/graphql/`. The module configures the driver, schema generation, and global options; the
+context file builds the object every request sees — the request, the authenticated user, and
+the per-request DataLoaders.
+
+**Placement.** `src/infra/graphql/graphql.module.ts`, `src/infra/graphql/graphql.context.ts`.
+
+**Responsibilities.**
+
+- Configure `GraphQLModule.forRootAsync` (driver, `autoSchemaFile`, global options).
+- Build the request context: `req`, `user`, and fresh `loaders`.
+- Register global field middleware or custom scalars if needed.
+
+**Never.**
+
+- Scatter `GraphQLModule.forRoot` across feature modules.
+- Build the context ad hoc inside resolvers.
+- Create DataLoaders anywhere but the context — they must be per request (see
+  `relations-dataloader`).
+
+**Incorrect (context assembled per resolver, loader lifetime uncontrolled):**
+
+```typescript
+@Query(() => [Order])
+async orders(@Context() ctx: any) {
+  ctx.ordersLoader ??= new OrdersLoader(); // shared across requests, cache leaks
+  return ctx.ordersLoader.loadByUserId('...');
+}
+```
+
+Why it is wrong: the loader's lifetime is uncontrolled and GraphQL configuration has no single
+home.
+
+**Correct (config in the module, per-request context in one file):**
+
+```typescript
+// infra/graphql/graphql.module.ts
+@Module({
+  imports: [
+    GraphQLModule.forRootAsync<ApolloDriverConfig>({
+      driver: ApolloDriver,
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        autoSchemaFile: join(process.cwd(), 'src/schema.gql'),
+        sortSchema: true,
+        context: ({ req }: { req: Request }) => buildContext(req),
+      }),
+    }),
+  ],
+})
+export class GraphqlInfraModule {}
+
+// infra/graphql/graphql.context.ts
+export function buildContext(req: Request) {
+  return {
+    req,
+    user: req.user,
+    loaders: createRequestLoaders(), // fresh loader instances per request
+  };
+}
+```
+
+Why it is right: the GraphQL server is configured once, and every request gets its own context
+with its own loaders, so no cache leaks between requests.
+
+Reference: [NestJS GraphQL Quick Start](https://docs.nestjs.com/graphql/quick-start)
 
 ---
 

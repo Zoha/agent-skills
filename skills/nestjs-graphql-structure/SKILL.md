@@ -47,9 +47,11 @@ Reference these guidelines when:
 ### 1. Application Structure (CRITICAL)
 
 - `struct-canonical-layout` - Canonical Application Structure
+- `struct-schema-artifact` - Locate and Policy the Generated Schema Artifact
 
 ### 2. Modules & Bootstrap (CRITICAL)
 
+- `module-bootstrap` - Keep main.ts and app.module.ts Thin
 - `module-feature-module` - The Feature Module File
 
 ### 3. Services (HIGH)
@@ -78,6 +80,13 @@ Reference these guidelines when:
 - `relations-dataloader` - Batch Relations with a Per-Request DataLoader
 - `relations-events` - Decouple Modules with Events
 - `relations-field-resolvers` - Resolve Relations with @ResolveField
+
+### 8. Config, Common & Infra (MEDIUM)
+
+- `infra-common` - Put Shared Building Blocks in common/
+- `infra-config` - Put Typed Configuration in config/
+- `infra-database` - Put Database Setup and Migrations in infra/database/
+- `infra-graphql` - Put GraphQL Setup in infra/graphql/
 <!-- GENERATED:END:rules -->
 
 ## How to Use
