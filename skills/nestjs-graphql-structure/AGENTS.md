@@ -28,6 +28,7 @@ File-placement and anatomy guide for NestJS GraphQL applications, designed for A
    - 2.2 [The Feature Module File](#22-the-feature-module-file)
 3. [Services](#3-services) — **HIGH**
    - 3.1 [Multiple Focused Services per Module](#31-multiple-focused-services-per-module)
+   - 3.2 [Keep Service Methods Small and Focused](#32-keep-service-methods-small-and-focused)
 4. [GraphQL Resolvers](#4-graphql-resolvers) — **HIGH**
    - 4.1 [Split Resolvers by Role into resolvers/](#41-split-resolvers-by-role-into-resolvers-)
 5. [GraphQL Types & Inputs](#5-graphql-types-inputs) — **HIGH**
@@ -50,8 +51,9 @@ File-placement and anatomy guide for NestJS GraphQL applications, designed for A
    - 8.4 [Put GraphQL Setup in infra/graphql/](#84-put-graphql-setup-in-infra-graphql-)
 9. [Conventions & Testing](#9-conventions-testing) — **MEDIUM**
    - 9.1 [Use the Nest CLI Generator, Then Adjust](#91-use-the-nest-cli-generator-then-adjust)
-   - 9.2 [File and Class Naming Conventions](#92-file-and-class-naming-conventions)
-   - 9.3 [Test File Placement](#93-test-file-placement)
+   - 9.2 [Keep Constants and Enums Out of Class Files](#92-keep-constants-and-enums-out-of-class-files)
+   - 9.3 [File and Class Naming Conventions](#93-file-and-class-naming-conventions)
+   - 9.4 [Test File Placement](#94-test-file-placement)
 
 ---
 
@@ -112,6 +114,8 @@ src/
         ├── dto/
         │   ├── create-<feature>.input.ts        # @InputType (+class-validator)
         │   └── find-<feature>.args.ts           # @Args() class
+        ├── constants/                           # constants and enums (no stray values in class files)
+        │   └── <feature>-status.enum.ts
         ├── entities/
         │   └── <feature>.entity.ts              # persistence + @ObjectType (merged default)
         ├── models/                              # OPTIONAL: GraphQL-only @ObjectType (split case)
@@ -156,6 +160,7 @@ full tree, and the linked rule gives the file's purpose and examples.
 | Custom repository | `modules/<f>/repositories/<f>.repository.ts` | `data-repository` |
 | GraphQL input | `modules/<f>/dto/create-<f>.input.ts` | `type-inputs` |
 | GraphQL args | `modules/<f>/dto/find-<f>.args.ts` | `type-args` |
+| Constants / enums | `modules/<f>/constants/` | `conventions-constants-enums` |
 | Persistence entity / object type | `modules/<f>/entities/<f>.entity.ts` | `data-entity-mongodb` |
 | GraphQL-only model (split) | `modules/<f>/models/<f>.model.ts` | `data-models-mappers` |
 | Mapper | `modules/<f>/mappers/<f>.mapper.ts` | `data-models-mappers` |
@@ -485,6 +490,117 @@ registers them side by side and each resolver depends only on the service it nee
 Reference: [NestJS Providers](https://docs.nestjs.com/providers)
 
 **Behavioral depth.** See `nestjs-best-practices` -> `arch-single-responsibility`.
+
+---
+
+### 3.2 Keep Service Methods Small and Focused
+
+**Impact: HIGH** — easier to read, test, and change
+
+**Purpose.** A service method should do one thing at one level of abstraction. A method that
+validates, queries, maps, charges, and notifies is hard to read, hard to test, and changes for
+many reasons. Extract each step into a private method, and move a genuinely separate concern into
+its own service.
+
+**Placement.** Within the feature's `services/` files.
+
+**Responsibilities.**
+
+- Keep one purpose per method; the public method orchestrates, private helpers do the steps.
+- Keep each method at a single level of abstraction.
+- Move a separate concern into another service (see `service-single-responsibility`).
+
+**Never.**
+
+- Write one method that performs several unrelated operations.
+- Nest conditionals many levels deep or build a long sequential script in one method.
+- Mix validation, persistence, mapping, and side effects in one block.
+
+Heuristic: if you cannot describe a method without saying "and", it is more than one method. As a
+rough guide, a method that runs past ~40 lines, nests more than ~3 levels, or needs scrolling to
+read should be split.
+
+**Incorrect (one long method doing everything):**
+
+```typescript
+@Injectable()
+export class OrdersService {
+  async createOrder(input: CreateOrderInput): Promise<Order> {
+    // validate
+    if (!input.items.length) throw new BadRequestException('empty');
+    for (const item of input.items) {
+      if (item.qty <= 0) throw new BadRequestException('bad qty');
+    }
+    // price
+    let total = 0;
+    for (const item of input.items) {
+      const product = await this.productRepo.findById(item.productId);
+      total += product.price * item.qty;
+    }
+    // discount
+    if (input.coupon) {
+      const coupon = await this.couponRepo.findByCode(input.coupon);
+      if (coupon && coupon.expiresAt > new Date()) total *= 1 - coupon.rate;
+    }
+    // persist
+    const order = await this.orderRepo.save({ ...input, total });
+    // notify
+    await this.mailer.send(order.customerEmail, 'Order placed');
+    this.events.emit('order.created', order);
+    return order;
+  }
+}
+```
+
+Why it is wrong: five concerns in one method, so pricing cannot be tested without the database,
+the mailer, and the event bus.
+
+**Correct (public method orchestrates, distinct concerns delegated):**
+
+```typescript
+@Injectable()
+export class OrdersService {
+  constructor(
+    private readonly pricing: OrdersPricingService,
+    private readonly ordersRepository: OrdersRepository,
+    private readonly events: EventEmitter2,
+  ) {}
+
+  async createOrder(input: CreateOrderInput): Promise<Order> {
+    this.validate(input);
+    const total = await this.pricing.calculateTotal(input.items, input.coupon);
+    const order = await this.ordersRepository.create({ ...input, total });
+    this.events.emit('order.created', new OrderCreatedEvent(order.id, order.customerEmail));
+    return order;
+  }
+
+  private validate(input: CreateOrderInput): void {
+    if (!input.items.length) throw new BadRequestException('empty order');
+    if (input.items.some((i) => i.qty <= 0)) throw new BadRequestException('invalid quantity');
+  }
+}
+
+// services/orders-pricing.service.ts — its own concern, testable on its own
+@Injectable()
+export class OrdersPricingService {
+  constructor(
+    private readonly productsRepository: ProductsRepository,
+    private readonly couponsRepository: CouponsRepository,
+  ) {}
+
+  async calculateTotal(items: OrderItem[], couponCode?: string): Promise<number> {
+    const subtotal = await this.subtotal(items);
+    return couponCode ? this.applyCoupon(subtotal, couponCode) : subtotal;
+  }
+
+  // ...private subtotal() / applyCoupon() helpers
+}
+```
+
+Why it is right: each method does one thing, the public method reads as a short story, and pricing
+is a separate service you can test without the database or the mailer.
+
+Reference: [NestJS Providers](https://docs.nestjs.com/providers) | [Single Responsibility Principle](https://en.wikipedia.org/wiki/Single-responsibility_principle)
 
 ---
 
@@ -1714,7 +1830,88 @@ Reference: [NestJS CRUD Generator](https://docs.nestjs.com/recipes/crud-generato
 
 ---
 
-### 9.2 File and Class Naming Conventions
+### 9.2 Keep Constants and Enums Out of Class Files
+
+**Impact: MEDIUM** — one home per value; class files contain only their class
+
+**Purpose.** A class file (`*.service.ts`, `*.resolver.ts`, `*.module.ts`, …) should contain its
+class and nothing else. Constants, enums, and standalone helper functions declared at the top of
+a class file have no home, cannot be reused or tested on their own, and invite copies that drift.
+Give each of them its own file.
+
+**Placement.**
+
+- Feature-specific values: `modules/<feature>/constants/<name>.constants.ts` and
+  `modules/<feature>/constants/<name>.enum.ts`.
+- Cross-cutting values: `common/constants/`.
+
+**Responsibilities.**
+
+- Export named, typed constants and enums from a dedicated file.
+- Name them for the concept (`UserStatus`, `MAX_PAGE_SIZE`).
+
+**Never.**
+
+- Declare a `const`, `enum`, or standalone helper at the top of a service, resolver, or module
+  file.
+- Inline magic literals in methods when a named constant or enum already exists.
+- Park "a couple of helpers" in whatever class file first needed them.
+
+**Incorrect (values buried in a class file):**
+
+```typescript
+// services/users.service.ts
+const MAX_PAGE_SIZE = 100;                              // buried here, reusable nowhere
+enum Status { Active = 'active', Banned = 'banned' }    // declared inside a class file
+
+@Injectable()
+export class UsersService {
+  async findAll(page: number, limit: number) {
+    if (limit > MAX_PAGE_SIZE) limit = MAX_PAGE_SIZE;
+    // ...
+  }
+}
+```
+
+Why it is wrong: the value and the enum live only in this file; the next feature that needs
+`MAX_PAGE_SIZE` copies it, and the two copies drift.
+
+**Correct (dedicated files, imported where needed):**
+
+```typescript
+// constants/user.constants.ts
+export const MAX_PAGE_SIZE = 100;
+
+// constants/user-status.enum.ts
+export enum UserStatus {
+  Active = 'active',
+  Banned = 'banned',
+}
+
+// services/users.service.ts
+import { MAX_PAGE_SIZE } from '../constants/user.constants';
+
+@Injectable()
+export class UsersService {
+  async findAll(page: number, limit: number) {
+    return this.usersRepository.findMany({
+      page,
+      limit: Math.min(limit, MAX_PAGE_SIZE),
+    });
+  }
+}
+```
+
+Why it is right: each value has one home and one name, and class files stay about their class.
+
+A GraphQL enum that must be registered code-first also lives in its own file and is registered
+once with `registerEnumType` (see the GraphQL enums docs).
+
+Reference: [TypeScript Enums](https://www.typescriptlang.org/docs/handbook/enums.html) | [NestJS GraphQL Unions and Enums](https://docs.nestjs.com/graphql/unions-and-enums)
+
+---
+
+### 9.3 File and Class Naming Conventions
 
 **Impact: MEDIUM** — predictable names make placement obvious
 
@@ -1772,7 +1969,7 @@ Reference: [NestJS Modules](https://docs.nestjs.com/modules)
 
 ---
 
-### 9.3 Test File Placement
+### 9.4 Test File Placement
 
 **Impact: MEDIUM** — tests live next to what they test
 

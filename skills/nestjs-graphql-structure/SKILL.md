@@ -58,6 +58,7 @@ Reference these guidelines when:
 ### 3. Services (HIGH)
 
 - `service-single-responsibility` - Multiple Focused Services per Module
+- `service-small-focused-methods` - Keep Service Methods Small and Focused
 
 ### 4. GraphQL Resolvers (HIGH)
 
@@ -92,6 +93,7 @@ Reference these guidelines when:
 ### 9. Conventions & Testing (MEDIUM)
 
 - `conventions-cli-generator` - Use the Nest CLI Generator, Then Adjust
+- `conventions-constants-enums` - Keep Constants and Enums Out of Class Files
 - `conventions-naming` - File and Class Naming Conventions
 - `conventions-testing` - Test File Placement
 <!-- GENERATED:END:rules -->

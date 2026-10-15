@@ -25,6 +25,7 @@ full tree, and the linked rule gives the file's purpose and examples.
 | Custom repository | `modules/<f>/repositories/<f>.repository.ts` | `data-repository` |
 | GraphQL input | `modules/<f>/dto/create-<f>.input.ts` | `type-inputs` |
 | GraphQL args | `modules/<f>/dto/find-<f>.args.ts` | `type-args` |
+| Constants / enums | `modules/<f>/constants/` | `conventions-constants-enums` |
 | Persistence entity / object type | `modules/<f>/entities/<f>.entity.ts` | `data-entity-mongodb` |
 | GraphQL-only model (split) | `modules/<f>/models/<f>.model.ts` | `data-models-mappers` |
 | Mapper | `modules/<f>/mappers/<f>.mapper.ts` | `data-models-mappers` |

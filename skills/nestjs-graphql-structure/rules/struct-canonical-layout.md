@@ -58,6 +58,8 @@ src/
         ├── dto/
         │   ├── create-<feature>.input.ts        # @InputType (+class-validator)
         │   └── find-<feature>.args.ts           # @Args() class
+        ├── constants/                           # constants and enums (no stray values in class files)
+        │   └── <feature>-status.enum.ts
         ├── entities/
         │   └── <feature>.entity.ts              # persistence + @ObjectType (merged default)
         ├── models/                              # OPTIONAL: GraphQL-only @ObjectType (split case)
