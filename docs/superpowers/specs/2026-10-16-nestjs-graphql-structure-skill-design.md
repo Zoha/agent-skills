@@ -43,6 +43,25 @@ Non-goals:
 - The new skill must not copy security, DI-internals, performance, error-handling, testing
   tooling, microservices, or DevOps rules.
 
+### 2.1 Two classes of rules (structure vs module-resolution)
+
+Rules in this skill fall into two classes. The taxonomy, the base map, and the index must
+accommodate **both**, because this skill is not only about the directory structure:
+
+- **Structure rules** — where a file lives and how it is shaped: directory layout, module
+  anatomy, file responsibilities, placement. Most rules are of this kind.
+- **Module-resolution rules** — how modules connect to and resolve one another at runtime,
+  and how to resolve connection problems. These are *not* directory-layout rules even though
+  they are grouped under structural sections. Examples to be added over time: resolving
+  **circular module dependencies**, choosing `forwardRef` vs a shared module vs events,
+  wiring a cross-module service for a field resolver, per-request DataLoader scope, module
+  graph acyclicity, breaking a dependency cycle.
+
+No module-resolution rule is authored in the first deliverable (Steps 1–2), but the section
+taxonomy (§6), the base map (§7), and the `SKILL.md` index (§11) explicitly reserve space for
+them, so the ones we later add are considered a first-class part of this skill. Their natural
+homes are Section 2 (`module-`) and Section 7 (`relations-`).
+
 ## 3. Fixed design decisions
 
 | Decision | Choice |
@@ -109,6 +128,11 @@ Generator constraints (from `scripts/build-agents.ts`) the spec must honour:
 | 7 | Relations & Cross-Module | `relations-` | CRITICAL |
 | 8 | Config, Common & Infra | `infra-` | MEDIUM |
 | 9 | Conventions & Testing | `conventions-` | MEDIUM |
+
+> Note: Sections 2 (`module-`) and 7 (`relations-`) are the designated homes for the
+> **module-resolution rules** described in §2.1 (circular-dependency resolution, cross-module
+> wiring, loader scope). They are reserved now so those rules are added there consistently,
+> even though none exist in the first deliverable.
 
 ## 7. Base structure rule content (`struct-canonical-layout`)
 
@@ -208,6 +232,8 @@ Each a full per-file rule (§5 model):
 **Step 4 — Relations**
 `relations-field-resolvers`, `relations-dataloader`, `relations-cross-module-service`,
 `relations-events`, `relations-avoid-circular`.
+This section also hosts **module-resolution rules** (§2.1) — e.g. circular-dependency
+resolution strategies and cross-module wiring — which are not directory-layout rules.
 
 **Step 5 — App-level**
 `module-bootstrap`, `infra-config`, `infra-common`, `infra-graphql`, `infra-database`,
@@ -253,6 +279,9 @@ adding a new file to the map together with its rule.
   `GENERATED:START:rules` quick reference; **How to Use**; **Full Compiled Document**
   pointing at `./AGENTS.md`; a short callout to consult `struct-canonical-layout` first
   and `nestjs-best-practices` for behavioral rules.
+- Add a short index note stating the skill covers **both structure rules and
+  module-resolution rules** (§2.1), so future circular-dependency/wiring rules are expected
+  here rather than treated as out of scope.
 
 ## 12. Sources & references to cite
 
@@ -272,3 +301,5 @@ adding a new file to the map together with its rule.
 - The priority table and quick reference list every section/rule (no stale entries).
 - No rule duplicates a `nestjs-best-practices` behavioral rule; structural overlaps
   cross-reference it.
+- The section taxonomy and index explicitly reserve space for **module-resolution rules**
+  (§2.1) in `module-` and `relations-`, even when none exist yet.
