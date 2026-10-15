@@ -14,8 +14,10 @@ per parent — the N+1 problem. A `DataLoader` batches those per-parent loads wi
 tick into one query and memoizes them for the request. Loaders live in the feature's `loaders/`
 folder, are created per request, and are exposed through the GraphQL context.
 
-**Placement.** `modules/<feature>/loaders/<feature>.loader.ts`, provided request-scoped in the
-owning feature module and injected into the field resolvers that use it.
+**Placement.** `modules/<feature>/loaders/<feature>.loader.ts`, provided request-scoped by the
+module that declares the field and injected into the field resolvers that use it. For a
+cross-module relation, the declaring (consuming) module owns the loader and wraps the owning
+module's exported service.
 
 **Responsibilities.**
 

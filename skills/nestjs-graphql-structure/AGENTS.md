@@ -25,7 +25,8 @@ File-placement and anatomy guide for NestJS GraphQL applications, designed for A
    - 1.3 [Locate and Policy the Generated Schema Artifact](#13-locate-and-policy-the-generated-schema-artifact)
 2. [Modules & Bootstrap](#2-modules-bootstrap) — **CRITICAL**
    - 2.1 [Keep main.ts and app.module.ts Thin](#21-keep-main-ts-and-app-module-ts-thin)
-   - 2.2 [The Feature Module File](#22-the-feature-module-file)
+   - 2.2 [Export Only the Feature's Public API (Its Services)](#22-export-only-the-feature-s-public-api-its-services-)
+   - 2.3 [The Feature Module File](#23-the-feature-module-file)
 3. [Services](#3-services) — **HIGH**
    - 3.1 [Multiple Focused Services per Module](#31-multiple-focused-services-per-module)
    - 3.2 [Keep Service Methods Small and Focused](#32-keep-service-methods-small-and-focused)
@@ -320,7 +321,81 @@ Reference: [NestJS First Steps](https://docs.nestjs.com/first-steps) | [NestJS M
 
 ---
 
-### 2.2 The Feature Module File
+### 2.2 Export Only the Feature's Public API (Its Services)
+
+**Impact: HIGH** — one narrow entry point; internals stay private
+
+**Purpose.** A module's `exports` array is the feature's public API. In practice that is the
+feature's **service(s)** — the entry point other modules inject — plus any module it deliberately
+re-exports. Everything else the feature owns stays private. A wide export surface couples other
+features to your internals and makes change expensive.
+
+**Placement.** The `exports` array of `modules/<feature>/<feature>.module.ts`.
+
+**Responsibilities.**
+
+- Export the service(s) other modules need to inject.
+- Re-export an imported module when you deliberately want to share its providers.
+- Keep the export list as small as the feature's public API allows.
+
+**Never.**
+
+- Export a **repository** — data access stays behind the service.
+- Export a **resolver** — it is an entry point, not a dependency others inject.
+- Export an **entity, model, or input** — these are TypeScript types; import them directly, do
+  not route them through a module's `exports`.
+- Export a **loader** — a consumer that needs batching declares its own loader over the injected
+  service (see `relations-dataloader`).
+
+Guards are not published through `exports` either: a guard is a class you import directly and
+attach with `@UseGuards(...)`, or register globally with `APP_GUARD`.
+
+**Incorrect (the whole feature is public):**
+
+```typescript
+// modules/users/users.module.ts
+@Module({
+  providers: [UsersService, UsersRepository, UsersQueryResolver, UserOrdersLoader],
+  exports: [UsersService, UsersRepository, UsersQueryResolver, UserOrdersLoader], // all internals
+})
+export class UsersModule {}
+```
+
+Why it is wrong: other modules can now depend on the repository, the resolver, and the loader —
+none of those can change without breaking consumers, and the module has no private area.
+
+**Correct (one public entry point):**
+
+```typescript
+// modules/users/users.module.ts
+@Module({
+  imports: [MongooseModule.forFeature([{ name: User.name, schema: UserSchema }])],
+  providers: [UsersService, UsersRepository, UsersQueryResolver, UsersFieldResolver],
+  exports: [UsersService], // the feature's public API
+})
+export class UsersModule {}
+
+// A consumer imports the module and injects only the service
+@Module({ imports: [UsersModule] })
+export class OrdersModule {}
+
+@Injectable()
+export class OrdersService {
+  constructor(private readonly usersService: UsersService) {} // the one allowed dependency
+}
+```
+
+Why it is right: consumers see exactly one dependency (`UsersService`); the repository, resolvers,
+and other internals can change freely; and a provider is shared by re-exporting a module rather
+than widening the export list.
+
+Reference: [NestJS Modules — Shared modules](https://docs.nestjs.com/modules#shared-modules) | [NestJS Modules — Re-exporting](https://docs.nestjs.com/modules#module-re-exporting)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `arch-module-sharing`.
+
+---
+
+### 2.3 The Feature Module File
 
 **Impact: CRITICAL** — a module declares its own providers and exports
 
@@ -1195,9 +1270,9 @@ Reference: [NestJS Circular Dependency](https://docs.nestjs.com/fundamentals/cir
 **Impact: CRITICAL** — the module boundary stays intact
 
 **Purpose.** When a field on one type is backed by data owned by another feature (`User.orders`
-backed by the orders feature), resolve it by injecting the owning module's exported service or
-loader. Import that module; never reach into its repository, entity, or model. This keeps each
-module's data private and its public interface explicit.
+backed by the orders feature), resolve it by injecting the owning module's exported **service**.
+Import that module; never reach into its repository, entity, or model. This keeps each module's
+data private and its public interface explicit.
 
 **Placement.** The field resolver lives in the type-owning module
 (`modules/users/resolvers/users.field.resolver.ts`); its dependency comes from
@@ -1206,8 +1281,10 @@ module's data private and its public interface explicit.
 **Responsibilities.**
 
 - Import the owning module in this module's `imports`.
-- Inject the owning module's exported service (or a loader that wraps it).
+- Inject the owning module's exported **service**.
 - Depend on a service contract, not on another module's storage.
+- Wrap that service in a loader owned by the module that declares the field when batching is
+  needed (see `relations-dataloader`).
 
 **Never.**
 
@@ -1236,16 +1313,30 @@ export class UsersFieldResolver {
 Why it is wrong: two features own the orders collection, the module boundary is gone, and the
 orders feature can no longer change its storage safely.
 
-**Correct (import the owning module, inject its exported loader):**
+**Correct (import the owning module, inject its exported service):**
 
 ```typescript
-// OrdersModule exports OrdersLoader
-@Module({ imports: [OrdersModule] })
+// OrdersModule exports OrdersService — its public API (see module-export-policy)
+@Module({ imports: [OrdersModule], providers: [UserOrdersLoader] })
 export class UsersModule {}
+
+// The module that declares the field owns the loader and wraps the injected service.
+@Injectable({ scope: Scope.REQUEST })
+export class UserOrdersLoader {
+  constructor(private readonly ordersService: OrdersService) {}
+
+  private readonly byUser = new DataLoader<string, Order[]>((ids) =>
+    this.ordersService.findByUserIds([...ids]),
+  );
+
+  loadByUserId(id: string): Promise<Order[]> {
+    return this.byUser.load(id);
+  }
+}
 
 @Resolver(() => User)
 export class UsersFieldResolver {
-  constructor(private readonly ordersLoader: OrdersLoader) {}
+  constructor(private readonly ordersLoader: UserOrdersLoader) {}
 
   @ResolveField(() => [Order])
   orders(@Parent() user: User): Promise<Order[]> {
@@ -1254,9 +1345,9 @@ export class UsersFieldResolver {
 }
 ```
 
-Why it is right: the orders feature owns orders data and exposes one entry point; the users
-feature depends on that contract, so the boundary stays intact and orders storage can change
-freely.
+Why it is right: the orders feature owns orders data and exposes one entry point (`OrdersService`);
+the users feature depends on that service and keeps its own batched loader, so the boundary stays
+intact and orders storage can change freely.
 
 Reference: [NestJS Modules](https://docs.nestjs.com/modules)
 
@@ -1273,8 +1364,10 @@ per parent — the N+1 problem. A `DataLoader` batches those per-parent loads wi
 tick into one query and memoizes them for the request. Loaders live in the feature's `loaders/`
 folder, are created per request, and are exposed through the GraphQL context.
 
-**Placement.** `modules/<feature>/loaders/<feature>.loader.ts`, provided request-scoped in the
-owning feature module and injected into the field resolvers that use it.
+**Placement.** `modules/<feature>/loaders/<feature>.loader.ts`, provided request-scoped by the
+module that declares the field and injected into the field resolvers that use it. For a
+cross-module relation, the declaring (consuming) module owns the loader and wraps the owning
+module's exported service.
 
 **Responsibilities.**
 

@@ -53,6 +53,7 @@ Reference these guidelines when:
 ### 2. Modules & Bootstrap (CRITICAL)
 
 - `module-bootstrap` - Keep main.ts and app.module.ts Thin
+- `module-export-policy` - Export Only the Feature's Public API (Its Services)
 - `module-feature-module` - The Feature Module File
 
 ### 3. Services (HIGH)
