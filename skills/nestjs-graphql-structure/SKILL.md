@@ -47,6 +47,22 @@ Reference these guidelines when:
 ### 1. Application Structure (CRITICAL)
 
 - `struct-canonical-layout` - Canonical Application Structure
+
+### 3. Services (HIGH)
+
+- `service-single-responsibility` - Multiple Focused Services per Module
+
+### 4. GraphQL Resolvers (HIGH)
+
+- `resolver-organization` - Split Resolvers by Role into resolvers/
+
+### 5. GraphQL Types & Inputs (HIGH)
+
+- `type-inputs` - Define GraphQL Inputs in dto/
+
+### 6. Data Access (MEDIUM-HIGH)
+
+- `data-entity-mongodb` - Place MongoDB Entities in entities/
 <!-- GENERATED:END:rules -->
 
 ## How to Use
