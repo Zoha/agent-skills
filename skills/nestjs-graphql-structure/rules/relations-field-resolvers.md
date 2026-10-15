@@ -1,66 +1,66 @@
 ---
 title: Resolve Relations with @ResolveField
 impact: CRITICAL
-impactDescription: resolve relations on demand, in the module that owns the data
+impactDescription: resolve relations on demand, not eagerly
 tags: graphql, resolvefield, relations
 ---
 
 ## Resolve Relations with @ResolveField
 
-**Impact: CRITICAL (resolve relations on demand, in the module that owns the data)**
+**Impact: CRITICAL (resolve relations on demand, not eagerly)**
 
-**Purpose.** A relation field (`User.comments`, `User.orders`) is resolved with an
-`@ResolveField` method, on demand, only when the client requests it — never by eager-loading. Per
-`relations-owning-module`, that resolver lives in the module that owns the returned data and
-extends the other module's type.
+**Purpose.** A relation exposed on a type — a field pointing to other objects — is resolved with
+an `@ResolveField` method, on demand, only when the client requests it. Never eager-load relations
+in the parent query. This rule covers the mechanic; when the relation's data lives in another
+module, *who declares the field* is decided by `relations-owning-module`.
 
-**Placement.** `<data-owner>/resolvers/<type>-<feature>.resolver.ts`, for example
-`comments/resolvers/user-comments.resolver.ts`. The method name matches the GraphQL field.
+**Placement.** `modules/<owner>/resolvers/<type>-<feature>.resolver.ts` — the resolver lives with
+the module that owns the data the field returns. The method name matches the GraphQL field.
 
 **Responsibilities.**
 
-- Declare `@Resolver(() => ExtendedType)` for the type being extended.
+- Declare `@Resolver(() => OwnerType)` for the type the fields belong to.
 - Read the parent key with `@Parent()`.
-- Delegate to the module's own service (or a loader — see `relations-dataloader`).
+- Delegate to the owning module's own service or loader (see `relations-dataloader`).
 
 **Never.**
 
-- Eager-load every relation in the query resolver.
-- Query once per parent without batching (that is N+1 — see `relations-dataloader`).
-- Declare the field in the type's own module when the data lives elsewhere (see
-  `relations-owning-module`).
+- Eager-load relations in the query resolver.
+- Query once per parent inside the field resolver (that is N+1 — see `relations-dataloader`).
 - Reach into another module's repository, entity, or model.
 
-**Incorrect (every relation eager-loaded for every query):**
+**Incorrect (relations eager-loaded in the parent query):**
 
 ```typescript
-@Query(() => User)
-async user(@Args('id') id: string) {
-  return this.userModel
-    .findById(id)
-    .populate(['orders', 'comments', 'followers']); // loads all, asked or not
+// orders/resolvers/orders.query.resolver.ts
+@Query(() => Order)
+async order(@Args('id') id: string) {
+  return this.orderModel.findById(id).populate(['items', 'items.product']); // loads all, asked or not
 }
 ```
 
 Why it is wrong: the query does work the client did not request and pays for it on every call.
 
-**Correct (extension resolver in the data-owning module, resolved on demand):**
+**Correct (same-module relation resolved on demand and batched):**
 
 ```typescript
-// comments/resolvers/user-comments.resolver.ts
-@Resolver(() => User)
-export class UserCommentsResolver {
-  constructor(private readonly commentsService: CommentsService) {}
+// orders/resolvers/orders.field.resolver.ts — both Order and OrderItem are owned by OrdersModule
+@Resolver(() => Order)
+export class OrdersFieldResolver {
+  constructor(private readonly orderItemsLoader: OrderItemsLoader) {}
 
-  @ResolveField(() => [Comment])
-  comments(@Parent() user: User): Promise<Comment[]> {
-    return this.commentsService.findByUserId(user.id);
+  @ResolveField(() => [OrderItem])
+  items(@Parent() order: Order): Promise<OrderItem[]> {
+    return this.orderItemsLoader.loadByOrderId(order.id);
   }
 }
 ```
 
 Why it is right: the field is resolved only when asked, from the parent already in hand, by the
-module that owns comments — and it uses that module's own service.
+module that owns order items.
+
+For a relation whose data lives in **another** module, the same mechanic is declared in that
+module's own resolver — see `relations-owning-module`.
 
 Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
 

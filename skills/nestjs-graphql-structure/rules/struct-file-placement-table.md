@@ -20,7 +20,7 @@ full tree, and the linked rule gives the file's purpose and examples.
 | Feature module | `modules/<f>/<f>.module.ts` | `module-feature-module` |
 | Query resolver | `modules/<f>/resolvers/<f>.query.resolver.ts` | `resolver-organization` |
 | Mutation resolver | `modules/<f>/resolvers/<f>.mutation.resolver.ts` | `resolver-organization` |
-| Relation field resolver | `modules/<f>/resolvers/<type>-<f>.resolver.ts` | `relations-owning-module` |
+| Relation field resolver | `modules/<f>/resolvers/<type>-<f>.resolver.ts` | `relations-field-resolvers`, `relations-owning-module` |
 | Domain service | `modules/<f>/services/<f>.service.ts` | `service-single-responsibility` |
 | Custom repository | `modules/<f>/repositories/<f>.repository.ts` | `data-repository` |
 | GraphQL input | `modules/<f>/dto/create-<f>.input.ts` | `type-inputs` |
