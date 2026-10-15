@@ -21,7 +21,8 @@ File-placement and anatomy guide for NestJS GraphQL applications, designed for A
 
 1. [Application Structure](#1-application-structure) — **CRITICAL**
    - 1.1 [Canonical Application Structure](#11-canonical-application-structure)
-   - 1.2 [Locate and Policy the Generated Schema Artifact](#12-locate-and-policy-the-generated-schema-artifact)
+   - 1.2 [File Placement Table](#12-file-placement-table)
+   - 1.3 [Locate and Policy the Generated Schema Artifact](#13-locate-and-policy-the-generated-schema-artifact)
 2. [Modules & Bootstrap](#2-modules-bootstrap) — **CRITICAL**
    - 2.1 [Keep main.ts and app.module.ts Thin](#21-keep-main-ts-and-app-module-ts-thin)
    - 2.2 [The Feature Module File](#22-the-feature-module-file)
@@ -47,6 +48,10 @@ File-placement and anatomy guide for NestJS GraphQL applications, designed for A
    - 8.2 [Put Typed Configuration in config/](#82-put-typed-configuration-in-config-)
    - 8.3 [Put Database Setup and Migrations in infra/database/](#83-put-database-setup-and-migrations-in-infra-database-)
    - 8.4 [Put GraphQL Setup in infra/graphql/](#84-put-graphql-setup-in-infra-graphql-)
+9. [Conventions & Testing](#9-conventions-testing) — **MEDIUM**
+   - 9.1 [Use the Nest CLI Generator, Then Adjust](#91-use-the-nest-cli-generator-then-adjust)
+   - 9.2 [File and Class Naming Conventions](#92-file-and-class-naming-conventions)
+   - 9.3 [Test File Placement](#93-test-file-placement)
 
 ---
 
@@ -131,7 +136,54 @@ Reference: [NestJS Modules](https://docs.nestjs.com/modules) | [NestJS GraphQL R
 
 ---
 
-### 1.2 Locate and Policy the Generated Schema Artifact
+### 1.2 File Placement Table
+
+**Impact: HIGH** — one lookup answers "where does this file go?"
+
+**Purpose.** A single lookup from file kind to folder. Use it when you know what you are
+creating but not where it belongs; the base structure rule (`struct-canonical-layout`) shows the
+full tree, and the linked rule gives the file's purpose and examples.
+
+**Placement.** This rule is the index; each row points to the rule that owns the file kind.
+
+| File kind | Location | Rule |
+|-----------|----------|------|
+| Feature module | `modules/<f>/<f>.module.ts` | `module-feature-module` |
+| Query resolver | `modules/<f>/resolvers/<f>.query.resolver.ts` | `resolver-organization` |
+| Mutation resolver | `modules/<f>/resolvers/<f>.mutation.resolver.ts` | `resolver-organization` |
+| Field resolver | `modules/<f>/resolvers/<f>.field.resolver.ts` | `relations-field-resolvers` |
+| Domain service | `modules/<f>/services/<f>.service.ts` | `service-single-responsibility` |
+| Custom repository | `modules/<f>/repositories/<f>.repository.ts` | `data-repository` |
+| GraphQL input | `modules/<f>/dto/create-<f>.input.ts` | `type-inputs` |
+| GraphQL args | `modules/<f>/dto/find-<f>.args.ts` | `type-args` |
+| Persistence entity / object type | `modules/<f>/entities/<f>.entity.ts` | `data-entity-mongodb` |
+| GraphQL-only model (split) | `modules/<f>/models/<f>.model.ts` | `data-models-mappers` |
+| Mapper | `modules/<f>/mappers/<f>.mapper.ts` | `data-models-mappers` |
+| DataLoader | `modules/<f>/loaders/<f>.loader.ts` | `relations-dataloader` |
+| Domain event / listener | `modules/<f>/events/` | `relations-events` |
+| Config namespace | `config/` | `infra-config` |
+| Shared guard/filter/interceptor/pipe/scalar | `common/` | `infra-common` |
+| GraphQL setup / context | `infra/graphql/` | `infra-graphql` |
+| DB setup / migrations | `infra/database/` | `infra-database` |
+| Bootstrap | `main.ts` | `module-bootstrap` |
+| Composition root | `app.module.ts` | `module-bootstrap` |
+| Generated SDL | path from `autoSchemaFile` | `struct-schema-artifact` |
+| Unit test | co-located `<name>.spec.ts` | `conventions-testing` |
+| E2E test | `test/<f>.e2e-spec.ts` | `conventions-testing` |
+
+**Never.**
+
+- Invent a new folder for a file kind that already has a home above.
+- Place a file by the feature that first needs it rather than by its role.
+
+Every file kind resolves to exactly one folder here, so placement has a deterministic answer and
+the structure stays consistent as the app grows.
+
+Reference: [NestJS Modules](https://docs.nestjs.com/modules)
+
+---
+
+### 1.3 Locate and Policy the Generated Schema Artifact
 
 **Impact: MEDIUM** — the SDL is generated, not hand-edited
 
@@ -1578,6 +1630,183 @@ Why it is right: the GraphQL server is configured once, and every request gets i
 with its own loaders, so no cache leaks between requests.
 
 Reference: [NestJS GraphQL Quick Start](https://docs.nestjs.com/graphql/quick-start)
+
+---
+
+## 9. Conventions & Testing
+
+**Section Impact: MEDIUM**
+
+### 9.1 Use the Nest CLI Generator, Then Adjust
+
+**Impact: MEDIUM** — scaffold with the generator, then place files per this skill
+
+**Purpose.** Use `nest g` to scaffold boilerplate, then move and adjust the generated files to
+the canonical structure. The generator wires providers and imports for you; this skill decides
+the final layout. Enable the GraphQL CLI plugin so the generator and compiler infer `@Field`
+types.
+
+**Placement.** Run from the project root; adjust the generated files into `modules/<feature>/`.
+
+**Responsibilities.**
+
+- Scaffold with `nest g resource <feature>` (GraphQL transport) or
+  `nest g module|service|resolver`.
+- Move generated files into the canonical subfolders.
+- Enable the `@nestjs/graphql` plugin in `nest-cli.json`.
+
+**Never.**
+
+- Hand-write boilerplate the generator produces.
+- Leave generated files in a default layout that differs from this skill.
+- Ship a `nest-cli.json` without the GraphQL plugin in a code-first GraphQL app.
+
+**Incorrect (no plugin, flat default layout):**
+
+```json
+// nest-cli.json
+{ "collection": "@nestjs/schematics", "sourceRoot": "src" }
+```
+
+Why it is wrong: without the plugin every `number` and nullable field needs a hand-written type
+function, and a generated resource lands flat and then has to be reorganized by hand.
+
+**Correct (plugin enabled, scaffold then place):**
+
+```json
+// nest-cli.json
+{
+  "collection": "@nestjs/schematics",
+  "sourceRoot": "src",
+  "compilerOptions": {
+    "plugins": [
+      {
+        "name": "@nestjs/graphql",
+        "options": { "typeFileNameSuffix": [".input.ts", ".model.ts", ".entity.ts"] }
+      }
+    ]
+  }
+}
+```
+
+```bash
+nest g resource users
+# then move the generated files into modules/users/{resolvers,services,dto,entities}/ per this skill
+```
+
+Why it is right: boilerplate and wiring are generated and type metadata is inferred, while the
+final layout still follows this skill.
+
+Reference: [NestJS CRUD Generator](https://docs.nestjs.com/recipes/crud-generator) | [NestJS CLI Plugin](https://docs.nestjs.com/cli/overview)
+
+---
+
+### 9.2 File and Class Naming Conventions
+
+**Impact: MEDIUM** — predictable names make placement obvious
+
+**Purpose.** Consistent naming is the cheapest way to keep the structure discoverable. Files are
+named by feature and role; the role suffix matches the folder the file lives in; classes are
+PascalCase and named after the concept.
+
+**Placement.** Throughout `src/`.
+
+**Responsibilities.**
+
+- Name files `<feature>.<role>.ts` (or `<verb>-<feature>.<role>.ts` for inputs/args).
+- Name classes after the concept, in PascalCase, ending with the role.
+
+**Never.**
+
+- Mix roles in one filename.
+- Use generic names (`helpers.ts`, `utils.ts`) for feature code.
+- Use a different suffix for the same role in different features.
+
+**Incorrect (role unclear, generic, wrong case):**
+
+```text
+modules/users/
+  usersStuff.ts          # role unclear
+  helper.ts              # generic
+  UsersQueryResolver.ts  # filename should be lower-case role-based
+```
+
+Why it is wrong: the filename does not say what the file is or where it belongs.
+
+**Correct (one pattern per kind):**
+
+| Kind | File pattern | Class |
+|------|--------------|-------|
+| Feature module | `<feature>.module.ts` | `<Feature>Module` |
+| Query resolver | `<feature>.query.resolver.ts` | `<Feature>QueryResolver` |
+| Mutation resolver | `<feature>.mutation.resolver.ts` | `<Feature>MutationResolver` |
+| Field resolver | `<feature>.field.resolver.ts` | `<Feature>FieldResolver` |
+| Service | `<feature>.service.ts` / `<feature>-<concern>.service.ts` | `<Feature>Service` |
+| Repository | `<feature>.repository.ts` | `<Feature>Repository` |
+| Entity | `<feature>.entity.ts` | `<Feature>` |
+| Input | `create-<feature>.input.ts` | `Create<Feature>Input` |
+| Args | `find-<feature>.args.ts` | `Find<Feature>Args` |
+| Loader | `<feature>.loader.ts` | `<Feature>Loader` |
+| Event | `<feature>-<action>.event.ts` | `<Feature><Action>Event` |
+| Listener | `<feature>-<action>.listener.ts` | `<Feature><Action>Listener` |
+| Unit test | `<name>.spec.ts` | — |
+| E2E test | `<feature>.e2e-spec.ts` | — |
+
+Why it is right: the role suffix matches the folder and the class name, so any file can be
+located by name alone.
+
+Reference: [NestJS Modules](https://docs.nestjs.com/modules)
+
+---
+
+### 9.3 Test File Placement
+
+**Impact: MEDIUM** — tests live next to what they test
+
+**Purpose.** Unit tests are co-located with the code they cover, named `<name>.spec.ts`.
+End-to-end tests live in a top-level `test/` folder. Neither lives in a technical `tests/`
+layer, and tests follow the same feature-first organization as the code.
+
+**Placement.** Unit: beside the subject, for example
+`modules/<feature>/services/<feature>.service.spec.ts`. E2E: `test/<feature>.e2e-spec.ts`.
+
+**Responsibilities.**
+
+- Keep unit tests beside their subject.
+- Keep e2e tests in `test/`.
+- Mirror the feature structure in test names.
+
+**Never.**
+
+- Put unit tests in a separate top-level layer.
+- Mix e2e specs among unit specs.
+- Let the test layout diverge from the source layout.
+
+**Incorrect (parallel technical layer, e2e mixed with unit):**
+
+```text
+src/
+└── __tests__/
+    ├── usersService.test.ts   # separated from its subject
+    └── e2e-users.test.ts      # e2e mixed into the unit folder
+```
+
+Why it is wrong: tests are detached from their subjects and the two kinds are mixed, so neither
+is easy to find or run.
+
+**Correct (unit co-located, e2e in test/):**
+
+```text
+modules/users/services/
+├── users.service.ts
+└── users.service.spec.ts       # unit, beside its subject
+test/
+└── users.e2e-spec.ts           # e2e, one home
+```
+
+Why it is right: a unit test sits with its subject, and every e2e test has one place.
+
+Reference: [NestJS Testing](https://docs.nestjs.com/fundamentals/testing)
 
 ---
 

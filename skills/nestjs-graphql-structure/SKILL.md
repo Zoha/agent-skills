@@ -47,6 +47,7 @@ Reference these guidelines when:
 ### 1. Application Structure (CRITICAL)
 
 - `struct-canonical-layout` - Canonical Application Structure
+- `struct-file-placement-table` - File Placement Table
 - `struct-schema-artifact` - Locate and Policy the Generated Schema Artifact
 
 ### 2. Modules & Bootstrap (CRITICAL)
@@ -87,6 +88,12 @@ Reference these guidelines when:
 - `infra-config` - Put Typed Configuration in config/
 - `infra-database` - Put Database Setup and Migrations in infra/database/
 - `infra-graphql` - Put GraphQL Setup in infra/graphql/
+
+### 9. Conventions & Testing (MEDIUM)
+
+- `conventions-cli-generator` - Use the Nest CLI Generator, Then Adjust
+- `conventions-naming` - File and Class Naming Conventions
+- `conventions-testing` - Test File Placement
 <!-- GENERATED:END:rules -->
 
 ## How to Use
