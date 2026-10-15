@@ -64,6 +64,7 @@ Reference these guidelines when:
 ### 4. GraphQL Resolvers (HIGH)
 
 - `resolver-organization` - Split Resolvers by Role into resolvers/
+- `resolver-per-type` - One Resolver File per Type That Has Field Resolvers
 
 ### 5. GraphQL Types & Inputs (HIGH)
 

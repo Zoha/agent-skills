@@ -50,7 +50,8 @@ src/
         ├── resolvers/
         │   ├── <feature>.query.resolver.ts      # queries
         │   ├── <feature>.mutation.resolver.ts   # mutations
-        │   └── <type>-<feature>.resolver.ts      # @ResolveField extending another module's type (data owner owns the field)
+        │   ├── <type>-<feature>.resolver.ts      # @ResolveField extending another module's type (data owner owns the field)
+        │   └── <type>.resolver.ts                # @ResolveField for a nested/computed type of this module
         ├── services/
         │   └── <feature>.service.ts             # domain logic (multiple per module)
         ├── repositories/

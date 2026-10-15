@@ -60,7 +60,8 @@ Why it is right: the field is resolved only when asked, from the parent already 
 module that owns order items.
 
 For a relation whose data lives in **another** module, the same mechanic is declared in that
-module's own resolver — see `relations-owning-module`.
+module's own resolver — see `relations-owning-module`. For nested/computed fields on a sub-type of
+this module's own graph, keep them in one file per type — see `resolver-per-type`.
 
 Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
 

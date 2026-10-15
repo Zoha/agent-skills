@@ -32,6 +32,7 @@ File-placement and anatomy guide for NestJS GraphQL applications, designed for A
    - 3.2 [Keep Service Methods Small and Focused](#32-keep-service-methods-small-and-focused)
 4. [GraphQL Resolvers](#4-graphql-resolvers) — **HIGH**
    - 4.1 [Split Resolvers by Role into resolvers/](#41-split-resolvers-by-role-into-resolvers-)
+   - 4.2 [One Resolver File per Type That Has Field Resolvers](#42-one-resolver-file-per-type-that-has-field-resolvers)
 5. [GraphQL Types & Inputs](#5-graphql-types-inputs) — **HIGH**
    - 5.1 [Define @Args Classes in dto/](#51-define-args-classes-in-dto-)
    - 5.2 [Define GraphQL Inputs in dto/](#52-define-graphql-inputs-in-dto-)
@@ -107,7 +108,8 @@ src/
         ├── resolvers/
         │   ├── <feature>.query.resolver.ts      # queries
         │   ├── <feature>.mutation.resolver.ts   # mutations
-        │   └── <type>-<feature>.resolver.ts      # @ResolveField extending another module's type (data owner owns the field)
+        │   ├── <type>-<feature>.resolver.ts      # @ResolveField extending another module's type (data owner owns the field)
+        │   └── <type>.resolver.ts                # @ResolveField for a nested/computed type of this module
         ├── services/
         │   └── <feature>.service.ts             # domain logic (multiple per module)
         ├── repositories/
@@ -157,6 +159,7 @@ full tree, and the linked rule gives the file's purpose and examples.
 | Query resolver | `modules/<f>/resolvers/<f>.query.resolver.ts` | `resolver-organization` |
 | Mutation resolver | `modules/<f>/resolvers/<f>.mutation.resolver.ts` | `resolver-organization` |
 | Relation field resolver | `modules/<f>/resolvers/<type>-<f>.resolver.ts` | `relations-field-resolvers`, `relations-owning-module` |
+| Nested/computed field resolver | `modules/<f>/resolvers/<type>.resolver.ts` | `resolver-per-type` |
 | Domain service | `modules/<f>/services/<f>.service.ts` | `service-single-responsibility` |
 | Custom repository | `modules/<f>/repositories/<f>.repository.ts` | `data-repository` |
 | GraphQL input | `modules/<f>/dto/create-<f>.input.ts` | `type-inputs` |
@@ -762,6 +765,81 @@ export class UsersMutationResolver {
 
 Why it is right: each file is one type and one role, resolvers only translate and delegate,
 and the parent type is declared once per class so field resolvers can attach.
+
+Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
+
+---
+
+### 4.2 One Resolver File per Type That Has Field Resolvers
+
+**Impact: HIGH** — the resolver file is the registry of a type's resolved fields
+
+**Purpose.** Some fields on an `@ObjectType` cannot be read from the stored object — a nested value
+object's computed fields (`UserPreferences.darkMode`), or a field derived elsewhere. Each needs an
+`@ResolveField`. GraphQL never records which fields have resolvers, so the code must: a type that
+has any field resolver gets **one** resolver file, and that file contains all of them. The file's
+presence is the signal that the type has resolved fields; a type with no such file has only plain
+fields.
+
+**Placement.** `modules/<owner>/resolvers/<type>.resolver.ts`, where `<owner>` is the module that
+owns the type and `<type>` is the kebab name of the type being resolved — for example
+`users/resolvers/user-preferences.resolver.ts` for the `UserPreferences` type. Class name
+`<Type>Resolver`.
+
+**Responsibilities.**
+
+- Declare `@Resolver(() => TheType)` and one `@ResolveField` per resolved field.
+- Make the method name equal the GraphQL field name.
+- Hold **every** field resolver for that type.
+
+**Never.**
+
+- Split a type's field resolvers across several files.
+- Create a resolver file for a type whose fields are all plain (it needs none).
+- Put query or mutation resolvers here — those belong to the top-level type's resolver.
+
+**Incorrect (a type's resolved fields are spread out, so which are resolved is unclear):**
+
+```typescript
+// users/resolvers/users.query.resolver.ts — one UserPreferences field resolver buried with queries
+@Resolver(() => UserPreferences)
+export class UsersQueryResolver {
+  @ResolveField(() => String)
+  greeting(@Parent() prefs: UserPreferences) { /* ... */ }
+}
+// users/resolvers/user-preferences.extra.resolver.ts — another UserPreferences resolver elsewhere
+// Result: nothing tells a reader which UserPreferences fields are resolved.
+```
+
+Why it is wrong: to learn which fields of `UserPreferences` have custom resolvers you must search
+the whole module.
+
+**Correct (one registry file for the type):**
+
+```typescript
+// users/resolvers/user-preferences.resolver.ts
+@Resolver(() => UserPreferences)
+export class UserPreferencesResolver {
+  constructor(private readonly preferencesService: UserPreferencesService) {}
+
+  @ResolveField(() => String)
+  greeting(@Parent() prefs: UserPreferences): string {
+    return this.preferencesService.greeting(prefs.locale);
+  }
+
+  @ResolveField(() => Boolean)
+  onboardingComplete(@Parent() prefs: UserPreferences): Promise<boolean> {
+    return this.preferencesService.isOnboardingComplete(prefs.userId);
+  }
+}
+```
+
+Why it is right: every `@ResolveField` for `UserPreferences` lives in one file; its existence says
+the type has resolved fields, and opening it lists exactly which.
+
+This is a same-module ("nested") resolver. When a field is backed by data another module owns, the
+file lives in that module instead — see `relations-owning-module`. The module a resolver lives in
+is what distinguishes a nested field from a cross-module relation.
 
 Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
 
@@ -1489,7 +1567,8 @@ Why it is right: the field is resolved only when asked, from the parent already 
 module that owns order items.
 
 For a relation whose data lives in **another** module, the same mechanic is declared in that
-module's own resolver — see `relations-owning-module`.
+module's own resolver — see `relations-owning-module`. For nested/computed fields on a sub-type of
+this module's own graph, keep them in one file per type — see `resolver-per-type`.
 
 Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
 
@@ -2028,6 +2107,7 @@ Why it is wrong: the filename does not say what the file is or where it belongs.
 | Query resolver | `<feature>.query.resolver.ts` | `<Feature>QueryResolver` |
 | Mutation resolver | `<feature>.mutation.resolver.ts` | `<Feature>MutationResolver` |
 | Relation field resolver | `<type>-<feature>.resolver.ts` | `<Type><Feature>Resolver` |
+| Nested/computed field resolver | `<type>.resolver.ts` | `<Type>Resolver` |
 | Service | `<feature>.service.ts` / `<feature>-<concern>.service.ts` | `<Feature>Service` |
 | Repository | `<feature>.repository.ts` | `<Feature>Repository` |
 | Entity | `<feature>.entity.ts` | `<Feature>` |
