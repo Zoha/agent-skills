@@ -63,6 +63,7 @@ Reference these guidelines when:
 
 ### 4. GraphQL Resolvers (HIGH)
 
+- `resolver-computed-fields` - Declare Fields on the Type; Resolve Computed Ones in the Resolver
 - `resolver-organization` - Split Resolvers by Role into resolvers/
 - `resolver-per-type` - One Resolver File per Type That Has Field Resolvers
 
