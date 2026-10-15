@@ -48,6 +48,10 @@ Reference these guidelines when:
 
 - `struct-canonical-layout` - Canonical Application Structure
 
+### 2. Modules & Bootstrap (CRITICAL)
+
+- `module-feature-module` - The Feature Module File
+
 ### 3. Services (HIGH)
 
 - `service-single-responsibility` - Multiple Focused Services per Module
@@ -58,11 +62,14 @@ Reference these guidelines when:
 
 ### 5. GraphQL Types & Inputs (HIGH)
 
+- `type-args` - Define @Args Classes in dto/
 - `type-inputs` - Define GraphQL Inputs in dto/
 
 ### 6. Data Access (MEDIUM-HIGH)
 
 - `data-entity-mongodb` - Place MongoDB Entities in entities/
+- `data-models-mappers` - Split models/ and mappers/ When API Differs From Storage
+- `data-repository` - Keep Data Access in repositories/
 <!-- GENERATED:END:rules -->
 
 ## How to Use

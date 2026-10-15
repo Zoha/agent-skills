@@ -1,0 +1,86 @@
+---
+title: The Feature Module File
+impact: CRITICAL
+impactDescription: a module declares its own providers and exports
+tags: modules, providers, encapsulation
+---
+
+## The Feature Module File
+
+**Impact: CRITICAL (a module declares its own providers and exports)**
+
+**Purpose.** `<feature>.module.ts` wires a feature together: it declares the feature's
+providers (resolvers, services, repositories), imports what those providers need, and exports
+the small set of providers other modules may inject. The module is the feature's public
+interface.
+
+**Placement.** `modules/<feature>/<feature>.module.ts`. Class name `<Feature>Module`.
+
+**Responsibilities.**
+
+- List resolvers, services, and repositories in `providers`.
+- Import the modules whose exported providers this feature injects (for example
+  `MongooseModule.forFeature([...])` or another feature module).
+- Export only the providers other modules need.
+- Register feature-local listeners, guards, and other providers.
+
+**Never.**
+
+- Register feature providers in `AppModule` directly.
+- Export everything by default.
+- Put business logic or configuration in the module class.
+
+**Incorrect (everything in AppModule, everything exported):**
+
+```typescript
+// app.module.ts — every feature provider registered here
+@Module({
+  providers: [UsersService, UsersResolver, UsersRepository, OrdersService, OrdersResolver],
+})
+export class AppModule {}
+
+// modules/users/users.module.ts — exports everything "just in case"
+@Module({
+  providers: [UsersService, UsersRepository, UsersResolver],
+  exports: [UsersService, UsersRepository, UsersResolver],
+})
+export class UsersModule {}
+```
+
+Why it is wrong: `AppModule` becomes the wiring for every feature, so nothing is
+encapsulated, and exporting the repository and resolver turns internals into public API.
+
+**Correct (feature wires itself, minimal exports):**
+
+```typescript
+// modules/users/users.module.ts
+@Module({
+  imports: [MongooseModule.forFeature([{ name: User.name, schema: UserSchema }])],
+  providers: [
+    UsersService,
+    UsersProfileService,
+    UsersRepository,
+    UsersQueryResolver,
+    UsersMutationResolver,
+  ],
+  exports: [UsersService], // only what other modules inject
+})
+export class UsersModule {}
+
+// app.module.ts
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    DatabaseModule,
+    GraphQLModule,
+    UsersModule,
+    OrdersModule,
+  ],
+})
+export class AppModule {}
+```
+
+Why it is right: the feature owns its wiring, exposes a minimal interface, and `AppModule`
+only lists features and infrastructure.
+
+Reference: [NestJS Modules](https://docs.nestjs.com/modules)

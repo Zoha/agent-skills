@@ -21,14 +21,19 @@ File-placement and anatomy guide for NestJS GraphQL applications, designed for A
 
 1. [Application Structure](#1-application-structure) — **CRITICAL**
    - 1.1 [Canonical Application Structure](#11-canonical-application-structure)
+2. [Modules & Bootstrap](#2-modules-bootstrap) — **CRITICAL**
+   - 2.1 [The Feature Module File](#21-the-feature-module-file)
 3. [Services](#3-services) — **HIGH**
    - 3.1 [Multiple Focused Services per Module](#31-multiple-focused-services-per-module)
 4. [GraphQL Resolvers](#4-graphql-resolvers) — **HIGH**
    - 4.1 [Split Resolvers by Role into resolvers/](#41-split-resolvers-by-role-into-resolvers-)
 5. [GraphQL Types & Inputs](#5-graphql-types-inputs) — **HIGH**
-   - 5.1 [Define GraphQL Inputs in dto/](#51-define-graphql-inputs-in-dto-)
+   - 5.1 [Define @Args Classes in dto/](#51-define-args-classes-in-dto-)
+   - 5.2 [Define GraphQL Inputs in dto/](#52-define-graphql-inputs-in-dto-)
 6. [Data Access](#6-data-access) — **MEDIUM-HIGH**
    - 6.1 [Place MongoDB Entities in entities/](#61-place-mongodb-entities-in-entities-)
+   - 6.2 [Split models/ and mappers/ When API Differs From Storage](#62-split-models-and-mappers-when-api-differs-from-storage)
+   - 6.3 [Keep Data Access in repositories/](#63-keep-data-access-in-repositories-)
 
 ---
 
@@ -110,6 +115,92 @@ test/
 - A new file kind is placed by its *role*, not by the feature it happens to serve first.
 
 Reference: [NestJS Modules](https://docs.nestjs.com/modules) | [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
+
+---
+
+## 2. Modules & Bootstrap
+
+**Section Impact: CRITICAL**
+
+### 2.1 The Feature Module File
+
+**Impact: CRITICAL** — a module declares its own providers and exports
+
+**Purpose.** `<feature>.module.ts` wires a feature together: it declares the feature's
+providers (resolvers, services, repositories), imports what those providers need, and exports
+the small set of providers other modules may inject. The module is the feature's public
+interface.
+
+**Placement.** `modules/<feature>/<feature>.module.ts`. Class name `<Feature>Module`.
+
+**Responsibilities.**
+
+- List resolvers, services, and repositories in `providers`.
+- Import the modules whose exported providers this feature injects (for example
+  `MongooseModule.forFeature([...])` or another feature module).
+- Export only the providers other modules need.
+- Register feature-local listeners, guards, and other providers.
+
+**Never.**
+
+- Register feature providers in `AppModule` directly.
+- Export everything by default.
+- Put business logic or configuration in the module class.
+
+**Incorrect (everything in AppModule, everything exported):**
+
+```typescript
+// app.module.ts — every feature provider registered here
+@Module({
+  providers: [UsersService, UsersResolver, UsersRepository, OrdersService, OrdersResolver],
+})
+export class AppModule {}
+
+// modules/users/users.module.ts — exports everything "just in case"
+@Module({
+  providers: [UsersService, UsersRepository, UsersResolver],
+  exports: [UsersService, UsersRepository, UsersResolver],
+})
+export class UsersModule {}
+```
+
+Why it is wrong: `AppModule` becomes the wiring for every feature, so nothing is
+encapsulated, and exporting the repository and resolver turns internals into public API.
+
+**Correct (feature wires itself, minimal exports):**
+
+```typescript
+// modules/users/users.module.ts
+@Module({
+  imports: [MongooseModule.forFeature([{ name: User.name, schema: UserSchema }])],
+  providers: [
+    UsersService,
+    UsersProfileService,
+    UsersRepository,
+    UsersQueryResolver,
+    UsersMutationResolver,
+  ],
+  exports: [UsersService], // only what other modules inject
+})
+export class UsersModule {}
+
+// app.module.ts
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    DatabaseModule,
+    GraphQLModule,
+    UsersModule,
+    OrdersModule,
+  ],
+})
+export class AppModule {}
+```
+
+Why it is right: the feature owns its wiring, exposes a minimal interface, and `AppModule`
+only lists features and infrastructure.
+
+Reference: [NestJS Modules](https://docs.nestjs.com/modules)
 
 ---
 
@@ -292,7 +383,83 @@ Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
 
 **Section Impact: HIGH**
 
-### 5.1 Define GraphQL Inputs in dto/
+### 5.1 Define @Args Classes in dto/
+
+**Impact: HIGH** — group and validate operation arguments
+
+**Purpose.** When an operation takes more than one or two arguments, or the arguments form a
+logical group (pagination, filters, sorting), define an `@ArgsType()` class in the feature's
+`dto/` folder instead of a list of raw `@Args('x')` scalars. It groups and validates the
+arguments the same way `@InputType` does for inputs.
+
+**Placement.** `modules/<feature>/dto/find-<feature>.args.ts`. Class names end in `Args`.
+
+**Responsibilities.**
+
+- Group related arguments on one `@ArgsType()` class.
+- Validate each field with `class-validator`.
+- Supply sensible defaults (for example page or limit).
+
+**Never.**
+
+- Scatter many raw `@Args('field')` scalars across a resolver.
+- Accept unvalidated filter or sort strings straight from the client.
+- Reuse an `@InputType` class as an args type (or vice versa) just to avoid a file.
+
+**Incorrect (raw, unvalidated arguments):**
+
+```typescript
+@Query(() => [User])
+users(
+  @Args('search') search: string,
+  @Args('page') page: number,
+  @Args('limit') limit: number,
+  @Args('sort') sort: string,
+) {
+  // every argument raw and unvalidated, defaults are ad hoc
+  return this.usersService.findAll({ search, page, limit, sort });
+}
+```
+
+Why it is wrong: argument handling is repeated in every resolver, nothing is validated, and
+paging defaults are handled per call site.
+
+**Correct (one validated args type, defaults included):**
+
+```typescript
+// dto/find-users.args.ts
+@ArgsType()
+export class FindUsersArgs {
+  @Field({ nullable: true })
+  @IsOptional()
+  @IsString() @MaxLength(100)
+  search?: string;
+
+  @Field(() => Int, { defaultValue: 1 })
+  @Type(() => Number)
+  @IsInt() @Min(1)
+  page = 1;
+
+  @Field(() => Int, { defaultValue: 20 })
+  @Type(() => Number)
+  @IsInt() @Min(1) @Max(100)
+  limit = 20;
+}
+
+@Query(() => [User])
+users(@Args() args: FindUsersArgs) {
+  return this.usersService.findAll(args);
+}
+```
+
+Why it is right: the argument group is one validated, reusable, named type with sensible
+defaults, and the resolver stays a one-line translation.
+
+Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
+
+---
+
+### 5.2 Define GraphQL Inputs in dto/
 
 **Impact: HIGH** — validated inputs are the API boundary
 
@@ -454,6 +621,183 @@ that need a different exposure — keep the entity persistence-only and move the
 to `models/` with a `mappers/` file. See `data-models-mappers`.
 
 Reference: [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb) | [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
+
+---
+
+### 6.2 Split models/ and mappers/ When API Differs From Storage
+
+**Impact: MEDIUM-HIGH** — keep the public graph decoupled from the database
+
+**Purpose.** By default a MongoDB entity doubles as its GraphQL `@ObjectType` (see
+`data-entity-mongodb`). When the exposed shape stops matching the stored shape — computed
+fields, relation-only fields, renamed ids, or fields that need different exposure — split
+them: keep the entity persistence-only in `entities/`, put the GraphQL `@ObjectType` in
+`models/`, and convert between them in `mappers/`.
+
+**Placement.**
+
+- `modules/<feature>/entities/<feature>.entity.ts` — persistence only (keep `@Schema`/`@Prop`,
+  drop `@ObjectType`/`@Field`).
+- `modules/<feature>/models/<feature>.model.ts` — the GraphQL `@ObjectType`.
+- `modules/<feature>/mappers/<feature>.mapper.ts` — entity → model (including `_id` → `id`).
+
+**Responsibilities.**
+
+- Model: exactly the fields the API exposes.
+- Mapper: a pure conversion from entity to model, handling id mapping and computed fields.
+
+**Never.**
+
+- Add `@Field()` back onto the persistence entity "just here".
+- Return the raw document, leaking `_id`, `__v`, and internal flags.
+- Do the conversion inline in more than one resolver or service.
+
+**Incorrect (persistence document returned as the API type, internals leaking):**
+
+```typescript
+@Query(() => User)
+async user(@Args('id') id: string) {
+  return this.userModel.findById(id).lean(); // { _id, __v, passwordHash, email, ... }
+}
+```
+
+Why it is wrong: the schema simply mirrors the database, and fields that must never leave the
+server reach clients.
+
+**Correct (entity stays persistence-only, model is the public graph, mapper converts):**
+
+```typescript
+// entities/user.entity.ts — persistence only
+@Schema({ timestamps: true })
+export class User {
+  @Prop({ required: true, unique: true })
+  email: string;
+
+  @Prop({ required: true, select: false })
+  passwordHash: string;
+
+  @Prop()
+  avatarKey?: string;
+}
+
+// models/user.model.ts — the public graph
+@ObjectType()
+export class UserModel {
+  @Field(() => ID)
+  id: string;
+
+  @Field()
+  email: string;
+
+  @Field(() => String, { nullable: true })
+  avatarUrl?: string; // computed from avatarKey
+
+  @Field(() => Int)
+  postCount: number;
+}
+
+// mappers/user.mapper.ts
+export function toUserModel(doc: UserDocument, postCount: number): UserModel {
+  return {
+    id: doc._id.toString(),
+    email: doc.email,
+    avatarUrl: doc.avatarKey ? cdnUrl(doc.avatarKey) : null,
+    postCount,
+  };
+}
+```
+
+Why it is right: the database shape can change without touching the schema, the public graph
+exposes only intended fields, and the conversion lives in one testable place.
+
+Use this split only when the shapes actually diverge. For one-to-one domain objects, the
+merged entity from `data-entity-mongodb` is simpler.
+
+Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers) | [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb)
+
+---
+
+### 6.3 Keep Data Access in repositories/
+
+**Impact: MEDIUM-HIGH** — services stay free of ORM detail
+
+**Purpose.** A repository is the only place in a feature that talks to the database. It wraps
+the model/ORM and exposes intention-revealing methods. Services depend on the repository;
+nothing else touches the model.
+
+**Placement.** `modules/<feature>/repositories/<feature>.repository.ts`. Class name
+`<Feature>Repository`.
+
+**Responsibilities.**
+
+- Encapsulate every model/ORM call (queries, updates, transactions).
+- Return domain entities to callers.
+- Accept plain arguments and filter objects.
+
+**Never.**
+
+- Contain business rules or GraphQL types.
+- Leak the raw model or query builder to callers.
+- Be exported to other modules as a shared data layer — other modules go through services.
+
+**Incorrect (ORM calls and a query pipeline inlined in the service):**
+
+```typescript
+// services/users.service.ts
+@Injectable()
+export class UsersService {
+  constructor(@InjectModel(User.name) private userModel: Model<UserDocument>) {}
+
+  async findActiveWithOrders(minOrders: number) {
+    return this.userModel.aggregate([
+      { $match: { isActive: true } },
+      { $lookup: { from: 'orders', localField: '_id', foreignField: 'userId', as: 'orders' } },
+      { $match: { 'orders.0': { $exists: true } } },
+      // ... a long pipeline living in business code
+    ]);
+  }
+}
+```
+
+Why it is wrong: the service owns persistence detail, so changing the query or the store means
+editing business code, and the query cannot be reused or tested in isolation.
+
+**Correct (repository encapsulates persistence, service reads as intent):**
+
+```typescript
+// repositories/users.repository.ts
+@Injectable()
+export class UsersRepository {
+  constructor(@InjectModel(User.name) private readonly userModel: Model<UserDocument>) {}
+
+  findById(id: string): Promise<UserDocument | null> {
+    return this.userModel.findById(id).exec();
+  }
+
+  findActiveWithMinOrders(minOrders: number): Promise<UserDocument[]> {
+    return this.userModel.aggregate([/* pipeline */]).exec();
+  }
+
+  create(data: Partial<User>): Promise<UserDocument> {
+    return this.userModel.create(data);
+  }
+}
+
+// services/users.service.ts
+@Injectable()
+export class UsersService {
+  constructor(private readonly usersRepository: UsersRepository) {}
+
+  async findActiveWithOrders(): Promise<User[]> {
+    return this.usersRepository.findActiveWithMinOrders(1);
+  }
+}
+```
+
+Why it is right: persistence detail lives in one place; the service reads as business intent
+and depends on an injected repository that is trivial to mock.
+
+Reference: [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb) | [Repository pattern](https://martinfowler.com/eaaCatalog/repository.html)
 
 ---
 
