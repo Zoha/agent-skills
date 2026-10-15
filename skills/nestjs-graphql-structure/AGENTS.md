@@ -34,6 +34,12 @@ File-placement and anatomy guide for NestJS GraphQL applications, designed for A
    - 6.1 [Place MongoDB Entities in entities/](#61-place-mongodb-entities-in-entities-)
    - 6.2 [Split models/ and mappers/ When API Differs From Storage](#62-split-models-and-mappers-when-api-differs-from-storage)
    - 6.3 [Keep Data Access in repositories/](#63-keep-data-access-in-repositories-)
+7. [Relations & Cross-Module](#7-relations-cross-module) — **CRITICAL**
+   - 7.1 [Resolve Circular Module Dependencies](#71-resolve-circular-module-dependencies)
+   - 7.2 [Resolve Cross-Module Fields via the Owning Service](#72-resolve-cross-module-fields-via-the-owning-service)
+   - 7.3 [Batch Relations with a Per-Request DataLoader](#73-batch-relations-with-a-per-request-dataloader)
+   - 7.4 [Decouple Modules with Events](#74-decouple-modules-with-events)
+   - 7.5 [Resolve Relations with @ResolveField](#75-resolve-relations-with-resolvefield)
 
 ---
 
@@ -798,6 +804,377 @@ Why it is right: persistence detail lives in one place; the service reads as bus
 and depends on an injected repository that is trivial to mock.
 
 Reference: [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb) | [Repository pattern](https://martinfowler.com/eaaCatalog/repository.html)
+
+---
+
+## 7. Relations & Cross-Module
+
+**Section Impact: CRITICAL**
+
+### 7.1 Resolve Circular Module Dependencies
+
+**Impact: CRITICAL** — a cycle is an architecture bug, not a wiring problem
+
+**Purpose.** A circular dependency is when module A imports module B and B imports A, directly
+or transitively. It is an architecture problem: the two modules are really one, or the shared
+piece belongs in a third module. Fix the structure first; `forwardRef` is a last resort that
+hides the cycle rather than removing it.
+
+**Placement.** The fix is structural — extract a shared module, invert the dependency with
+events, or depend on a service contract.
+
+**Responsibilities.**
+
+- Model the module graph as a directed acyclic graph (no cycles).
+- Extract genuinely shared logic into its own module that both sides import.
+- Break behavioural cycles with events or a token-provided contract.
+
+**Never.**
+
+- Reach for `forwardRef` as the first answer.
+- Merge two features into one large module just to silence the warning.
+- Resolve providers through `ModuleRef` to dodge the error.
+
+**Incorrect (two modules importing each other):**
+
+```typescript
+// orders.module.ts
+@Module({ imports: [UsersModule], providers: [OrdersService] })
+export class OrdersModule {}
+
+// users.module.ts
+@Module({ imports: [OrdersModule], providers: [UsersService] })
+export class UsersModule {}
+```
+
+Why it is wrong: the two modules cannot be reasoned about or tested separately, and the cycle
+usually exists because each needs one small thing the other owns.
+
+**Correct (extract the shared dependency, or invert with events):**
+
+```typescript
+// shared/profile.module.ts — the thing both actually need
+@Module({ providers: [ProfileService], exports: [ProfileService] })
+export class ProfileModule {}
+
+// orders.module.ts
+@Module({ imports: [ProfileModule], providers: [OrdersService] })
+export class OrdersModule {}
+
+// users.module.ts
+@Module({ imports: [ProfileModule], providers: [UsersService] })
+export class UsersModule {}
+
+// When one module only needs to *react* to the other, use an event instead of importing it:
+// users emits 'user.created'; orders listens with @OnEvent('user.created').
+```
+
+Why it is right: the shared concern moves to a module both sides import without cycling, and
+one-directional reactions use events, so the module graph stays acyclic.
+
+`forwardRef(() => X)` is acceptable only as a documented last resort — when neither a shared
+module nor events are possible — and the cycle should be recorded as debt to remove.
+
+Reference: [NestJS Circular Dependency](https://docs.nestjs.com/fundamentals/circular-dependency)
+
+---
+
+### 7.2 Resolve Cross-Module Fields via the Owning Service
+
+**Impact: CRITICAL** — the module boundary stays intact
+
+**Purpose.** When a field on one type is backed by data owned by another feature (`User.orders`
+backed by the orders feature), resolve it by injecting the owning module's exported service or
+loader. Import that module; never reach into its repository, entity, or model. This keeps each
+module's data private and its public interface explicit.
+
+**Placement.** The field resolver lives in the type-owning module
+(`modules/users/resolvers/users.field.resolver.ts`); its dependency comes from
+`modules/orders/` and arrives through `OrdersModule`'s `exports`.
+
+**Responsibilities.**
+
+- Import the owning module in this module's `imports`.
+- Inject the owning module's exported service (or a loader that wraps it).
+- Depend on a service contract, not on another module's storage.
+
+**Never.**
+
+- Import another feature's repository, entity, or model directly.
+- Reach into another module's collection or table.
+- Create a circular import to obtain the dependency (see `relations-avoid-circular`).
+
+**Incorrect (reaching into another feature's data layer):**
+
+```typescript
+// users feature declares the orders schema and model itself
+@Module({ imports: [MongooseModule.forFeature([{ name: Order.name, schema: OrderSchema }])] })
+export class UsersModule {}
+
+@Resolver(() => User)
+export class UsersFieldResolver {
+  constructor(@InjectModel(Order.name) private orderModel: Model<OrderDocument>) {}
+
+  @ResolveField(() => [Order])
+  orders(@Parent() user: User) {
+    return this.orderModel.find({ userId: user._id }); // users now owns orders data
+  }
+}
+```
+
+Why it is wrong: two features own the orders collection, the module boundary is gone, and the
+orders feature can no longer change its storage safely.
+
+**Correct (import the owning module, inject its exported loader):**
+
+```typescript
+// OrdersModule exports OrdersLoader
+@Module({ imports: [OrdersModule] })
+export class UsersModule {}
+
+@Resolver(() => User)
+export class UsersFieldResolver {
+  constructor(private readonly ordersLoader: OrdersLoader) {}
+
+  @ResolveField(() => [Order])
+  orders(@Parent() user: User): Promise<Order[]> {
+    return this.ordersLoader.loadByUserId(user._id.toString());
+  }
+}
+```
+
+Why it is right: the orders feature owns orders data and exposes one entry point; the users
+feature depends on that contract, so the boundary stays intact and orders storage can change
+freely.
+
+Reference: [NestJS Modules](https://docs.nestjs.com/modules)
+
+---
+
+### 7.3 Batch Relations with a Per-Request DataLoader
+
+**Impact: CRITICAL** — eliminates N+1 on relational fields
+
+**Purpose.** A field resolver runs once per parent, so a naive implementation issues one query
+per parent — the N+1 problem. A `DataLoader` batches those per-parent loads within a single
+tick into one query and memoizes them for the request. Loaders live in the feature's `loaders/`
+folder, are created per request, and are exposed through the GraphQL context.
+
+**Placement.** `modules/<feature>/loaders/<feature>.loader.ts`; wired in
+`infra/graphql/graphql.context.ts`.
+
+**Responsibilities.**
+
+- Define a `DataLoader` keyed on the parent id.
+- Batch the keys into one repository/service call.
+- Return results in the same order as the input keys.
+- Be instantiated once per request, never as an application singleton.
+
+**Never.**
+
+- Hold a `DataLoader` as a singleton — its cache would leak data across requests.
+- Issue a query per parent inside a field resolver.
+- Ignore the ordering contract; `DataLoader` requires results in input-key order.
+
+**Incorrect (singleton loader that still issues N queries):**
+
+```typescript
+@Injectable()
+export class OrdersLoader {
+  readonly byUser = new DataLoader(async (userIds) =>
+    Promise.all(userIds.map((id) => this.ordersService.findByUser(id))), // still N queries
+  );
+}
+```
+
+Why it is wrong: as a singleton, one request's cached data can be served to another, and the
+batch function still issues one query per key, so N+1 is not solved.
+
+**Correct (request-scoped loader that batches into one query):**
+
+```typescript
+// loaders/orders.loader.ts
+@Injectable({ scope: Scope.REQUEST })
+export class OrdersLoader {
+  constructor(private readonly ordersService: OrdersService) {}
+
+  private readonly byUser = new DataLoader<string, Order[]>(async (userIds) => {
+    const orders = await this.ordersService.findByUserIds([...userIds]); // ONE query
+    const grouped = new Map<string, Order[]>();
+    for (const order of orders) {
+      const list = grouped.get(order.userId) ?? [];
+      list.push(order);
+      grouped.set(order.userId, list);
+    }
+    return userIds.map((id) => grouped.get(id) ?? []);
+  });
+
+  loadByUserId(id: string): Promise<Order[]> {
+    return this.byUser.load(id);
+  }
+}
+```
+
+Why it is right: all per-parent loads in one tick collapse into a single query, results come
+back in input-key order, and request scope confines the cache to one request.
+
+Reference: [graphql/dataloader](https://github.com/graphql/dataloader)
+
+---
+
+### 7.4 Decouple Modules with Events
+
+**Impact: HIGH** — react without importing
+
+**Purpose.** When one module should react to something another module did — send a welcome
+email after a user is created — without importing it, emit an event from the actor and listen
+in the reactor. Event payloads and listeners live in the feature's `events/` folder. This keeps
+the dependency one-directional and stops the actor's constructor from growing with every new
+reaction.
+
+**Placement.** `modules/<feature>/events/<feature>-<action>.event.ts` (payload class) and
+`<feature>-<action>.listener.ts` (the `@OnEvent` handler, in the reacting module).
+
+**Responsibilities.**
+
+- Define the event payload as an explicit class.
+- Emit with `EventEmitter2` from the service that performs the action.
+- Register listeners in the reacting module.
+
+**Never.**
+
+- Use an event when a return value is needed — that is a request/response call; use the owning
+  service instead.
+- Emit from a resolver; emit from the service that owns the state change.
+- Import the reacting module just so the actor can call it.
+
+**Incorrect (the actor imports and calls every reactor):**
+
+```typescript
+@Injectable()
+export class UsersService {
+  constructor(
+    private readonly notifications: NotificationsService,
+    private readonly analytics: AnalyticsService,
+    private readonly audit: AuditService,
+  ) {}
+
+  async create(input: CreateUserInput): Promise<User> {
+    const user = await this.usersRepository.create(input);
+    await this.notifications.sendWelcome(user); // actor knows every reactor
+    await this.analytics.trackSignup(user);
+    await this.audit.record('user.created', user);
+    return user;
+  }
+}
+```
+
+Why it is wrong: every new reaction edits the users service, and the service depends on modules
+it should not know about.
+
+**Correct (emit once, react independently):**
+
+```typescript
+// events/user-created.event.ts
+export class UserCreatedEvent {
+  constructor(
+    public readonly userId: string,
+    public readonly email: string,
+  ) {}
+}
+
+// services/users.service.ts
+@Injectable()
+export class UsersService {
+  constructor(
+    private readonly usersRepository: UsersRepository,
+    private readonly events: EventEmitter2,
+  ) {}
+
+  async create(input: CreateUserInput): Promise<User> {
+    const user = await this.usersRepository.create(input);
+    this.events.emit('user.created', new UserCreatedEvent(user.id, user.email));
+    return user;
+  }
+}
+
+// events/user-created.listener.ts (in the notifications module)
+@Injectable()
+export class UserCreatedListener {
+  @OnEvent('user.created')
+  async handle(event: UserCreatedEvent): Promise<void> {
+    await this.notifications.sendWelcome(event.email);
+  }
+}
+```
+
+Why it is right: the users service emits and moves on, and each new reaction is a new listener
+that never touches the actor.
+
+For a synchronous cross-module dependency where a value is needed, inject the owning module's
+exported service instead (see `relations-cross-module-service`).
+
+Reference: [NestJS Events](https://docs.nestjs.com/techniques/events)
+
+---
+
+### 7.5 Resolve Relations with @ResolveField
+
+**Impact: CRITICAL** — resolve relations on demand, not eagerly
+
+**Purpose.** A relation that points from one object to another (author → posts, user → orders)
+is resolved with an `@ResolveField` method on the owning type's resolver, not by eager-loading
+everything in the parent query. The field resolver receives the parent object via `@Parent`
+and returns the related data, usually by delegating to a loader (see `relations-dataloader`).
+
+**Placement.** `modules/<feature>/resolvers/<feature>.field.resolver.ts`. The method name
+matches the GraphQL field.
+
+**Responsibilities.**
+
+- Declare `@ResolveField(() => [Other])` for a relational field.
+- Read the parent id with `@Parent()`.
+- Delegate to a loader or the owning module's service.
+
+**Never.**
+
+- Eager-load every relation in the query resolver.
+- Query the database once per parent inside the field resolver (that is N+1 — see
+  `relations-dataloader`).
+- Declare the field resolver for another module's type here; the type's owner declares it.
+
+**Incorrect (every relation eager-loaded for every query):**
+
+```typescript
+@Query(() => User)
+async user(@Args('id') id: string) {
+  return this.userModel
+    .findById(id)
+    .populate(['orders', 'posts', 'followers', 'comments']); // loads all, asked or not
+}
+```
+
+Why it is wrong: the query does work the client did not request and pays for it on every call.
+
+**Correct (resolve the field on demand, from the parent id):**
+
+```typescript
+// resolvers/users.field.resolver.ts
+@Resolver(() => User)
+export class UsersFieldResolver {
+  constructor(private readonly ordersLoader: OrdersLoader) {}
+
+  @ResolveField(() => [Order])
+  orders(@Parent() user: User): Promise<Order[]> {
+    return this.ordersLoader.loadByUserId(user._id.toString());
+  }
+}
+```
+
+Why it is right: the relation is resolved only when the client asks for the field, using the
+parent object already in hand and a batched loader rather than a per-parent query.
+
+Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
 
 ---
 

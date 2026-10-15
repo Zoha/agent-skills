@@ -70,6 +70,14 @@ Reference these guidelines when:
 - `data-entity-mongodb` - Place MongoDB Entities in entities/
 - `data-models-mappers` - Split models/ and mappers/ When API Differs From Storage
 - `data-repository` - Keep Data Access in repositories/
+
+### 7. Relations & Cross-Module (CRITICAL)
+
+- `relations-avoid-circular` - Resolve Circular Module Dependencies
+- `relations-cross-module-service` - Resolve Cross-Module Fields via the Owning Service
+- `relations-dataloader` - Batch Relations with a Per-Request DataLoader
+- `relations-events` - Decouple Modules with Events
+- `relations-field-resolvers` - Resolve Relations with @ResolveField
 <!-- GENERATED:END:rules -->
 
 ## How to Use
