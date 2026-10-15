@@ -23,6 +23,9 @@ owns the type and `<type>` is the kebab name of the type being resolved — for 
 
 **Responsibilities.**
 
+- Declare each resolved field on the `@ObjectType` with `@Field()` **as well as** implementing it
+  with `@ResolveField` — the resolver supplies the field's value but does not add it to the
+  schema (see `resolver-computed-fields`).
 - Declare `@Resolver(() => TheType)` and one `@ResolveField` per resolved field.
 - Make the method name equal the GraphQL field name.
 - Hold **every** field resolver for that type.

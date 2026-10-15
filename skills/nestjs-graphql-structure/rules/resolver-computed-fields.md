@@ -20,6 +20,10 @@ produced depends on the field:
   and implement it with exactly one `@ResolveField` in the type's `<type>.resolver.ts`
   (see `resolver-per-type`).
 
+> **The field must be declared on the `@ObjectType` as well.** A `@ResolveField` supplies a
+> field's value; it does not declare the field. Every resolved field needs its own `@Field()` line
+> on the `@ObjectType` or it will not appear in the schema.
+
 **Responsibilities.**
 
 - Declare each exposed field exactly once, with `@Field()`, on the `@ObjectType`.

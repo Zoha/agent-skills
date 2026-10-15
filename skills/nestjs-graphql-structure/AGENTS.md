@@ -702,6 +702,10 @@ produced depends on the field:
   and implement it with exactly one `@ResolveField` in the type's `<type>.resolver.ts`
   (see `resolver-per-type`).
 
+> **The field must be declared on the `@ObjectType` as well.** A `@ResolveField` supplies a
+> field's value; it does not declare the field. Every resolved field needs its own `@Field()` line
+> on the `@ObjectType` or it will not appear in the schema.
+
 **Responsibilities.**
 
 - Declare each exposed field exactly once, with `@Field()`, on the `@ObjectType`.
@@ -875,6 +879,9 @@ owns the type and `<type>` is the kebab name of the type being resolved — for 
 
 **Responsibilities.**
 
+- Declare each resolved field on the `@ObjectType` with `@Field()` **as well as** implementing it
+  with `@ResolveField` — the resolver supplies the field's value but does not add it to the
+  schema (see `resolver-computed-fields`).
 - Declare `@Resolver(() => TheType)` and one `@ResolveField` per resolved field.
 - Make the method name equal the GraphQL field name.
 - Hold **every** field resolver for that type.
