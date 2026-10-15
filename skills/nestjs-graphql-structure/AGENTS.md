@@ -123,7 +123,7 @@ src/
         ├── entities/
         │   └── <feature>.entity.ts              # persistence + @ObjectType (merged default)
         ├── models/                              # OPTIONAL: GraphQL-only @ObjectType (split case)
-        ├── mappers/                             # OPTIONAL: entity ⟷ model / _id → id
+        ├── mappers/                             # OPTIONAL: entity ⟷ model
         ├── loaders/
         │   └── <feature>.loader.ts              # DataLoader(s) for relations
         ├── events/
@@ -159,8 +159,8 @@ full tree, and the linked rule gives the file's purpose and examples.
 | Feature module | `modules/<f>/<f>.module.ts` | `module-feature-module` |
 | Query resolver | `modules/<f>/resolvers/<f>.query.resolver.ts` | `resolver-organization` |
 | Mutation resolver | `modules/<f>/resolvers/<f>.mutation.resolver.ts` | `resolver-organization` |
-| Relation field resolver | `modules/<f>/resolvers/<type>-<f>.resolver.ts` | `relations-field-resolvers`, `relations-owning-module` |
-| Nested/computed field resolver | `modules/<f>/resolvers/<type>.resolver.ts` | `resolver-per-type` |
+| Cross-module field resolver | `modules/<f>/resolvers/<type>-<f>.resolver.ts` | `relations-owning-module` |
+| Own-type field resolver | `modules/<f>/resolvers/<type>.resolver.ts` | `resolver-per-type` |
 | Domain service | `modules/<f>/services/<f>.service.ts` | `service-single-responsibility` |
 | Custom repository | `modules/<f>/repositories/<f>.repository.ts` | `data-repository` |
 | GraphQL input | `modules/<f>/dto/create-<f>.input.ts` | `type-inputs` |
@@ -220,7 +220,7 @@ regenerate. Either way it is never hand-edited.
 ```graphql
 # src/schema.gql — a field added by hand
 type User {
-  id: ID!
+  _id: ID!
   email: String!
   nickname: String   # not backed by any @ObjectType field; lost on next build
 }
@@ -234,7 +234,7 @@ the next time the app starts.
 ```typescript
 @ObjectType()
 export class User {
-  @Field() id: string;
+  @Field(() => ID) _id: string;
   @Field() email: string;
   @Field() nickname: string;
 }
@@ -359,8 +359,8 @@ attach with `@UseGuards(...)`, or register globally with `APP_GUARD`.
 ```typescript
 // modules/users/users.module.ts
 @Module({
-  providers: [UsersService, UsersRepository, UsersQueryResolver, UserOrdersLoader],
-  exports: [UsersService, UsersRepository, UsersQueryResolver, UserOrdersLoader], // all internals
+  providers: [UsersService, UsersRepository, UsersQueryResolver, UsersLoader],
+  exports: [UsersService, UsersRepository, UsersQueryResolver, UsersLoader], // all internals
 })
 export class UsersModule {}
 ```
@@ -374,7 +374,7 @@ none of those can change without breaking consumers, and the module has no priva
 // modules/users/users.module.ts
 @Module({
   imports: [MongooseModule.forFeature([{ name: User.name, schema: UserSchema }])],
-  providers: [UsersService, UsersRepository, UsersQueryResolver, UsersFieldResolver],
+  providers: [UsersService, UsersRepository, UsersQueryResolver, UserPreferencesResolver],
   exports: [UsersService], // the feature's public API
 })
 export class UsersModule {}
@@ -466,7 +466,7 @@ export class UsersModule {}
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     DatabaseModule,
-    GraphQLModule,
+    GraphqlInfraModule,
     UsersModule,
     OrdersModule,
   ],
@@ -649,7 +649,7 @@ export class OrdersService {
     this.validate(input);
     const total = await this.pricing.calculateTotal(input.items, input.coupon);
     const order = await this.ordersRepository.create({ ...input, total });
-    this.events.emit('order.created', new OrderCreatedEvent(order.id, order.customerEmail));
+    this.events.emit('order.created', new OrderCreatedEvent(order._id.toString(), order.customerEmail));
     return order;
   }
 
@@ -781,19 +781,19 @@ Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
 
 **Impact: HIGH** — thin, role-focused entry points
 
-**Purpose.** Resolvers are the GraphQL entry points of a feature and live in its `resolvers/`
-folder. Each resolver targets one type and one role — queries, mutations, or field relations
-— stays thin, and delegates to services. Splitting by role keeps each file small and the
-module's provider list readable.
+**Purpose.** Entry-point resolvers (`@Query`, `@Mutation`) live in the feature's `resolvers/`
+folder, split by role so each file stays small and the module's provider list stays readable. An
+entry-point resolver targets one type and one role, stays thin, and delegates to services. Field
+resolvers are a separate concern, living in their own per-type file (see `resolver-per-type` and
+`relations-owning-module`) — not here.
 
-**Placement.** `modules/<feature>/resolvers/<feature>.query.resolver.ts`,
-`<feature>.mutation.resolver.ts`, `<feature>.field.resolver.ts`. For a very small feature a
-single `<feature>.resolver.ts` covering queries and mutations is acceptable; split once a role
-grows.
+**Placement.** `modules/<feature>/resolvers/<feature>.query.resolver.ts` and
+`<feature>.mutation.resolver.ts`. For a very small feature a single `<feature>.resolver.ts`
+covering queries and mutations is acceptable; split once a role grows.
 
 **Responsibilities.**
 
-- Declare `@Query()`, `@Mutation()`, or `@ResolveField()` methods for one parent type.
+- Declare `@Query()` and `@Mutation()` methods for one parent type.
 - Translate arguments into service calls and return the result.
 - Declare the parent type with `@Resolver(() => Feature)`.
 
@@ -801,6 +801,8 @@ grows.
 
 - Contain business logic or direct model/repository access.
 - Catch and reformat errors by hand — use exception filters.
+- Hold `@ResolveField()` methods — they belong in the type's per-type resolver file (see
+  `resolver-per-type`).
 - Register in `AppModule`; resolvers are providers of their own feature module.
 
 **Incorrect (one class for everything, logic inline):**
@@ -825,8 +827,7 @@ export class AppResolver {
 }
 ```
 
-Why it is wrong: one file owns every type, mixes layers, and declares no parent type, so
-field resolvers have nowhere to live.
+Why it is wrong: one file owns every type and mixes layers.
 
 **Correct (role-split, thin resolvers):**
 
@@ -854,8 +855,8 @@ export class UsersMutationResolver {
 }
 ```
 
-Why it is right: each file is one type and one role, resolvers only translate and delegate,
-and the parent type is declared once per class so field resolvers can attach.
+Why it is right: each file is one type and one role, and resolvers only translate and delegate.
+A type's field resolvers live together in one per-type file (see `resolver-per-type`).
 
 Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
 
@@ -1189,27 +1190,27 @@ Reference: [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb) | [NestJ
 **Impact: MEDIUM-HIGH** — keep the public graph decoupled from the database
 
 **Purpose.** By default a MongoDB entity doubles as its GraphQL `@ObjectType` (see
-`data-entity-mongodb`). When the exposed shape stops matching the stored shape — computed
-fields, relation-only fields, renamed ids, or fields that need different exposure — split
-them: keep the entity persistence-only in `entities/`, put the GraphQL `@ObjectType` in
-`models/`, and convert between them in `mappers/`.
+`data-entity-mongodb`). When the exposed shape stops matching the stored shape — computed fields,
+relation-only fields, or fields that need different exposure — split them: keep the entity
+persistence-only in `entities/`, put the GraphQL `@ObjectType` in `models/`, and convert between
+them in `mappers/`.
 
 **Placement.**
 
 - `modules/<feature>/entities/<feature>.entity.ts` — persistence only (keep `@Schema`/`@Prop`,
   drop `@ObjectType`/`@Field`).
 - `modules/<feature>/models/<feature>.model.ts` — the GraphQL `@ObjectType`.
-- `modules/<feature>/mappers/<feature>.mapper.ts` — entity → model (including `_id` → `id`).
+- `modules/<feature>/mappers/<feature>.mapper.ts` — entity → model.
 
 **Responsibilities.**
 
 - Model: exactly the fields the API exposes.
-- Mapper: a pure conversion from entity to model, handling id mapping and computed fields.
+- Mapper: a pure conversion from entity to model, handling computed fields and the id field.
 
 **Never.**
 
 - Add `@Field()` back onto the persistence entity "just here".
-- Return the raw document, leaking `_id`, `__v`, and internal flags.
+- Return the raw document, leaking `__v` and internal fields.
 - Do the conversion inline in more than one resolver or service.
 
 **Incorrect (persistence document returned as the API type, internals leaking):**
@@ -1221,8 +1222,7 @@ async user(@Args('id') id: string) {
 }
 ```
 
-Why it is wrong: the schema simply mirrors the database, and fields that must never leave the
-server reach clients.
+Why it is wrong: the schema simply mirrors the database, and internal fields reach clients.
 
 **Correct (entity stays persistence-only, model is the public graph, mapper converts):**
 
@@ -1244,7 +1244,7 @@ export class User {
 @ObjectType()
 export class UserModel {
   @Field(() => ID)
-  id: string;
+  _id: string;
 
   @Field()
   email: string;
@@ -1259,7 +1259,7 @@ export class UserModel {
 // mappers/user.mapper.ts
 export function toUserModel(doc: UserDocument, postCount: number): UserModel {
   return {
-    id: doc._id.toString(),
+    _id: doc._id.toString(),
     email: doc.email,
     avatarUrl: doc.avatarKey ? cdnUrl(doc.avatarKey) : null,
     postCount,
@@ -1270,8 +1270,8 @@ export function toUserModel(doc: UserDocument, postCount: number): UserModel {
 Why it is right: the database shape can change without touching the schema, the public graph
 exposes only intended fields, and the conversion lives in one testable place.
 
-Use this split only when the shapes actually diverge. For one-to-one domain objects, the
-merged entity from `data-entity-mongodb` is simpler.
+Use this split only when the shapes actually diverge. For one-to-one domain objects, the merged
+entity from `data-entity-mongodb` is simpler.
 
 Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers) | [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb)
 
@@ -1348,8 +1348,8 @@ export class UsersRepository {
 export class UsersService {
   constructor(private readonly usersRepository: UsersRepository) {}
 
-  async findActiveWithOrders(): Promise<User[]> {
-    return this.usersRepository.findActiveWithMinOrders(1);
+  async findActiveWithMinOrders(minOrders: number): Promise<UserDocument[]> {
+    return this.usersRepository.findActiveWithMinOrders(minOrders);
   }
 }
 ```
@@ -1445,7 +1445,7 @@ Reference: [NestJS Circular Dependency](https://docs.nestjs.com/fundamentals/cir
 **Purpose.** A field resolver runs once per parent, so a naive implementation issues one query
 per parent — the N+1 problem. A `DataLoader` batches those per-parent loads within a single
 tick into one query and memoizes them for the request. Loaders live in the feature's `loaders/`
-folder, are created per request, and are exposed through the GraphQL context.
+folder and are created per request as request-scoped providers.
 
 **Placement.** `modules/<feature>/loaders/<feature>.loader.ts`, provided request-scoped by the
 module that declares the field — the module that owns the data — and injected into the field
@@ -1579,7 +1579,7 @@ export class UsersService {
 
   async create(input: CreateUserInput): Promise<User> {
     const user = await this.usersRepository.create(input);
-    this.events.emit('user.created', new UserCreatedEvent(user.id, user.email));
+    this.events.emit('user.created', new UserCreatedEvent(user._id.toString(), user.email));
     return user;
   }
 }
@@ -1610,13 +1610,14 @@ Reference: [NestJS Events](https://docs.nestjs.com/techniques/events)
 
 **Impact: CRITICAL** — resolve relations on demand, not eagerly
 
-**Purpose.** A relation exposed on a type — a field pointing to other objects — is resolved with
-an `@ResolveField` method, on demand, only when the client requests it. Never eager-load relations
-in the parent query. This rule covers the mechanic; when the relation's data lives in another
-module, *who declares the field* is decided by `relations-owning-module`.
+**Purpose.** A relation exposed on a type — a field pointing to other objects — is resolved with an
+`@ResolveField` method, on demand, only when the client requests it. Never eager-load relations in
+the parent query. This rule covers the mechanic; *which file* the resolver lives in is decided by
+`resolver-per-type` (the type's own module) or `relations-owning-module` (another module's type).
 
-**Placement.** `modules/<owner>/resolvers/<type>-<feature>.resolver.ts` — the resolver lives with
-the module that owns the data the field returns. The method name matches the GraphQL field.
+**Placement.** The file belongs to the type it resolves: `<type>.resolver.ts` in that type's own
+module (see `resolver-per-type`), or the extending module's file when it extends another module's
+type (see `relations-owning-module`). The method name matches the GraphQL field.
 
 **Responsibilities.**
 
@@ -1645,14 +1646,14 @@ Why it is wrong: the query does work the client did not request and pays for it 
 **Correct (same-module relation resolved on demand and batched):**
 
 ```typescript
-// orders/resolvers/orders.field.resolver.ts — both Order and OrderItem are owned by OrdersModule
+// orders/resolvers/order.resolver.ts — Order and OrderItem are both owned by OrdersModule
 @Resolver(() => Order)
-export class OrdersFieldResolver {
+export class OrderResolver {
   constructor(private readonly orderItemsLoader: OrderItemsLoader) {}
 
   @ResolveField(() => [OrderItem])
   items(@Parent() order: Order): Promise<OrderItem[]> {
-    return this.orderItemsLoader.loadByOrderId(order.id);
+    return this.orderItemsLoader.loadByOrderId(order._id.toString());
   }
 }
 ```
@@ -1660,9 +1661,8 @@ export class OrdersFieldResolver {
 Why it is right: the field is resolved only when asked, from the parent already in hand, by the
 module that owns order items.
 
-For a relation whose data lives in **another** module, the same mechanic is declared in that
-module's own resolver — see `relations-owning-module`. For nested/computed fields on a sub-type of
-this module's own graph, keep them in one file per type — see `resolver-per-type`.
+For a type with several field resolvers, keep them all in its one per-type file — see
+`resolver-per-type`.
 
 Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
 
@@ -1676,13 +1676,14 @@ Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
 
 When a type from module A needs a field whose data comes from module B, the field is **not**
 added in A. It is added in **B**, as an extension resolver on A's type (`@Resolver(() => A)` +
-`@ResolveField`), using B's own service. B may import A only to reference A's type; A never
-imports B. The module that owns the extra data owns the field, so module and service dependencies
-stay one-directional and no cycle or `forwardRef` is ever needed — even though the GraphQL types
-reference each other in both directions.
+`@ResolveField`), using B's own service. B imports A's type class (and A's module only if it also
+injects A's service); A never imports B. The module that owns the extra data owns the field, so
+module and service dependencies stay one-directional and no cycle or `forwardRef` is ever needed —
+even though the GraphQL types reference each other in both directions.
 
 **Placement.** `<data-owner>/resolvers/<type>-<feature>.resolver.ts` (for example
-`comments/resolvers/user-comments.resolver.ts`).
+`comments/resolvers/user-comments.resolver.ts`). The same file belongs to the data owner, never to
+the type's own module.
 
 **MUST.**
 
@@ -1693,41 +1694,41 @@ reference each other in both directions.
 
 **MUST NOT.**
 
-- Add the relation field inside the type's own module when that requires importing the module
-  that owns the data.
+- Add the relation field inside the type's own module when that requires importing the module that
+  owns the data.
 - Import the data-owner module from the type-owner module.
 - Reach into another module's repository, entity, or model.
 - Use `forwardRef` to make a relation field resolve.
 
-**Decision question.** *I need field X on type T — where does the data come from? Put the
-resolver in that module.*
+**Decision question.** *I need field X on type T — where does the data come from? Put the resolver
+in that module.*
 
 **Good / bad — `User.comments`:**
 
 ```typescript
-// BAD — the type's own module imports the data owner to resolve User.comments
-// users/resolvers/users.field.resolver.ts
+// BAD — the type's own module (users) declares and resolves User.comments
+// users/resolvers/user-comments.resolver.ts   <-- belongs in comments/, not users/
 @Resolver(() => User)
-export class UsersFieldResolver {
-  constructor(private readonly commentsService: CommentsService) {} // UsersModule now imports CommentsModule
+export class UserCommentsResolver {
+  constructor(private readonly commentsService: CommentsService) {} // users now imports comments
   @ResolveField(() => [Comment]) comments(@Parent() user: User) {
-    return this.commentsService.findByUserId(user.id);
+    return this.commentsService.findByUserId(user._id.toString());
   }
 }
 // A cycle appears the moment CommentsModule needs anything from UsersModule.
 ```
 
 ```typescript
-// GOOD — the data owner owns the field and extends User
+// GOOD — the data owner owns the field; the SAME resolver, in the correct module
 // comments/resolvers/user-comments.resolver.ts
-@Resolver(() => User)                                   // A's type, imported as a class
+@Resolver(() => User)                                   // the User type class, imported
 export class UserCommentsResolver {
   constructor(private readonly commentsService: CommentsService) {} // its own service
   @ResolveField(() => [Comment]) comments(@Parent() user: User) {
-    return this.commentsService.findByUserId(user.id);
+    return this.commentsService.findByUserId(user._id.toString());
   }
 }
-// CommentsModule imports UsersModule only to reference User.
+// CommentsModule imports the User class (and UsersModule only if it injects UsersService).
 // UsersModule knows nothing about comments. Dependencies point one way -> no cycle, no forwardRef.
 ```
 
@@ -2200,8 +2201,8 @@ Why it is wrong: the filename does not say what the file is or where it belongs.
 | Feature module | `<feature>.module.ts` | `<Feature>Module` |
 | Query resolver | `<feature>.query.resolver.ts` | `<Feature>QueryResolver` |
 | Mutation resolver | `<feature>.mutation.resolver.ts` | `<Feature>MutationResolver` |
-| Relation field resolver | `<type>-<feature>.resolver.ts` | `<Type><Feature>Resolver` |
-| Nested/computed field resolver | `<type>.resolver.ts` | `<Type>Resolver` |
+| Cross-module field resolver | `<type>-<feature>.resolver.ts` | `<Type><Feature>Resolver` |
+| Own-type field resolver (nested/computed) | `<type>.resolver.ts` | `<Type>Resolver` |
 | Service | `<feature>.service.ts` / `<feature>-<concern>.service.ts` | `<Feature>Service` |
 | Repository | `<feature>.repository.ts` | `<Feature>Repository` |
 | Entity | `<feature>.entity.ts` | `<Feature>` |

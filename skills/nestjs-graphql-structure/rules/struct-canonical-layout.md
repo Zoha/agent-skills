@@ -64,7 +64,7 @@ src/
         ├── entities/
         │   └── <feature>.entity.ts              # persistence + @ObjectType (merged default)
         ├── models/                              # OPTIONAL: GraphQL-only @ObjectType (split case)
-        ├── mappers/                             # OPTIONAL: entity ⟷ model / _id → id
+        ├── mappers/                             # OPTIONAL: entity ⟷ model
         ├── loaders/
         │   └── <feature>.loader.ts              # DataLoader(s) for relations
         ├── events/

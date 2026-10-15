@@ -32,7 +32,7 @@ regenerate. Either way it is never hand-edited.
 ```graphql
 # src/schema.gql — a field added by hand
 type User {
-  id: ID!
+  _id: ID!
   email: String!
   nickname: String   # not backed by any @ObjectType field; lost on next build
 }
@@ -46,7 +46,7 @@ the next time the app starts.
 ```typescript
 @ObjectType()
 export class User {
-  @Field() id: string;
+  @Field(() => ID) _id: string;
   @Field() email: string;
   @Field() nickname: string;
 }

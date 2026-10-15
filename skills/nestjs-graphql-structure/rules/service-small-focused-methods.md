@@ -82,7 +82,7 @@ export class OrdersService {
     this.validate(input);
     const total = await this.pricing.calculateTotal(input.items, input.coupon);
     const order = await this.ordersRepository.create({ ...input, total });
-    this.events.emit('order.created', new OrderCreatedEvent(order.id, order.customerEmail));
+    this.events.emit('order.created', new OrderCreatedEvent(order._id.toString(), order.customerEmail));
     return order;
   }
 

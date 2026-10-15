@@ -76,7 +76,7 @@ export class UsersService {
 
   async create(input: CreateUserInput): Promise<User> {
     const user = await this.usersRepository.create(input);
-    this.events.emit('user.created', new UserCreatedEvent(user.id, user.email));
+    this.events.emit('user.created', new UserCreatedEvent(user._id.toString(), user.email));
     return user;
   }
 }

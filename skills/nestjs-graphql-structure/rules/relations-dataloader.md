@@ -12,7 +12,7 @@ tags: dataloader, n+1, loaders
 **Purpose.** A field resolver runs once per parent, so a naive implementation issues one query
 per parent — the N+1 problem. A `DataLoader` batches those per-parent loads within a single
 tick into one query and memoizes them for the request. Loaders live in the feature's `loaders/`
-folder, are created per request, and are exposed through the GraphQL context.
+folder and are created per request as request-scoped providers.
 
 **Placement.** `modules/<feature>/loaders/<feature>.loader.ts`, provided request-scoped by the
 module that declares the field — the module that owns the data — and injected into the field

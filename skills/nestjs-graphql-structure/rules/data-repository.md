@@ -76,8 +76,8 @@ export class UsersRepository {
 export class UsersService {
   constructor(private readonly usersRepository: UsersRepository) {}
 
-  async findActiveWithOrders(): Promise<User[]> {
-    return this.usersRepository.findActiveWithMinOrders(1);
+  async findActiveWithMinOrders(minOrders: number): Promise<UserDocument[]> {
+    return this.usersRepository.findActiveWithMinOrders(minOrders);
   }
 }
 ```

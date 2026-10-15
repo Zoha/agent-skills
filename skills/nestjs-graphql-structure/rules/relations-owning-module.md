@@ -11,13 +11,14 @@ tags: relations, modules, resolvefield, ownership
 
 When a type from module A needs a field whose data comes from module B, the field is **not**
 added in A. It is added in **B**, as an extension resolver on A's type (`@Resolver(() => A)` +
-`@ResolveField`), using B's own service. B may import A only to reference A's type; A never
-imports B. The module that owns the extra data owns the field, so module and service dependencies
-stay one-directional and no cycle or `forwardRef` is ever needed — even though the GraphQL types
-reference each other in both directions.
+`@ResolveField`), using B's own service. B imports A's type class (and A's module only if it also
+injects A's service); A never imports B. The module that owns the extra data owns the field, so
+module and service dependencies stay one-directional and no cycle or `forwardRef` is ever needed —
+even though the GraphQL types reference each other in both directions.
 
 **Placement.** `<data-owner>/resolvers/<type>-<feature>.resolver.ts` (for example
-`comments/resolvers/user-comments.resolver.ts`).
+`comments/resolvers/user-comments.resolver.ts`). The same file belongs to the data owner, never to
+the type's own module.
 
 **MUST.**
 
@@ -28,41 +29,41 @@ reference each other in both directions.
 
 **MUST NOT.**
 
-- Add the relation field inside the type's own module when that requires importing the module
-  that owns the data.
+- Add the relation field inside the type's own module when that requires importing the module that
+  owns the data.
 - Import the data-owner module from the type-owner module.
 - Reach into another module's repository, entity, or model.
 - Use `forwardRef` to make a relation field resolve.
 
-**Decision question.** *I need field X on type T — where does the data come from? Put the
-resolver in that module.*
+**Decision question.** *I need field X on type T — where does the data come from? Put the resolver
+in that module.*
 
 **Good / bad — `User.comments`:**
 
 ```typescript
-// BAD — the type's own module imports the data owner to resolve User.comments
-// users/resolvers/users.field.resolver.ts
+// BAD — the type's own module (users) declares and resolves User.comments
+// users/resolvers/user-comments.resolver.ts   <-- belongs in comments/, not users/
 @Resolver(() => User)
-export class UsersFieldResolver {
-  constructor(private readonly commentsService: CommentsService) {} // UsersModule now imports CommentsModule
+export class UserCommentsResolver {
+  constructor(private readonly commentsService: CommentsService) {} // users now imports comments
   @ResolveField(() => [Comment]) comments(@Parent() user: User) {
-    return this.commentsService.findByUserId(user.id);
+    return this.commentsService.findByUserId(user._id.toString());
   }
 }
 // A cycle appears the moment CommentsModule needs anything from UsersModule.
 ```
 
 ```typescript
-// GOOD — the data owner owns the field and extends User
+// GOOD — the data owner owns the field; the SAME resolver, in the correct module
 // comments/resolvers/user-comments.resolver.ts
-@Resolver(() => User)                                   // A's type, imported as a class
+@Resolver(() => User)                                   // the User type class, imported
 export class UserCommentsResolver {
   constructor(private readonly commentsService: CommentsService) {} // its own service
   @ResolveField(() => [Comment]) comments(@Parent() user: User) {
-    return this.commentsService.findByUserId(user.id);
+    return this.commentsService.findByUserId(user._id.toString());
   }
 }
-// CommentsModule imports UsersModule only to reference User.
+// CommentsModule imports the User class (and UsersModule only if it injects UsersService).
 // UsersModule knows nothing about comments. Dependencies point one way -> no cycle, no forwardRef.
 ```
 

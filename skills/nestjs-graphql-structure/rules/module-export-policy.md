@@ -39,8 +39,8 @@ attach with `@UseGuards(...)`, or register globally with `APP_GUARD`.
 ```typescript
 // modules/users/users.module.ts
 @Module({
-  providers: [UsersService, UsersRepository, UsersQueryResolver, UserOrdersLoader],
-  exports: [UsersService, UsersRepository, UsersQueryResolver, UserOrdersLoader], // all internals
+  providers: [UsersService, UsersRepository, UsersQueryResolver, UsersLoader],
+  exports: [UsersService, UsersRepository, UsersQueryResolver, UsersLoader], // all internals
 })
 export class UsersModule {}
 ```
@@ -54,7 +54,7 @@ none of those can change without breaking consumers, and the module has no priva
 // modules/users/users.module.ts
 @Module({
   imports: [MongooseModule.forFeature([{ name: User.name, schema: UserSchema }])],
-  providers: [UsersService, UsersRepository, UsersQueryResolver, UsersFieldResolver],
+  providers: [UsersService, UsersRepository, UsersQueryResolver, UserPreferencesResolver],
   exports: [UsersService], // the feature's public API
 })
 export class UsersModule {}

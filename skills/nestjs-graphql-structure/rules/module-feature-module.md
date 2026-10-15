@@ -72,7 +72,7 @@ export class UsersModule {}
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     DatabaseModule,
-    GraphQLModule,
+    GraphqlInfraModule,
     UsersModule,
     OrdersModule,
   ],

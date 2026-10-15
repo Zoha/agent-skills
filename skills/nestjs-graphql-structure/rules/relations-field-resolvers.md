@@ -9,13 +9,14 @@ tags: graphql, resolvefield, relations
 
 **Impact: CRITICAL (resolve relations on demand, not eagerly)**
 
-**Purpose.** A relation exposed on a type — a field pointing to other objects — is resolved with
-an `@ResolveField` method, on demand, only when the client requests it. Never eager-load relations
-in the parent query. This rule covers the mechanic; when the relation's data lives in another
-module, *who declares the field* is decided by `relations-owning-module`.
+**Purpose.** A relation exposed on a type — a field pointing to other objects — is resolved with an
+`@ResolveField` method, on demand, only when the client requests it. Never eager-load relations in
+the parent query. This rule covers the mechanic; *which file* the resolver lives in is decided by
+`resolver-per-type` (the type's own module) or `relations-owning-module` (another module's type).
 
-**Placement.** `modules/<owner>/resolvers/<type>-<feature>.resolver.ts` — the resolver lives with
-the module that owns the data the field returns. The method name matches the GraphQL field.
+**Placement.** The file belongs to the type it resolves: `<type>.resolver.ts` in that type's own
+module (see `resolver-per-type`), or the extending module's file when it extends another module's
+type (see `relations-owning-module`). The method name matches the GraphQL field.
 
 **Responsibilities.**
 
@@ -44,14 +45,14 @@ Why it is wrong: the query does work the client did not request and pays for it 
 **Correct (same-module relation resolved on demand and batched):**
 
 ```typescript
-// orders/resolvers/orders.field.resolver.ts — both Order and OrderItem are owned by OrdersModule
+// orders/resolvers/order.resolver.ts — Order and OrderItem are both owned by OrdersModule
 @Resolver(() => Order)
-export class OrdersFieldResolver {
+export class OrderResolver {
   constructor(private readonly orderItemsLoader: OrderItemsLoader) {}
 
   @ResolveField(() => [OrderItem])
   items(@Parent() order: Order): Promise<OrderItem[]> {
-    return this.orderItemsLoader.loadByOrderId(order.id);
+    return this.orderItemsLoader.loadByOrderId(order._id.toString());
   }
 }
 ```
@@ -59,9 +60,8 @@ export class OrdersFieldResolver {
 Why it is right: the field is resolved only when asked, from the parent already in hand, by the
 module that owns order items.
 
-For a relation whose data lives in **another** module, the same mechanic is declared in that
-module's own resolver — see `relations-owning-module`. For nested/computed fields on a sub-type of
-this module's own graph, keep them in one file per type — see `resolver-per-type`.
+For a type with several field resolvers, keep them all in its one per-type file — see
+`resolver-per-type`.
 
 Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
 

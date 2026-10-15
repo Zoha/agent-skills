@@ -9,19 +9,19 @@ tags: graphql, resolver, organization
 
 **Impact: HIGH (thin, role-focused entry points)**
 
-**Purpose.** Resolvers are the GraphQL entry points of a feature and live in its `resolvers/`
-folder. Each resolver targets one type and one role — queries, mutations, or field relations
-— stays thin, and delegates to services. Splitting by role keeps each file small and the
-module's provider list readable.
+**Purpose.** Entry-point resolvers (`@Query`, `@Mutation`) live in the feature's `resolvers/`
+folder, split by role so each file stays small and the module's provider list stays readable. An
+entry-point resolver targets one type and one role, stays thin, and delegates to services. Field
+resolvers are a separate concern, living in their own per-type file (see `resolver-per-type` and
+`relations-owning-module`) — not here.
 
-**Placement.** `modules/<feature>/resolvers/<feature>.query.resolver.ts`,
-`<feature>.mutation.resolver.ts`, `<feature>.field.resolver.ts`. For a very small feature a
-single `<feature>.resolver.ts` covering queries and mutations is acceptable; split once a role
-grows.
+**Placement.** `modules/<feature>/resolvers/<feature>.query.resolver.ts` and
+`<feature>.mutation.resolver.ts`. For a very small feature a single `<feature>.resolver.ts`
+covering queries and mutations is acceptable; split once a role grows.
 
 **Responsibilities.**
 
-- Declare `@Query()`, `@Mutation()`, or `@ResolveField()` methods for one parent type.
+- Declare `@Query()` and `@Mutation()` methods for one parent type.
 - Translate arguments into service calls and return the result.
 - Declare the parent type with `@Resolver(() => Feature)`.
 
@@ -29,6 +29,8 @@ grows.
 
 - Contain business logic or direct model/repository access.
 - Catch and reformat errors by hand — use exception filters.
+- Hold `@ResolveField()` methods — they belong in the type's per-type resolver file (see
+  `resolver-per-type`).
 - Register in `AppModule`; resolvers are providers of their own feature module.
 
 **Incorrect (one class for everything, logic inline):**
@@ -53,8 +55,7 @@ export class AppResolver {
 }
 ```
 
-Why it is wrong: one file owns every type, mixes layers, and declares no parent type, so
-field resolvers have nowhere to live.
+Why it is wrong: one file owns every type and mixes layers.
 
 **Correct (role-split, thin resolvers):**
 
@@ -82,7 +83,7 @@ export class UsersMutationResolver {
 }
 ```
 
-Why it is right: each file is one type and one role, resolvers only translate and delegate,
-and the parent type is declared once per class so field resolvers can attach.
+Why it is right: each file is one type and one role, and resolvers only translate and delegate.
+A type's field resolvers live together in one per-type file (see `resolver-per-type`).
 
 Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
