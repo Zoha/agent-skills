@@ -15,6 +15,11 @@ PascalCase and named after the concept.
 
 **Placement.** Throughout `src/`.
 
+**Placeholders.** `<feature>` is the feature's module/folder name, plural (for example `users`).
+`<entity>` is the feature's primary domain noun, singular (for example `user`). Kinds named after
+the feature — module, service, repository, resolver, loader, args — use `<feature>`; kinds named
+after a single concept — entity, model, mapper, input — use `<entity>`.
+
 **Responsibilities.**
 
 - Name files `<feature>.<role>.ts` (or `<verb>-<feature>.<role>.ts` for inputs/args).
@@ -48,8 +53,8 @@ Why it is wrong: the filename does not say what the file is or where it belongs.
 | Own-type field resolver (nested/computed) | `<type>.resolver.ts` | `<Type>Resolver` |
 | Service | `<feature>.service.ts` / `<feature>-<concern>.service.ts` | `<Feature>Service` |
 | Repository | `<feature>.repository.ts` | `<Feature>Repository` |
-| Entity | `<feature>.entity.ts` | `<Feature>` |
-| Input | `create-<feature>.input.ts` | `Create<Feature>Input` |
+| Entity | `<entity>.entity.ts` | `<Entity>` |
+| Input | `create-<entity>.input.ts` | `Create<Entity>Input` |
 | Args | `find-<feature>.args.ts` | `Find<Feature>Args` |
 | Loader | `<feature>.loader.ts` | `<Feature>Loader` |
 | Event | `<feature>-<action>.event.ts` | `<Feature><Action>Event` |

@@ -7,31 +7,23 @@ tags: graphql, exception-filters, consistency
 
 ## Use Exception Filters for Error Handling
 
-Never catch exceptions and manually format error responses in resolvers. Use NestJS exception filters to handle errors consistently across your application. Create custom exception filters for specific error types and a global filter for unhandled exceptions. In GraphQL, format errors as `GraphQLError` with extensions.
+Never catch exceptions and manually format error responses in resolvers. Use NestJS exception filters to handle errors consistently across your application. Create custom exception filters for specific error types and a global filter for unhandled exceptions. In GraphQL, a filter converts a domain exception into a `GraphQLError` with `extensions` — it does not write an HTTP response. Filters live in `common/filters/`.
 
 **Incorrect (manual error handling in resolvers):**
 
 ```typescript
 // Manual error handling in resolvers
 @Resolver(() => User)
-export class UsersResolver {
+export class UsersQueryResolver {
   @Query(() => User)
-  async user(@Args('id') id: string, @Res() res: Response) {
+  async user(@Args() args: FindUserArgs): Promise<User> {
     try {
-      const user = await this.usersService.findById(id);
-      if (!user) {
-        return res.status(404).json({
-          statusCode: 404,
-          message: 'User not found',
-        });
-      }
+      const user = await this.usersService.findById(args.id);
       return user;
     } catch (error) {
       console.error(error);
-      return res.status(500).json({
-        statusCode: 500,
-        message: 'Internal server error',
-      });
+      // Reformatted by hand in every resolver, inconsistently
+      return { message: 'Internal server error', code: 'INTERNAL_SERVER_ERROR' } as User;
     }
   }
 }
@@ -40,114 +32,57 @@ export class UsersResolver {
 **Correct (exception filters with consistent GraphQL handling):**
 
 ```typescript
-// Use built-in and custom exceptions
-@Resolver(() => User)
-export class UsersResolver {
-  @Query(() => User)
-  async user(@Args('id') id: string): Promise<User> {
-    const user = await this.usersService.findById(id);
-    if (!user) {
-      throw new GraphQLError(`User #${id} not found`, {
-        extensions: { code: 'USER_NOT_FOUND' },
-      });
-    }
-    return user;
+// A domain exception thrown by the service (one file per exception)
+export class UserNotFoundException extends DomainException {
+  constructor(userId: string) {
+    super(`User with ID "${userId}" not found`, 'USER_NOT_FOUND');
   }
 }
 
-// Custom domain exception
-export class UserNotFoundException extends GraphQLError {
-  constructor(userId: string) {
-    super(`User with ID "${userId}" not found`, {
+// common/filters/domain-exception.filter.ts — maps domain exceptions to GraphQL errors
+@Catch(DomainException)
+export class DomainExceptionFilter implements ExceptionFilter {
+  catch(exception: DomainException, host: ArgumentsHost) {
+    // GraphQL-native: rethrow a GraphQLError the schema layers understand
+    throw new GraphQLError(exception.message, {
       extensions: {
-        code: 'USER_NOT_FOUND',
-        http: { status: 404 },
+        code: exception.code,
+        timestamp: new Date().toISOString(),
       },
     });
   }
 }
 
-// Custom exception filter for domain errors
-@Catch(DomainException)
-export class DomainExceptionFilter implements ExceptionFilter {
-  catch(exception: DomainException, host: ArgumentsHost) {
-    const ctx = host.switchToHttp();
-    const response = ctx.getResponse<Response>();
-    const request = ctx.getRequest<Request>();
-
-    const status = exception.extensions?.http?.status || 400;
-
-    response.status(status).json({
-      errors: [
-        {
-          message: exception.message,
-          extensions: {
-            code: exception.extensions?.code,
-            timestamp: new Date().toISOString(),
-            path: request.url,
-          },
-        },
-      ],
-    });
-  }
-}
-
-// Global exception filter for unhandled errors
+// common/filters/all-exceptions.filter.ts — global filter for unhandled errors
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   constructor(private readonly logger: Logger) {}
 
   catch(exception: unknown, host: ArgumentsHost) {
-    const ctx = host.switchToHttp();
-    const response = ctx.getResponse<Response>();
-    const request = ctx.getRequest<Request>();
-
-    const status =
-      exception instanceof HttpException
-        ? exception.getStatus()
-        : HttpStatus.INTERNAL_SERVER_ERROR;
-
     const message =
       exception instanceof Error
         ? exception.message
         : 'Internal server error';
 
     this.logger.error(
-      `${request.method} ${request.url}`,
+      'Unhandled exception',
       exception instanceof Error ? exception.stack : exception,
     );
 
-    response.status(status).json({
-      errors: [
-        {
-          message,
-          extensions: {
-            code: 'INTERNAL_SERVER_ERROR',
-            timestamp: new Date().toISOString(),
-            path: request.url,
-          },
-        },
-      ],
+    throw new GraphQLError(message, {
+      extensions: {
+        code: 'INTERNAL_SERVER_ERROR',
+        timestamp: new Date().toISOString(),
+      },
     });
   }
 }
 
-// Register globally in main.ts
+// Register globally in main.ts — bootstrap wires the global concerns
 app.useGlobalFilters(
   new AllExceptionsFilter(app.get(Logger)),
   new DomainExceptionFilter(),
 );
-
-// Or via module
-@Module({
-  providers: [
-    {
-      provide: APP_FILTER,
-      useClass: AllExceptionsFilter,
-    },
-  ],
-})
-export class AppModule {}
 ```
 
 Reference: [NestJS Exception Filters](https://docs.nestjs.com/exception-filters) | [GraphQL Other Features](https://docs.nestjs.com/graphql/other-features)

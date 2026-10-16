@@ -53,7 +53,7 @@ silently.
 
 ```typescript
 // modules/orders/services/orders.service.ts
-import { UsersService } from '@/modules/users/users.service'; // users' public API
+import { UsersService } from '@/modules/users/services/users.service'; // users' public API
 import { DomainException } from '@common/exceptions/domain.exception';
 
 constructor(private readonly usersService: UsersService) {}

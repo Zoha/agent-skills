@@ -13,7 +13,7 @@ NestJS modules are singletons by default. When a service is properly exported fr
 
 ```typescript
 // StorageService provided directly in multiple modules - WRONG
-// storage.service.ts
+// common/services/storage.service.ts
 @Injectable()
 export class StorageService {
   private cache = new Map(); // Each instance has separate state!
@@ -23,49 +23,45 @@ export class StorageService {
   }
 }
 
-// app.module.ts
+// modules/videos/videos.module.ts
 @Module({
   providers: [StorageService], // Instance #1
-  controllers: [AppController],
-})
-export class AppModule {}
-
-// videos.module.ts
-@Module({
-  providers: [StorageService], // Instance #2 - different from AppModule!
-  controllers: [VideosController],
 })
 export class VideosModule {}
 
+// modules/channels/channels.module.ts
+@Module({
+  providers: [StorageService], // Instance #2 - different from VideosModule!
+})
+export class ChannelsModule {}
+
 // Problems:
 // 1. Two separate StorageService instances exist
-// 2. cache.set() in VideosModule doesn't affect AppModule's cache
+// 2. cache.set() in ChannelsModule doesn't affect VideosModule's cache
 // 3. Memory wasted on duplicate instances
 // 4. Debugging nightmares when state doesn't sync
 ```
 
-**Correct (dedicated module with exports):**
+**Correct (dedicated shared module with exports):**
 
 ```typescript
-// storage/storage.module.ts
+// common/shared.module.ts
 @Module({
   providers: [StorageService],
   exports: [StorageService], // Make available to importers
 })
-export class StorageModule {}
+export class SharedModule {}
 
-// videos/videos.module.ts
+// modules/videos/videos.module.ts
 @Module({
-  imports: [StorageModule], // Import the module, not the service
-  controllers: [VideosController],
+  imports: [SharedModule], // Import the module, not the service
   providers: [VideosService],
 })
 export class VideosModule {}
 
-// channels/channels.module.ts
+// modules/channels/channels.module.ts
 @Module({
-  imports: [StorageModule], // Same instance shared
-  controllers: [ChannelsController],
+  imports: [SharedModule], // Same instance shared
   providers: [ChannelsService],
 })
 export class ChannelsModule {}
@@ -73,7 +69,7 @@ export class ChannelsModule {}
 // app.module.ts
 @Module({
   imports: [
-    StorageModule, // Only if AppModule itself needs StorageService
+    SharedModule, // Only if AppModule itself needs StorageService
     VideosModule,
     ChannelsModule,
   ],
@@ -89,53 +85,54 @@ export class AppModule {}
 // ONLY for truly cross-cutting concerns
 @Global()
 @Module({
-  providers: [ConfigService, LoggerService],
-  exports: [ConfigService, LoggerService],
+  providers: [LoggerService, HashingService],
+  exports: [LoggerService, HashingService],
 })
-export class CoreModule {}
+export class SharedModule {}
 
 // Import once in AppModule
 @Module({
-  imports: [CoreModule], // Registered globally, available everywhere
+  imports: [SharedModule], // Registered globally, available everywhere
 })
 export class AppModule {}
 
-// Other modules don't need to import CoreModule
+// Other modules don't need to import SharedModule
 @Module({
-  controllers: [UsersController],
-  providers: [UsersService], // Can inject ConfigService without importing
+  providers: [UsersService], // Can inject LoggerService without importing
 })
 export class UsersModule {}
 
 // WARNING: Don't make everything global!
 // - Hides dependencies (can't see what a module needs from imports)
 // - Makes testing harder
-// - Reserve for: config, logging, database connections
+// - Reserve for: config, logging, and other genuinely app-wide providers
 ```
 
-**Module re-exporting pattern:**
+**Re-exporting shared providers:**
 
 ```typescript
-// common.module.ts - shared utilities
+// common/shared.module.ts - shared utilities
 @Module({
   providers: [DateService, ValidationService],
   exports: [DateService, ValidationService],
 })
-export class CommonModule {}
+export class SharedModule {}
 
-// core.module.ts - re-exports common for convenience
+// common/building-blocks.module.ts - re-exports shared providers for convenience
 @Module({
-  imports: [CommonModule, DatabaseModule],
-  exports: [CommonModule, DatabaseModule], // Re-export for consumers
+  imports: [SharedModule],
+  exports: [SharedModule], // Re-export for consumers
 })
-export class CoreModule {}
+export class BuildingBlocksModule {}
 
-// feature.module.ts - imports CoreModule, gets both
+// a feature imports BuildingBlocksModule and gets every shared provider
 @Module({
-  imports: [CoreModule], // Gets CommonModule + DatabaseModule
-  controllers: [FeatureController],
+  imports: [BuildingBlocksModule],
+  providers: [FeatureService],
 })
 export class FeatureModule {}
 ```
+
+Infrastructure is **not** shared through this module. The database connection, `GraphQLModule`, and config registration are one-time infrastructure imported by the composition root from `infra/` — they are never re-exported by `SharedModule`.
 
 Reference: [NestJS Modules](https://docs.nestjs.com/modules#shared-modules)

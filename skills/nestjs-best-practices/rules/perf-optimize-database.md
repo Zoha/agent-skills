@@ -7,7 +7,7 @@ tags: performance, database, queries, optimization
 
 ## Optimize Database Queries
 
-Select only needed columns, use proper indexes, avoid over-fetching relations, and consider query performance when designing your data access. Most API slowness traces back to inefficient database queries.
+Select only needed columns, use proper indexes, avoid over-fetching, and consider query performance when designing your data access. Most API slowness traces back to inefficient database queries. For GraphQL, relations are resolved on demand with a request-scoped DataLoader — not by widening the parent query — and large lists are paged with a cursor (see `db-avoid-n-plus-one`).
 
 **Incorrect (over-fetching data and missing indexes):**
 
@@ -21,23 +21,22 @@ export class UsersService {
     return users.map((u) => u.email);
   }
 
-  async getUserSummary(id: string): Promise<UserSummary> {
-    const user = await this.repo.findOne({
+  async getProfile(id: string): Promise<User> {
+    return this.repo.findOne({
       where: { id },
-      relations: ['posts', 'posts.comments', 'posts.comments.author', 'followers'],
+      populate: ['posts', 'posts.comments', 'posts.comments.author', 'followers'],
     });
-    // Over-fetches massive relation tree
-    return { name: user.name, postCount: user.posts.length };
+    // Over-fetches a massive relation tree the client may never request
   }
 }
 
 // No indexes on frequently queried columns
-@Entity()
+@Schema()
 export class Order {
-  @Column()
-  userId: string; // No index - full table scan on every lookup
+  @Prop()
+  userId: string; // No index - full collection scan on every lookup
 
-  @Column()
+  @Prop()
   status: string; // No index - slow status filtering
 }
 ```
@@ -49,83 +48,53 @@ export class Order {
 @Injectable()
 export class UsersService {
   async findAllEmails(): Promise<string[]> {
-    const users = await this.repo.find({
-      select: ['email'], // Only fetch email column
-    });
+    const users = await this.repo.find({}, { email: 1 });
+    // Only fetches the email column
     return users.map((u) => u.email);
   }
 
-  // Use QueryBuilder for complex selections
+  // Use an aggregation pipeline for complex selections
   async getUserSummary(id: string): Promise<UserSummary> {
-    return this.repo
-      .createQueryBuilder('user')
-      .select('user.name', 'name')
-      .addSelect('COUNT(post.id)', 'postCount')
-      .leftJoin('user.posts', 'post')
-      .where('user.id = :id', { id })
-      .groupBy('user.id')
-      .getRawOne();
-  }
-
-  // Fetch relations only when needed
-  async getFullProfile(id: string): Promise<User> {
-    return this.repo.findOne({
-      where: { id },
-      relations: ['posts'], // Only immediate relation
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        posts: {
-          id: true,
-          title: true,
-        },
-      },
-    });
+    return this.repo.aggregate([
+      { $match: { _id: new Types.ObjectId(id) } },
+      { $project: { name: 1, postCount: { $size: '$postIds' } } },
+    ]);
   }
 }
 
-// Add indexes on frequently queried columns
-@Entity()
-@Index(['userId'])
-@Index(['status'])
-@Index(['createdAt'])
-@Index(['userId', 'status']) // Composite index for common query pattern
+// Add indexes on frequently queried fields
+@Schema({ collection: 'orders' })
 export class Order {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
-
-  @Column()
+  @Prop({ required: true, index: true })
   userId: string;
 
-  @Column()
+  @Prop({ index: true })
   status: string;
 
-  @CreateDateColumn()
+  @Prop()
   createdAt: Date;
 }
 
-// Always paginate large datasets
+// Compound index for a common query pattern
+OrderSchema.index({ userId: 1, status: 1 });
+
+// Page large datasets with a cursor (keyset) — the GraphQL default
 @Injectable()
 export class OrdersService {
-  async findAll(page = 1, limit = 20): Promise<PaginatedResult<Order>> {
-    const [items, total] = await this.repo.findAndCount({
-      skip: (page - 1) * limit,
-      take: limit,
-      order: { createdAt: 'DESC' },
-    });
-
-    return {
-      items,
-      meta: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
+  async findPage(first = 20, after?: string): Promise<Order[]> {
+    return this.ordersRepository.find(
+      {
+        ...(after ? { createdAt: { $lt: new Date(after) } } : {}),
       },
-    };
+      {
+        sort: { createdAt: -1 },
+        limit: first,
+      },
+    );
   }
 }
 ```
 
-Reference: [TypeORM Query Builder](https://typeorm.io/select-query-builder)
+Return a cursor-based `Paginated<T>` from the resolver (see `type-pagination` in `nestjs-graphql-structure`). Use offset `page`/`limit` only for a small, bounded, non-growing list.
+
+Reference: [MongoDB Indexes](https://www.mongodb.com/docs/manual/indexes/) | [TypeORM Query Builder](https://typeorm.io/select-query-builder)

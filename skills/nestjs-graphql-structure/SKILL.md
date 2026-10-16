@@ -1,6 +1,6 @@
 ---
 name: nestjs-graphql-structure
-description: Application structure and file-placement guide for NestJS GraphQL (code-first) applications. Use when deciding where a file belongs, designing or reviewing a feature-first directory layout, scaffolding a new feature module, or working out how modules connect to resolve GraphQL fields and relations. Covers the base structure map plus per-file rules for modules, services, resolvers, inputs, entities, repositories, loaders, events, auth, exceptions, and pagination — and module-resolution concerns such as circular dependencies. For behavioral rules (DI depth, security, performance, error handling) use the nestjs-best-practices skill instead.
+description: Application structure and file-placement guide for NestJS GraphQL (code-first) applications. Use when deciding where a file belongs, designing or reviewing a feature-first directory layout, scaffolding a new feature module, or working out how modules connect to resolve GraphQL fields and relations. Covers the base structure map plus per-file rules for modules, services, resolvers (query, mutation, subscription, field), inputs and args, pagination, entities, models/mappers, repositories, providers, loaders, events, background jobs, auth, exceptions, custom scalars, config, common building blocks, infra setup, and the naming/testing/lint conventions — and module-resolution concerns such as circular dependencies. For behavioral rules (DI depth, security, performance, error handling) use the nestjs-best-practices skill instead.
 license: MIT
 metadata:
   author: Zoha
@@ -9,7 +9,7 @@ metadata:
 
 # NestJS GraphQL Structure
 
-Where every file belongs in a NestJS GraphQL (code-first) application, and how each file works. This skill is a **placement and anatomy** guide: it answers "which folder does this file go in?", "what is this file responsible for?", and "how do modules connect to resolve fields and relations?". It covers the base structure map plus per-file rules for services, resolvers, inputs, entities, repositories, loaders, events, auth, exceptions, and pagination.
+Where every file belongs in a NestJS GraphQL (code-first) application, and how each file works. This skill is a **placement and anatomy** guide: it answers "which folder does this file go in?", "what is this file responsible for?", and "how do modules connect to resolve fields and relations?". It covers the base structure map plus per-file rules for modules, services, resolvers (query, mutation, subscription, and field), inputs and args, pagination, entities, models/mappers, repositories, providers, loaders, events, background jobs, auth, exceptions, custom scalars, config, common building blocks, infra setup, and the naming/testing/lint conventions.
 
 It is deliberately separate from the `nestjs-best-practices` skill. That skill covers framework behavior (dependency-injection depth, security, performance, error handling, microservices, DevOps); this one covers structure and module composition. Where they overlap (feature modules, circular dependencies), this skill looks at it through a placement lens and cross-references the other skill for behavioral depth.
 

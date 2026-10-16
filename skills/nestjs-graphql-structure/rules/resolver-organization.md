@@ -16,8 +16,8 @@ resolvers are a separate concern, living in their own per-type file (see `resolv
 `relations-owning-module`) — not here.
 
 **Placement.** `modules/<feature>/resolvers/<feature>.query.resolver.ts` and
-`<feature>.mutation.resolver.ts`. For a very small feature a single `<feature>.resolver.ts`
-covering queries and mutations is acceptable; split once a role grows.
+`<feature>.mutation.resolver.ts`. Entry-point resolvers always split by role; keep a role file
+only for the operations that role actually has.
 
 **Responsibilities.**
 
@@ -31,6 +31,8 @@ covering queries and mutations is acceptable; split once a role grows.
 - Catch and reformat errors by hand — use exception filters.
 - Hold `@ResolveField()` methods — they belong in the type's per-type resolver file (see
   `resolver-per-type`).
+- Name an entry-point resolver `<type>.resolver.ts` — that filename belongs to a type's field
+  resolvers (see `resolver-per-type`).
 - Register in `AppModule`; resolvers are providers of their own feature module.
 
 **Incorrect (one class for everything, logic inline):**

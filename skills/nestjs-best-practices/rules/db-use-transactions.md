@@ -9,6 +9,8 @@ tags: database, transactions, typeorm, consistency
 
 When multiple database operations must succeed or fail together, wrap them in a transaction. This prevents partial updates that leave your data in an inconsistent state. Use TypeORM's transaction APIs or the DataSource query runner for complex scenarios.
 
+The examples below use TypeORM. If your project uses Mongoose (see `db-avoid-n-plus-one` and the data rules in `nestjs-graphql-structure`), wrap the same steps in a MongoDB session transaction (`session.withTransaction(...)`) inside the repository.
+
 **Incorrect (multiple saves without transaction):**
 
 ```typescript

@@ -7,31 +7,31 @@ tags: security, guards, authentication, authorization
 
 ## Use Guards for Authentication and Authorization
 
-Guards determine whether a request should be handled based on authentication state, roles, permissions, or other conditions. They run after middleware but before pipes and interceptors, making them ideal for access control. Use guards instead of manual checks in controllers.
+Guards determine whether a request should be handled based on authentication state, roles, permissions, or other conditions. They run after middleware but before pipes and interceptors, making them ideal for access control. Use guards instead of manual checks in resolvers. In GraphQL, guards read the request through `GqlExecutionContext`; shared guards live in `common/guards/`.
 
 **Incorrect (manual auth checks in every handler):**
 
 ```typescript
-// Manual auth checks in every handler
-@Controller('admin')
-export class AdminController {
-  @Get('users')
-  async getUsers(@Request() req) {
-    if (!req.user) {
+// Manual auth checks in every resolver
+@Resolver()
+export class AdminResolver {
+  @Query(() => [User])
+  async users(@Context() ctx: GqlContext) {
+    if (!ctx.user) {
       throw new UnauthorizedException();
     }
-    if (!req.user.roles.includes('admin')) {
+    if (!ctx.user.roles.includes('admin')) {
       throw new ForbiddenException();
     }
     return this.adminService.getUsers();
   }
 
-  @Delete('users/:id')
-  async deleteUser(@Request() req, @Param('id') id: string) {
-    if (!req.user) {
+  @Mutation(() => Boolean)
+  async deleteUser(@Args('id') id: string, @Context() ctx: GqlContext) {
+    if (!ctx.user) {
       throw new UnauthorizedException();
     }
-    if (!req.user.roles.includes('admin')) {
+    if (!ctx.user.roles.includes('admin')) {
       throw new ForbiddenException();
     }
     return this.adminService.deleteUser(id);
@@ -42,15 +42,15 @@ export class AdminController {
 **Correct (guards with declarative decorators):**
 
 ```typescript
-// JWT Auth Guard
+// common/guards/jwt-auth.guard.ts — authentication: delegates to the 'jwt' Passport strategy
+// (see security-auth-jwt), which sets req.user to the validated user
 @Injectable()
-export class JwtAuthGuard implements CanActivate {
-  constructor(
-    private jwtService: JwtService,
-    private reflector: Reflector,
-  ) {}
+export class JwtAuthGuard extends AuthGuard('jwt') {
+  constructor(private readonly reflector: Reflector) {
+    super();
+  }
 
-  async canActivate(context: ExecutionContext): Promise<boolean> {
+  canActivate(context: ExecutionContext) {
     // Check for @Public() decorator
     const isPublic = this.reflector.getAllAndOverride<boolean>('isPublic', [
       context.getHandler(),
@@ -58,28 +58,11 @@ export class JwtAuthGuard implements CanActivate {
     ]);
     if (isPublic) return true;
 
-    const request = context.switchToHttp().getRequest();
-    const token = this.extractToken(request);
-
-    if (!token) {
-      throw new UnauthorizedException('No token provided');
-    }
-
-    try {
-      request.user = await this.jwtService.verifyAsync(token);
-      return true;
-    } catch {
-      throw new UnauthorizedException('Invalid token');
-    }
-  }
-
-  private extractToken(request: Request): string | undefined {
-    const [type, token] = request.headers.authorization?.split(' ') ?? [];
-    return type === 'Bearer' ? token : undefined;
+    return super.canActivate(context);
   }
 }
 
-// Roles Guard
+// common/guards/roles.guard.ts
 @Injectable()
 export class RolesGuard implements CanActivate {
   constructor(private reflector: Reflector) {}
@@ -92,16 +75,16 @@ export class RolesGuard implements CanActivate {
 
     if (!requiredRoles) return true;
 
-    const { user } = context.switchToHttp().getRequest();
+    const { user } = GqlExecutionContext.create(context).getContext().req;
     return requiredRoles.some((role) => user.roles?.includes(role));
   }
 }
 
-// Decorators
+// common/decorators/public.decorator.ts, roles.decorator.ts
 export const Public = () => SetMetadata('isPublic', true);
 export const Roles = (...roles: Role[]) => SetMetadata('roles', roles);
 
-// Register guards globally
+// Register guards globally in AppModule (APP_GUARD is the idiomatic global registration)
 @Module({
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },
@@ -110,24 +93,24 @@ export const Roles = (...roles: Role[]) => SetMetadata('roles', roles);
 })
 export class AppModule {}
 
-// Clean controller
-@Controller('admin')
-@Roles(Role.Admin) // Applied to all routes
-export class AdminController {
-  @Get('users')
-  getUsers(): Promise<User[]> {
+// Clean resolver
+@Resolver()
+@Roles(Role.Admin) // Applied to every query and mutation on this resolver
+export class AdminResolver {
+  @Query(() => [User])
+  users(): Promise<User[]> {
     return this.adminService.getUsers();
   }
 
-  @Delete('users/:id')
-  deleteUser(@Param('id') id: string): Promise<void> {
+  @Mutation(() => Boolean)
+  deleteUser(@Args('id') id: string): Promise<boolean> {
     return this.adminService.deleteUser(id);
   }
 
   @Public() // Override: no auth required
-  @Get('health')
-  health() {
-    return { status: 'ok' };
+  @Query(() => String)
+  health(): string {
+    return 'ok';
   }
 }
 ```

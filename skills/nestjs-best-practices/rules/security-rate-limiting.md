@@ -109,8 +109,7 @@ export class CustomThrottlerGuard extends ThrottlerGuard {
   }
 
   protected async getLimit(context: ExecutionContext): Promise<number> {
-    const ctx = context.switchToHttp();
-    const request = ctx.getRequest();
+    const request = GqlExecutionContext.create(context).getContext().req;
 
     if (request.user) {
       return request.user.isPremium ? 1000 : 200;
@@ -135,7 +134,7 @@ const schema = buildSchema({
 @Injectable()
 export class ComplexityRateLimitGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
-    const info = context.getArgByIndex(1);
+    const info = GqlExecutionContext.create(context).getInfo();
     const complexity = this.calculateComplexity(info);
 
     if (complexity > 1000) {

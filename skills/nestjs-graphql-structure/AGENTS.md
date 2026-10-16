@@ -13,7 +13,7 @@ October 2026
 
 ## Abstract
 
-File-placement and anatomy guide for NestJS GraphQL applications, designed for AI agents and LLMs. Teaches where every file belongs in a feature-first, code-first codebase — the base structure map plus per-file rules for modules, services, resolvers, inputs, entities, repositories, loaders, events, auth, exceptions, pagination, subscriptions, providers, background jobs, scalars, seeds, interfaces/tokens, and test fixtures — each with purpose, responsibilities, and incorrect-vs-correct examples. It also covers how modules connect to resolve GraphQL fields and relations, including module-resolution concerns such as circular dependencies, while deferring behavioral concerns to the nestjs-best-practices skill.
+File-placement and anatomy guide for NestJS GraphQL applications, designed for AI agents and LLMs. Teaches where every file belongs in a feature-first, code-first codebase — the base structure map plus per-file rules for modules, services, resolvers (query, mutation, subscription, and field), inputs and args, pagination, entities, models/mappers, repositories, providers, loaders, events, background jobs, auth, exceptions, custom scalars, config, common building blocks, GraphQL and database infrastructure, seeds, interfaces/tokens, unions/interfaces, and conventions (naming, barrels/aliases, lint boundaries, test placement, and fixtures) — each with purpose, responsibilities, and incorrect-vs-correct examples. It also covers how modules connect to resolve GraphQL fields and relations, including module-resolution concerns such as circular dependencies, while deferring behavioral concerns to the nestjs-best-practices skill.
 
 ---
 
@@ -232,15 +232,15 @@ src/
     │   │   └── <feature>.repository.ts          # data access only
     │   ├── providers/                           # OPTIONAL: thin wrappers over third-party SDKs
     │   ├── dto/
-    │   │   ├── create-<feature>.input.ts        # @InputType (+class-validator)
+    │   │   ├── create-<entity>.input.ts         # @InputType (+class-validator)
     │   │   ├── find-<feature>.args.ts           # @Args() class
     │   │   └── filter-<feature>.input.ts        # OPTIONAL: filter/sort input for list queries
     │   ├── constants/                           # constants and enums (no stray values in class files)
     │   │   └── <feature>-status.enum.ts
     │   ├── entities/
-    │   │   └── <feature>.entity.ts              # persistence + @ObjectType (merged default)
-    │   ├── models/                              # OPTIONAL: GraphQL-only @ObjectType, union/interface types
-    │   ├── mappers/                             # OPTIONAL: entity ⟷ model
+    │   │   └── <entity>.entity.ts               # persistence + @ObjectType (merged default)
+    │   ├── models/                              # OPTIONAL: GraphQL-only @ObjectType (e.g. <entity>.model.ts, union/interface types)
+    │   ├── mappers/                             # OPTIONAL: entity ⟷ model (e.g. <entity>.mapper.ts)
     │   ├── loaders/
     │   │   └── <feature>.loader.ts              # DataLoader(s) for relations
     │   ├── events/
@@ -358,6 +358,8 @@ creating but not where it belongs; the base structure rule (`struct-canonical-la
 full tree, and the linked rule gives the file's purpose and examples.
 
 **Placement.** This rule is the index; each row points to the rule that owns the file kind.
+`<f>` is the feature's module/folder name, plural (for example `users`); `<entity>` is the
+feature's primary domain noun, singular (for example `user`). See `conventions-naming`.
 
 | File kind | Location | Rule |
 |-----------|----------|------|
@@ -376,17 +378,17 @@ full tree, and the linked rule gives the file's purpose and examples.
 | Third-party provider | `modules/<f>/providers/<vendor>.provider.ts` | `service-external-providers` |
 | Queue processor | `modules/<f>/processors/<f>.processor.ts` | `service-background-jobs` |
 | Scheduled job | `modules/<f>/jobs/<f>.job.ts` | `service-background-jobs` |
-| GraphQL input | `modules/<f>/dto/create-<f>.input.ts` | `type-inputs` |
+| GraphQL input | `modules/<f>/dto/create-<entity>.input.ts` | `type-inputs` |
 | GraphQL args | `modules/<f>/dto/find-<f>.args.ts` | `type-args` |
 | Pagination args | `modules/<f>/dto/<f>-pagination.args.ts` | `type-pagination` |
 | Constants / enums | `modules/<f>/constants/` | `conventions-constants-enums` |
 | Feature-local exception | `modules/<f>/exceptions/<name>.exception.ts` | `infra-exceptions` |
 | Feature port / token | `modules/<f>/interfaces/<name>.interface.ts` | `service-interfaces-tokens` |
 | Shared port / token | `common/interfaces/<name>.interface.ts` | `service-interfaces-tokens` |
-| Persistence entity / object type | `modules/<f>/entities/<f>.entity.ts` | `data-entity-mongodb` |
-| GraphQL-only model (split) | `modules/<f>/models/<f>.model.ts` | `data-models-mappers` |
+| Persistence entity / object type | `modules/<f>/entities/<entity>.entity.ts` | `data-entity-mongodb` |
+| GraphQL-only model (split) | `modules/<f>/models/<entity>.model.ts` | `data-models-mappers` |
 | GraphQL union / interface | `modules/<f>/models/<name>.union.ts` | `type-unions-interfaces` |
-| Mapper | `modules/<f>/mappers/<f>.mapper.ts` | `data-models-mappers` |
+| Mapper | `modules/<f>/mappers/<entity>.mapper.ts` | `data-models-mappers` |
 | DataLoader | `modules/<f>/loaders/<f>.loader.ts` | `relations-dataloader` |
 | Domain event / listener | `modules/<f>/events/` | `relations-events` |
 | Config namespace | `config/` | `infra-config` |
@@ -729,25 +731,28 @@ interface.
 - Export everything by default.
 - Put business logic or configuration in the module class.
 
-**Incorrect (everything in AppModule, everything exported):**
+**Incorrect (the module wires other features, exports internals, and holds logic):**
 
 ```typescript
-// app.module.ts — every feature provider registered here
+// modules/users/users.module.ts
 @Module({
-  providers: [UsersService, UsersResolver, UsersRepository, OrdersService, OrdersResolver],
+  providers: [
+    UsersService,
+    UsersRepository,
+    OrdersService, // belongs to OrdersModule
+    AuthService,   // belongs to AuthModule
+  ],
+  exports: [UsersRepository, UsersQueryResolver], // internals and a resolver, exported
 })
-export class AppModule {}
-
-// modules/users/users.module.ts — exports everything "just in case"
-@Module({
-  providers: [UsersService, UsersRepository, UsersResolver],
-  exports: [UsersService, UsersRepository, UsersResolver],
-})
-export class UsersModule {}
+export class UsersModule {
+  onModuleInit() {
+    // module-level wiring or domain logic that belongs in a provider
+  }
+}
 ```
 
-Why it is wrong: `AppModule` becomes the wiring for every feature, so nothing is
-encapsulated, and exporting the repository and resolver turns internals into public API.
+Why it is wrong: the feature module reaches into other features, exposes its internals, and carries
+logic — so it no longer describes one feature's public interface.
 
 **Correct (feature wires itself, minimal exports):**
 
@@ -1239,10 +1244,6 @@ produced depends on the field:
   and implement it with exactly one `@ResolveField` in the type's `<type>.resolver.ts`
   (see `resolver-per-type`).
 
-> **The field must be declared on the `@ObjectType` as well.** A `@ResolveField` supplies a
-> field's value; it does not declare the field. Every resolved field needs its own `@Field()` line
-> on the `@ObjectType` or it will not appear in the schema.
-
 **Responsibilities.**
 
 - Declare each exposed field exactly once, with `@Field()`, on the `@ObjectType`.
@@ -1325,8 +1326,8 @@ resolvers are a separate concern, living in their own per-type file (see `resolv
 `relations-owning-module`) — not here.
 
 **Placement.** `modules/<feature>/resolvers/<feature>.query.resolver.ts` and
-`<feature>.mutation.resolver.ts`. For a very small feature a single `<feature>.resolver.ts`
-covering queries and mutations is acceptable; split once a role grows.
+`<feature>.mutation.resolver.ts`. Entry-point resolvers always split by role; keep a role file
+only for the operations that role actually has.
 
 **Responsibilities.**
 
@@ -1340,6 +1341,8 @@ covering queries and mutations is acceptable; split once a role grows.
 - Catch and reformat errors by hand — use exception filters.
 - Hold `@ResolveField()` methods — they belong in the type's per-type resolver file (see
   `resolver-per-type`).
+- Name an entry-point resolver `<type>.resolver.ts` — that filename belongs to a type's field
+  resolvers (see `resolver-per-type`).
 - Register in `AppModule`; resolvers are providers of their own feature module.
 
 **Incorrect (one class for everything, logic inline):**
@@ -1648,8 +1651,8 @@ Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
 live in the feature's `dto/` folder. They are the boundary where untrusted input is validated
 and shaped, so they must carry validation and must never expose internal fields.
 
-**Placement.** `modules/<feature>/dto/create-<feature>.input.ts`,
-`update-<feature>.input.ts`. Class names end in `Input`.
+**Placement.** `modules/<feature>/dto/create-<entity>.input.ts`,
+`update-<entity>.input.ts`. Class names end in `Input`.
 
 **Responsibilities.**
 
@@ -1725,8 +1728,8 @@ pick one per query and do not mix the two.
 
 **Placement.**
 
-- Shared: `src/common/pagination/paginated.ts` (generic `Paginated<T>` factory) and
-  `page-info.ts`.
+- Shared: `src/common/pagination/paginated.ts` (the generic `Paginated<T>` factory and
+  `PageInfo`).
 - Feature args/filters: `modules/<feature>/dto/<feature>-pagination.args.ts`,
   `filter-<feature>.input.ts`.
 
@@ -1795,9 +1798,9 @@ export function Paginated<T>(classRef: Type<T>) {
 @ObjectType()
 export class UserConnection extends Paginated(User) {}
 
-// modules/users/dto/search-users.args.ts
+// modules/users/dto/users-pagination.args.ts
 @ArgsType()
-export class SearchUsersArgs {
+export class UsersPaginationArgs {
   @Field(() => Int, { defaultValue: 20 })
   @IsInt() @Min(1) @Max(100)
   first = 20;
@@ -1813,7 +1816,7 @@ export class SearchUsersArgs {
 
 // modules/users/resolvers/users.query.resolver.ts
 @Query(() => UserConnection)
-users(@Args() args: SearchUsersArgs): Promise<UserConnection> {
+users(@Args() args: UsersPaginationArgs): Promise<UserConnection> {
   return this.usersService.search(args);
 }
 ```
@@ -1911,8 +1914,8 @@ Reference: [NestJS GraphQL Unions and Enums](https://docs.nestjs.com/graphql/uni
 default (merged) case the same class is both the persistence schema and the GraphQL
 `@ObjectType`, which keeps the two in sync for simple, one-to-one domain objects.
 
-**Placement.** `modules/<feature>/entities/<feature>.entity.ts`. One entity per file; the
-class name is singular and PascalCase (`User`).
+**Placement.** `modules/<feature>/entities/<entity>.entity.ts`. One entity per file; the
+file and class are named after the singular concept (`user.entity.ts` / class `User`).
 
 **Responsibilities.**
 
@@ -2004,10 +2007,10 @@ them in `mappers/`.
 
 **Placement.**
 
-- `modules/<feature>/entities/<feature>.entity.ts` — persistence only (keep `@Schema`/`@Prop`,
+- `modules/<feature>/entities/<entity>.entity.ts` — persistence only (keep `@Schema`/`@Prop`,
   drop `@ObjectType`/`@Field`).
-- `modules/<feature>/models/<feature>.model.ts` — the GraphQL `@ObjectType`.
-- `modules/<feature>/mappers/<feature>.mapper.ts` — entity → model.
+- `modules/<feature>/models/<entity>.model.ts` — the GraphQL `@ObjectType`.
+- `modules/<feature>/mappers/<entity>.mapper.ts` — entity → model.
 
 **Responsibilities.**
 
@@ -2492,14 +2495,14 @@ even though the GraphQL types reference each other in both directions.
 `comments/resolvers/user-comments.resolver.ts`). The same file belongs to the data owner, never to
 the type's own module.
 
-**MUST.**
+**Responsibilities.**
 
 - Put the resolver in the module that owns the data the field returns.
 - Declare it `@Resolver(() => OtherType)` with a `@ResolveField(() => FieldType)` method.
 - Read the parent key from `@Parent()` and call the module's **own** service.
 - Keep every dependency pointing data-owner → type-owner.
 
-**MUST NOT.**
+**Never.**
 
 - Add the relation field inside the type's own module when that requires importing the module that
   owns the data.
@@ -2507,13 +2510,12 @@ the type's own module.
 - Reach into another module's repository, entity, or model.
 - Use `forwardRef` to make a relation field resolve.
 
-**Decision question.** *I need field X on type T — where does the data come from? Put the resolver
-in that module.*
+Decision question: *I need field X on type T — where does the data come from? Put the resolver in
+that module.*
 
-**Good / bad — `User.comments`:**
+**Incorrect (the type's own module declares and resolves `User.comments`):**
 
 ```typescript
-// BAD — the type's own module (users) declares and resolves User.comments
 // users/resolvers/user-comments.resolver.ts   <-- belongs in comments/, not users/
 @Resolver(() => User)
 export class UserCommentsResolver {
@@ -2525,8 +2527,12 @@ export class UserCommentsResolver {
 // A cycle appears the moment CommentsModule needs anything from UsersModule.
 ```
 
+Why it is wrong: the type's own module now depends on the data owner, so the dependency direction
+is reversed and a cycle is only a matter of time.
+
+**Correct (the data owner owns the field; the same resolver lives in the correct module):**
+
 ```typescript
-// GOOD — the data owner owns the field; the SAME resolver, in the correct module
 // comments/resolvers/user-comments.resolver.ts
 @Resolver(() => User)                                   // the User type class, imported
 export class UserCommentsResolver {
@@ -2539,13 +2545,8 @@ export class UserCommentsResolver {
 // UsersModule knows nothing about comments. Dependencies point one way -> no cycle, no forwardRef.
 ```
 
-**PR checklist.**
-
-- [ ] The relation field's resolver lives in the module that owns the returned data.
-- [ ] The resolver uses that module's own service, not another module's.
-- [ ] No type-owner module imports the data-owner module.
-- [ ] No `forwardRef` was added to make the field resolve.
-- [ ] `@Parent()` supplies the key; the parent is not re-fetched to find it.
+Why it is right: the file lives with the data it returns, the resolver uses that module's own
+service, and every dependency still points one way, so no cycle or `forwardRef` is needed.
 
 Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers) | [NestJS Circular dependency](https://docs.nestjs.com/fundamentals/circular-dependency)
 
@@ -3033,8 +3034,9 @@ Reference: [NestJS Exception Filters](https://docs.nestjs.com/exception-filters)
 
 **Purpose.** The `GraphQLModule` configuration and the per-request context factory live in
 `infra/graphql/`. The module configures the driver, schema generation, and global options; the
-context file builds the object every request sees — the request, the authenticated user, and
-the per-request DataLoaders.
+context file builds the object every request sees — the request and the authenticated user.
+Request-scoped providers such as DataLoaders are **not** built into the context; they are
+request-scoped providers injected where they are used (see `relations-dataloader`).
 
 **Placement.** `src/infra/graphql/graphql.module.ts`, `src/infra/graphql/graphql.context.ts`.
 
@@ -3278,7 +3280,7 @@ silently.
 
 ```typescript
 // modules/orders/services/orders.service.ts
-import { UsersService } from '@/modules/users/users.service'; // users' public API
+import { UsersService } from '@/modules/users/services/users.service'; // users' public API
 import { DomainException } from '@common/exceptions/domain.exception';
 
 constructor(private readonly usersService: UsersService) {}
@@ -3514,6 +3516,11 @@ PascalCase and named after the concept.
 
 **Placement.** Throughout `src/`.
 
+**Placeholders.** `<feature>` is the feature's module/folder name, plural (for example `users`).
+`<entity>` is the feature's primary domain noun, singular (for example `user`). Kinds named after
+the feature — module, service, repository, resolver, loader, args — use `<feature>`; kinds named
+after a single concept — entity, model, mapper, input — use `<entity>`.
+
 **Responsibilities.**
 
 - Name files `<feature>.<role>.ts` (or `<verb>-<feature>.<role>.ts` for inputs/args).
@@ -3547,8 +3554,8 @@ Why it is wrong: the filename does not say what the file is or where it belongs.
 | Own-type field resolver (nested/computed) | `<type>.resolver.ts` | `<Type>Resolver` |
 | Service | `<feature>.service.ts` / `<feature>-<concern>.service.ts` | `<Feature>Service` |
 | Repository | `<feature>.repository.ts` | `<Feature>Repository` |
-| Entity | `<feature>.entity.ts` | `<Feature>` |
-| Input | `create-<feature>.input.ts` | `Create<Feature>Input` |
+| Entity | `<entity>.entity.ts` | `<Entity>` |
+| Input | `create-<entity>.input.ts` | `Create<Entity>Input` |
 | Args | `find-<feature>.args.ts` | `Find<Feature>Args` |
 | Loader | `<feature>.loader.ts` | `<Feature>Loader` |
 | Event | `<feature>-<action>.event.ts` | `<Feature><Action>Event` |

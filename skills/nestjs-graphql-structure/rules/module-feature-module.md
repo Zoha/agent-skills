@@ -30,25 +30,28 @@ interface.
 - Export everything by default.
 - Put business logic or configuration in the module class.
 
-**Incorrect (everything in AppModule, everything exported):**
+**Incorrect (the module wires other features, exports internals, and holds logic):**
 
 ```typescript
-// app.module.ts — every feature provider registered here
+// modules/users/users.module.ts
 @Module({
-  providers: [UsersService, UsersResolver, UsersRepository, OrdersService, OrdersResolver],
+  providers: [
+    UsersService,
+    UsersRepository,
+    OrdersService, // belongs to OrdersModule
+    AuthService,   // belongs to AuthModule
+  ],
+  exports: [UsersRepository, UsersQueryResolver], // internals and a resolver, exported
 })
-export class AppModule {}
-
-// modules/users/users.module.ts — exports everything "just in case"
-@Module({
-  providers: [UsersService, UsersRepository, UsersResolver],
-  exports: [UsersService, UsersRepository, UsersResolver],
-})
-export class UsersModule {}
+export class UsersModule {
+  onModuleInit() {
+    // module-level wiring or domain logic that belongs in a provider
+  }
+}
 ```
 
-Why it is wrong: `AppModule` becomes the wiring for every feature, so nothing is
-encapsulated, and exporting the repository and resolver turns internals into public API.
+Why it is wrong: the feature module reaches into other features, exposes its internals, and carries
+logic — so it no longer describes one feature's public interface.
 
 **Correct (feature wires itself, minimal exports):**
 

@@ -13,8 +13,8 @@ tags: mongodb, mongoose, entity, objecttype
 default (merged) case the same class is both the persistence schema and the GraphQL
 `@ObjectType`, which keeps the two in sync for simple, one-to-one domain objects.
 
-**Placement.** `modules/<feature>/entities/<feature>.entity.ts`. One entity per file; the
-class name is singular and PascalCase (`User`).
+**Placement.** `modules/<feature>/entities/<entity>.entity.ts`. One entity per file; the
+file and class are named after the singular concept (`user.entity.ts` / class `User`).
 
 **Responsibilities.**
 

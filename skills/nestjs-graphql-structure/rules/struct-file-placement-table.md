@@ -14,6 +14,8 @@ creating but not where it belongs; the base structure rule (`struct-canonical-la
 full tree, and the linked rule gives the file's purpose and examples.
 
 **Placement.** This rule is the index; each row points to the rule that owns the file kind.
+`<f>` is the feature's module/folder name, plural (for example `users`); `<entity>` is the
+feature's primary domain noun, singular (for example `user`). See `conventions-naming`.
 
 | File kind | Location | Rule |
 |-----------|----------|------|
@@ -32,17 +34,17 @@ full tree, and the linked rule gives the file's purpose and examples.
 | Third-party provider | `modules/<f>/providers/<vendor>.provider.ts` | `service-external-providers` |
 | Queue processor | `modules/<f>/processors/<f>.processor.ts` | `service-background-jobs` |
 | Scheduled job | `modules/<f>/jobs/<f>.job.ts` | `service-background-jobs` |
-| GraphQL input | `modules/<f>/dto/create-<f>.input.ts` | `type-inputs` |
+| GraphQL input | `modules/<f>/dto/create-<entity>.input.ts` | `type-inputs` |
 | GraphQL args | `modules/<f>/dto/find-<f>.args.ts` | `type-args` |
 | Pagination args | `modules/<f>/dto/<f>-pagination.args.ts` | `type-pagination` |
 | Constants / enums | `modules/<f>/constants/` | `conventions-constants-enums` |
 | Feature-local exception | `modules/<f>/exceptions/<name>.exception.ts` | `infra-exceptions` |
 | Feature port / token | `modules/<f>/interfaces/<name>.interface.ts` | `service-interfaces-tokens` |
 | Shared port / token | `common/interfaces/<name>.interface.ts` | `service-interfaces-tokens` |
-| Persistence entity / object type | `modules/<f>/entities/<f>.entity.ts` | `data-entity-mongodb` |
-| GraphQL-only model (split) | `modules/<f>/models/<f>.model.ts` | `data-models-mappers` |
+| Persistence entity / object type | `modules/<f>/entities/<entity>.entity.ts` | `data-entity-mongodb` |
+| GraphQL-only model (split) | `modules/<f>/models/<entity>.model.ts` | `data-models-mappers` |
 | GraphQL union / interface | `modules/<f>/models/<name>.union.ts` | `type-unions-interfaces` |
-| Mapper | `modules/<f>/mappers/<f>.mapper.ts` | `data-models-mappers` |
+| Mapper | `modules/<f>/mappers/<entity>.mapper.ts` | `data-models-mappers` |
 | DataLoader | `modules/<f>/loaders/<f>.loader.ts` | `relations-dataloader` |
 | Domain event / listener | `modules/<f>/events/` | `relations-events` |
 | Config namespace | `config/` | `infra-config` |

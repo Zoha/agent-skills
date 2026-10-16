@@ -7,7 +7,9 @@ tags: graphql, jwt, authentication, tokens
 
 ## Implement Secure JWT Authentication
 
-Use `@nestjs/jwt` with `@nestjs/passport` for authentication in GraphQL. Extract the JWT token from the GraphQL context (`context.req.headers.authorization`), populate `context.user`, and use guards on resolvers. Store secrets securely, use appropriate token lifetimes, implement refresh tokens, and validate tokens properly. Never expose sensitive data in JWT payloads.
+Use `@nestjs/jwt` with `@nestjs/passport` for authentication in GraphQL. Read the token from the GraphQL request (`GqlExecutionContext.create(context).getContext().req`), populate the context's `user`, and use guards on resolvers. Store secrets securely, use appropriate token lifetimes, implement refresh tokens, and validate tokens properly. Never expose sensitive data in JWT payloads.
+
+Auth is its own feature module. Strategies live in `modules/auth/strategies/`, auth services in `modules/auth/services/`, and `AuthModule` depends on `UsersModule` — never the reverse.
 
 **Incorrect (insecure JWT implementation):**
 
@@ -54,9 +56,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 **Correct (secure JWT with refresh tokens in GraphQL):**
 
 ```typescript
-// Secure JWT configuration
+// modules/auth/auth.module.ts — auth depends on users, one way
 @Module({
   imports: [
+    UsersModule,
+    PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -69,12 +73,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         },
       }),
     }),
-    PassportModule.register({ defaultStrategy: 'jwt' }),
   ],
+  providers: [AuthService, JwtStrategy, AuthMutationResolver],
+  exports: [AuthService],
 })
 export class AuthModule {}
 
-// Minimal JWT payload
+// modules/auth/services/auth.service.ts — minimal JWT payload
 @Injectable()
 export class AuthService {
   async login(user: User): Promise<TokenResponse> {
@@ -105,44 +110,27 @@ export class AuthService {
   }
 }
 
-// GraphQL context with JWT
+// common/guards/jwt-auth.guard.ts — delegates token verification to the JWT strategy below,
+// so req.user is the validated User (not the raw token payload)
 @Injectable()
-export class JwtAuthGuard implements CanActivate {
-  constructor(
-    private jwtService: JwtService,
-    private reflector: Reflector,
-  ) {}
+export class JwtAuthGuard extends AuthGuard('jwt') {
+  constructor(private readonly reflector: Reflector) {
+    super();
+  }
 
-  async canActivate(context: ExecutionContext): Promise<boolean> {
+  canActivate(context: ExecutionContext) {
     const isPublic = this.reflector.getAllAndOverride<boolean>('isPublic', [
       context.getHandler(),
       context.getClass(),
     ]);
     if (isPublic) return true;
 
-    const ctx = context.switchToHttp();
-    const request = ctx.getRequest();
-    const token = this.extractToken(request);
-
-    if (!token) {
-      throw new UnauthorizedException('No token provided');
-    }
-
-    try {
-      request.user = await this.jwtService.verifyAsync(token);
-      return true;
-    } catch {
-      throw new UnauthorizedException('Invalid token');
-    }
-  }
-
-  private extractToken(request: Request): string | undefined {
-    const [type, token] = request.headers.authorization?.split(' ') ?? [];
-    return type === 'Bearer' ? token : undefined;
+    // Passport runs JwtStrategy; req.user becomes the User returned by validate()
+    return super.canActivate(context);
   }
 }
 
-// Proper JWT strategy with validation
+// modules/auth/strategies/jwt.strategy.ts — proper JWT strategy with validation
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
@@ -176,10 +164,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 }
 
-// Resolver with auth
+// modules/users/resolvers/users.query.resolver.ts — resolver with auth
 @Resolver(() => User)
 @UseGuards(JwtAuthGuard)
-export class UsersResolver {
+export class UsersQueryResolver {
   @Query(() => User)
   me(@CurrentUser() user: User) {
     return user;
@@ -194,11 +182,11 @@ export class UsersResolver {
   }
 }
 
-// Auth context
-export const createContext = ({ req }: { req: Request }) => {
+// infra/graphql/graphql.context.ts — the per-request context (see infra-graphql)
+export function buildContext(req: Request) {
   // Extract user from JWT and add to context
   return { req, user: req.user };
-};
+}
 ```
 
 Reference: [NestJS Authentication](https://docs.nestjs.com/security/authentication) | [GraphQL Authentication](https://docs.nestjs.com/security/authentication#graphql)

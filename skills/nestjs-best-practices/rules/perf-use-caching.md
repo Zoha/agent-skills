@@ -90,20 +90,22 @@ export class ProductsService {
   }
 }
 
-// Decorator-based caching with auto-interceptor
-@Controller('categories')
+// Decorator-based caching with auto-interceptor (interceptors live in common/interceptors/)
+@Resolver(() => Category)
 @UseInterceptors(CacheInterceptor)
-export class CategoriesController {
-  @Get()
+export class CategoriesQueryResolver {
+  constructor(private readonly categoriesService: CategoriesService) {}
+
+  @Query(() => [Category])
   @CacheTTL(30 * 60 * 1000) // 30 minutes - categories rarely change
   findAll(): Promise<Category[]> {
     return this.categoriesService.findAll();
   }
 
-  @Get(':id')
+  @Query(() => Category)
   @CacheTTL(60 * 1000) // 1 minute
   @CacheKey('category')
-  findOne(@Param('id') id: string): Promise<Category> {
+  findOne(@Args('id', ParseObjectIdPipe) id: string): Promise<Category> {
     return this.categoriesService.findOne(id);
   }
 }

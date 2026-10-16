@@ -71,15 +71,15 @@ src/
     │   │   └── <feature>.repository.ts          # data access only
     │   ├── providers/                           # OPTIONAL: thin wrappers over third-party SDKs
     │   ├── dto/
-    │   │   ├── create-<feature>.input.ts        # @InputType (+class-validator)
+    │   │   ├── create-<entity>.input.ts         # @InputType (+class-validator)
     │   │   ├── find-<feature>.args.ts           # @Args() class
     │   │   └── filter-<feature>.input.ts        # OPTIONAL: filter/sort input for list queries
     │   ├── constants/                           # constants and enums (no stray values in class files)
     │   │   └── <feature>-status.enum.ts
     │   ├── entities/
-    │   │   └── <feature>.entity.ts              # persistence + @ObjectType (merged default)
-    │   ├── models/                              # OPTIONAL: GraphQL-only @ObjectType, union/interface types
-    │   ├── mappers/                             # OPTIONAL: entity ⟷ model
+    │   │   └── <entity>.entity.ts               # persistence + @ObjectType (merged default)
+    │   ├── models/                              # OPTIONAL: GraphQL-only @ObjectType (e.g. <entity>.model.ts, union/interface types)
+    │   ├── mappers/                             # OPTIONAL: entity ⟷ model (e.g. <entity>.mapper.ts)
     │   ├── loaders/
     │   │   └── <feature>.loader.ts              # DataLoader(s) for relations
     │   ├── events/

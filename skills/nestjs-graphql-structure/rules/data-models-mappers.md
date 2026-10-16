@@ -17,10 +17,10 @@ them in `mappers/`.
 
 **Placement.**
 
-- `modules/<feature>/entities/<feature>.entity.ts` — persistence only (keep `@Schema`/`@Prop`,
+- `modules/<feature>/entities/<entity>.entity.ts` — persistence only (keep `@Schema`/`@Prop`,
   drop `@ObjectType`/`@Field`).
-- `modules/<feature>/models/<feature>.model.ts` — the GraphQL `@ObjectType`.
-- `modules/<feature>/mappers/<feature>.mapper.ts` — entity → model.
+- `modules/<feature>/models/<entity>.model.ts` — the GraphQL `@ObjectType`.
+- `modules/<feature>/mappers/<entity>.mapper.ts` — entity → model.
 
 **Responsibilities.**
 

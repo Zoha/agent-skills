@@ -138,14 +138,21 @@ export class ShutdownService {
   }
 }
 
-@Controller('health')
-export class HealthController {
-  constructor(private shutdownService: ShutdownService) {}
+// The readiness query lives in the app-level health module (modules/health/),
+// not in AppModule or in a controller (see devops-use-health-checks).
+// modules/health/health.resolver.ts
+@Resolver()
+export class HealthResolver {
+  constructor(
+    private readonly health: HealthCheckService,
+    private readonly db: MongooseHealthIndicator,
+    private readonly shutdownService: ShutdownService,
+  ) {}
 
-  @Get('ready')
+  @Query(() => HealthCheckResult, { name: 'healthReady' })
   @HealthCheck()
   readiness(): Promise<HealthCheckResult> {
-    // Return 503 during shutdown - k8s stops sending traffic
+    // Report not-ready during shutdown so the orchestrator stops sending traffic
     if (this.shutdownService.isShutdown()) {
       throw new ServiceUnavailableException('Shutting down');
     }

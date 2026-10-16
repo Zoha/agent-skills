@@ -4,12 +4,12 @@ description: NestJS best practices and architecture patterns for building produc
 license: MIT
 metadata:
   author: Kadajett
-  version: "1.2.0"
+  version: "1.3.0"
 ---
 
 # NestJS Best Practices
 
-Comprehensive best practices guide for NestJS GraphQL applications. Contains 40 rules across 10 categories, prioritized by impact to guide automated refactoring and code generation. 9 rules have been adapted for GraphQL patterns (resolvers, input types, GraphQLError); the remaining 31 are framework-level rules that apply equally to both REST and GraphQL.
+Comprehensive best practices guide for NestJS GraphQL applications. Contains 40 rules across 10 categories, prioritized by impact to guide automated refactoring and code generation. 16 rules include GraphQL-specific examples (resolvers, input/args types, `GraphQLError`, `GqlExecutionContext`); the remaining 24 are framework-level rules that apply equally to REST and GraphQL.
 
 ## When to Apply
 
@@ -64,7 +64,7 @@ Reference these guidelines when:
 ### 3. Error Handling (HIGH)
 
 - `error-handle-async-errors` - Handle Async Errors Properly
-- `error-throw-graphql-errors` - Throw GraphQL Errors from Services
+- `error-throw-graphql-errors` - Throw Domain Errors from Services
 - `error-use-exception-filters` - Use Exception Filters for Error Handling
 
 ### 4. Security (HIGH)
@@ -98,11 +98,10 @@ Reference these guidelines when:
 
 - `use-interceptors` - Use Interceptors for Cross-Cutting Concerns
 - `use-pipes` - Use Pipes for Input Transformation
-- `use-types-serialization` - Use Types and Serialization for GraphQL Responses
+- `use-types-serialization` - Control Response Exposure with GraphQL Types
 
 ### 9. Microservices (MEDIUM)
 
-- `micro-use-health-checks` - Implement Health Checks for Microservices
 - `micro-use-patterns` - Use Message and Event Patterns Correctly
 - `micro-use-queues` - Use Message Queues for Background Jobs
 
@@ -110,6 +109,7 @@ Reference these guidelines when:
 
 - `devops-graceful-shutdown` - Implement Graceful Shutdown
 - `devops-use-config-module` - Use ConfigModule for Environment Configuration
+- `devops-use-health-checks` - Implement Health Checks
 - `devops-use-logging` - Use Structured Logging
 <!-- GENERATED:END:rules -->
 

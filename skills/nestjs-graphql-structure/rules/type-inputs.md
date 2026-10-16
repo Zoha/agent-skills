@@ -13,8 +13,8 @@ tags: graphql, input, dto, validation
 live in the feature's `dto/` folder. They are the boundary where untrusted input is validated
 and shaped, so they must carry validation and must never expose internal fields.
 
-**Placement.** `modules/<feature>/dto/create-<feature>.input.ts`,
-`update-<feature>.input.ts`. Class names end in `Input`.
+**Placement.** `modules/<feature>/dto/create-<entity>.input.ts`,
+`update-<entity>.input.ts`. Class names end in `Input`.
 
 **Responsibilities.**
 

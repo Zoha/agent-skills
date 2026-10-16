@@ -9,6 +9,8 @@ tags: architecture, repository, data-access
 
 Create custom repositories to encapsulate complex queries and database logic. This keeps services focused on business logic, makes testing easier with mock repositories, and allows changing database implementations without affecting business code.
 
+The examples below use TypeORM's `Repository`. If your project uses Mongoose (see `db-avoid-n-plus-one` and the data rules in `nestjs-graphql-structure`), the custom repository wraps the injected model instead (`data-repository` in that skill).
+
 **Incorrect (complex queries in services):**
 
 ```typescript

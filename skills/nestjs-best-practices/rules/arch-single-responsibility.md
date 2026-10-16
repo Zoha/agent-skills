@@ -84,18 +84,21 @@ export class OrderStatsService {
   }
 }
 
-// Orchestration in controller or dedicated orchestrator
-@Controller('orders')
-export class OrdersController {
+// Orchestration in a thin resolver or a dedicated orchestrator
+@Resolver(() => Order)
+export class OrdersMutationResolver {
   constructor(
-    private orders: OrdersService,
-    private payment: PaymentService,
-    private notifications: NotificationService,
+    private readonly orders: OrdersService,
+    private readonly payment: PaymentService,
+    private readonly notifications: NotificationService,
   ) {}
 
-  @Post()
-  async create(@CurrentUser() user: User, @Body() dto: CreateOrderDto) {
-    const order = await this.orders.create(user.id, dto);
+  @Mutation(() => Order)
+  async createOrder(
+    @Args('input') input: CreateOrderInput,
+    @CurrentUser() user: User,
+  ): Promise<Order> {
+    const order = await this.orders.create(user.id, input);
     await this.payment.charge(order);
     await this.notifications.sendOrderConfirmation(order);
     return order;

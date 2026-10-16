@@ -9,12 +9,14 @@ tags: graphql, schema, deprecation, evolution
 
 Use GraphQL's `@deprecated` directive and additive changes when making breaking changes to your schema. Add new fields and types instead of modifying existing ones. This allows old clients to continue working while new clients use updated fields. For major overhauls, use schema federation.
 
+The generated SDL is never hand-edited — evolve the `@ObjectType()` classes and let the schema regenerate.
+
 **Incorrect (breaking changes without deprecation):**
 
 ```typescript
 // Breaking changes without deprecation
 @ObjectType()
-export class UserType {
+export class User {
   @Field()
   id: string;
 
@@ -35,7 +37,7 @@ export class UserType {
 ```typescript
 // Use @deprecated for field evolution
 @ObjectType()
-export class UserType {
+export class User {
   @Field()
   id: string;
 
@@ -52,9 +54,9 @@ export class UserType {
   lastName: string;
 }
 
-// For breaking changes: add new types
+// For breaking changes: add a new type instead of mutating the old one
 @ObjectType()
-export class UserTypeV2 {
+export class UserV2 {
   @Field()
   id: string;
 
@@ -71,23 +73,24 @@ export class UserTypeV2 {
   createdAt: Date;
 }
 
-// Query returns both during transition
+// Entry-point resolvers return both during transition
+// modules/users/resolvers/users.query.resolver.ts
 @Resolver(() => User)
-export class UsersResolver {
-  @Query(() => [UserType])
-  async users(): Promise<UserType[]> {
+export class UsersQueryResolver {
+  @Query(() => [User])
+  async users(): Promise<User[]> {
     return this.usersService.findAll();
   }
 
-  @Query(() => [UserTypeV2])
-  async usersV2(): Promise<UserTypeV2[]> {
+  @Query(() => [UserV2])
+  async usersV2(): Promise<UserV2[]> {
     return this.usersService.findAllV2();
   }
 }
 
 // Deprecation with replacement strategy
 @ObjectType()
-export class UserType {
+export class User {
   @Field()
   id: string;
 
@@ -102,7 +105,7 @@ export class UserType {
 // Use @nestjs/graphql federation to split schema across services
 @Directive('@key(fields: "id")')
 @ObjectType()
-export class UserType {
+export class User {
   @Field()
   id: string;
 
@@ -110,14 +113,14 @@ export class UserType {
   name: string;
 
   // External field resolved by another service
-  @Field(() => [OrderType], { nullable: true })
+  @Field(() => [Order], { nullable: true })
   @requires('id')
-  orders?: OrderType[];
+  orders?: Order[];
 }
 
 // Rename field with deprecation period
 @ObjectType()
-export class ProductType {
+export class Product {
   @Field()
   id: string;
 
@@ -132,17 +135,16 @@ export class ProductType {
 }
 
 // Enum evolution - add values, don't remove
+// constants/user-status.enum.ts — enums live in their own file, never in a class file
 export enum UserStatus {
-  @EnumMember('ACTIVE')
   ACTIVE = 'active',
-
-  @EnumMember('INACTIVE')
   INACTIVE = 'inactive',
 
   // New value - safe to add
-  @EnumMember('SUSPENDED')
   SUSPENDED = 'suspended',
 }
+
+registerEnumType(UserStatus, { name: 'UserStatus' });
 
 // Input type evolution
 @InputType()

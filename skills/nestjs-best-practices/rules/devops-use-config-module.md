@@ -7,7 +7,7 @@ tags: devops, configuration, environment, validation
 
 ## Use ConfigModule for Environment Configuration
 
-Use `@nestjs/config` for environment-based configuration. Validate configuration at startup to fail fast on misconfigurations. Use namespaced configuration for organization and type safety.
+Use `@nestjs/config` for environment-based configuration. Validate configuration at startup to fail fast on misconfigurations. Use namespaced configuration for organization and type safety. Config namespaces live in `config/`; infrastructure (such as the database connection) consumes them from `infra/`, not from the composition root.
 
 **Incorrect (accessing process.env directly):**
 
@@ -49,7 +49,7 @@ export const databaseConfig = registerAs('database', () => ({
   port: parseInt(process.env.DB_PORT, 10),
   username: process.env.DB_USERNAME,
   password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
+  name: process.env.DB_NAME,
 }));
 
 // config/app.config.ts
@@ -74,7 +74,7 @@ export const validationSchema = Joi.object({
   REDIS_URL: Joi.string().uri().required(),
 });
 
-// app.module.ts
+// app.module.ts — the composition root loads config and lists modules
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -86,6 +86,16 @@ export const validationSchema = Joi.object({
         allowUnknown: true, // Allow other env vars
       },
     }),
+    DatabaseModule,     // infra/database — consumes ConfigService
+    GraphqlInfraModule, // infra/graphql
+    UsersModule,
+  ],
+})
+export class AppModule {}
+
+// infra/database/database.module.ts — infrastructure consumes typed config
+@Module({
+  imports: [
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
@@ -94,13 +104,14 @@ export const validationSchema = Joi.object({
         port: config.get('database.port'),
         username: config.get('database.username'),
         password: config.get('database.password'),
-        database: config.get('database.database'),
+        database: config.get('database.name'),
         autoLoadEntities: true,
       }),
     }),
   ],
+  exports: [TypeOrmModule],
 })
-export class AppModule {}
+export class DatabaseModule {}
 
 // Type-safe configuration access
 export interface AppConfig {
@@ -114,7 +125,7 @@ export interface DatabaseConfig {
   port: number;
   username: string;
   password: string;
-  database: string;
+  name: string;
 }
 
 // Type-safe access

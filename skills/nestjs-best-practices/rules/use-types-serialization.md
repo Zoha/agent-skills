@@ -1,188 +1,109 @@
 ---
-title: Use Types and Serialization for GraphQL Responses
+title: Control Response Exposure with GraphQL Types
 impact: MEDIUM
 impactDescription: Type design prevents accidental data exposure and ensures consistency
-tags: graphql, types, serialization, class-transformer
+tags: graphql, types, exposure, mappers
 ---
 
-## Use Types and Serialization for GraphQL Responses
+## Control Response Exposure with GraphQL Types
 
-Never return entity objects directly from resolvers. Use GraphQL object types with `@ObjectType()` and `@InputType()` to control exactly what data is exposed. Use `class-transformer`'s `@Exclude()` and `@Expose()` decorators to prevent accidental exposure of sensitive fields. The GraphQL schema itself is your API contract.
+Never return a persistence document straight through a resolver. What a client can see is decided by the `@Field()` declarations on the `@ObjectType`: a field that must never leave the server is persisted with `select: false` and simply has no `@Field()`. When the API shape stops matching the stored shape, split `entities/` (persistence) from `models/` + `mappers/`. The GraphQL schema is the API contract.
 
-**Incorrect (returning entities directly):**
+**Incorrect (returning the raw document, or hand-spreading objects):**
 
 ```typescript
-// Return entities directly
+// Return the raw document
 @Resolver(() => User)
-export class UsersResolver {
+export class UsersQueryResolver {
   @Query(() => User)
-  async user(@Args('id') id: string) {
-    return this.usersService.findById(id);
-    // Returns: { id, email, passwordHash, ssn, internalNotes, ... }
-    // Exposes sensitive data!
+  async user(@Args() args: FindUserArgs) {
+    return this.usersRepository.findById(args.id);
+    // { _id, __v, passwordHash, resetToken, ... } — secrets reach the client
   }
 }
 
 // Manual object spreading (error-prone)
-@Query(() => User)
-async user(@Args('id') id: string) {
-  const user = await this.usersService.findById(id);
-  return {
-    id: user.id,
-    email: user.email,
-    name: user.name,
-    // Easy to forget to exclude sensitive fields
-  };
-}
+const user = await this.usersRepository.findById(id);
+return { id: user.id, email: user.email, name: user.name };
+// Easy to forget to exclude a sensitive field
 ```
 
-**Correct (use class-transformer with @Exclude and explicit types):**
+**Correct (declare exactly what is exposed; split when shapes diverge):**
 
 ```typescript
-// Enable class-transformer globally
-async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
-  app.useGlobalInterceptors(new ClassSerializerInterceptor(app.get(Reflector)));
-  await app.listen(3000);
-}
-
-// Entity with serialization control
-@Entity()
+// modules/users/entities/user.entity.ts — merged entity/object type (the default)
+@ObjectType()
+@Schema({ timestamps: true, collection: 'users' })
 export class User {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
+  @Field(() => ID)
+  _id: string;
 
-  @Column()
+  @Field()
+  @Prop({ required: true, unique: true, index: true })
   email: string;
 
-  @Column()
-  name: string;
-
-  @Column()
-  @Exclude() // Never include in responses
+  @Prop({ required: true, select: false }) // persisted, NOT a @Field
   passwordHash: string;
 
-  @Column({ nullable: true })
-  @Exclude()
-  ssn: string;
-
-  @Column({ default: false })
-  @Exclude({ toPlainOnly: true })
-  isAdmin: boolean;
-
-  @CreateDateColumn()
-  createdAt: Date;
-
-  @Column()
-  @Exclude()
-  internalNotes: string;
+  @Prop({ select: false })                 // persisted, NOT a @Field
+  resetToken?: string;
 }
 
-// GraphQL output type — controls what's exposed
+// When the exposed shape stops matching storage, split it:
+// modules/users/models/user.model.ts — the public graph
 @ObjectType()
-export class UserType {
-  @Field()
-  id: string;
+export class UserModel {
+  @Field(() => ID)
+  _id: string;
 
   @Field()
   email: string;
 
-  @Field()
-  name: string;
+  @Field(() => String, { nullable: true })
+  avatarUrl?: string; // computed from avatarKey
 
-  @Field()
-  @Transform(({ obj }) => obj.posts?.length || 0)
-  postCount: number;
+  @Field(() => Int)
+  postCount!: number; // computed — declared type-only, never populated
 }
 
-@ObjectType()
-export class UserDetailType extends UserType {
-  @Field()
-  createdAt: Date;
-
-  @Field(() => [PostType])
-  posts: PostType[];
+// modules/users/mappers/user.mapper.ts — one conversion, testable in isolation
+export function toUserModel(doc: UserDocument): UserModel {
+  return {
+    _id: doc._id.toString(),
+    email: doc.email,
+    avatarUrl: doc.avatarKey ? cdnUrl(doc.avatarKey) : null,
+    postCount: 0, // resolved by @ResolveField, not the mapper
+  };
 }
 
-// Resolver with explicit types
-@Resolver(() => User)
-export class UsersResolver {
-  @Query(() => [UserType])
-  async users(): Promise<UserType[]> {
-    const users = await this.usersService.findAll();
-    return users.map(u => plainToInstance(UserType, u));
-  }
+// modules/users/resolvers/user.resolver.ts — the computed field's single source of truth
+@Resolver(() => UserModel)
+export class UserResolver {
+  constructor(private readonly postsService: PostsService) {}
 
-  @Query(() => UserDetailType)
-  async user(@Args('id') id: string): Promise<UserDetailType> {
-    const user = await this.usersService.findByIdWithPosts(id);
-    return plainToInstance(UserDetailType, user, {
-      excludeExtraneousValues: true,
-    });
+  @ResolveField(() => Int)
+  postCount(@Parent() user: UserModel): Promise<number> {
+    return this.postsService.countByUserId(user._id);
   }
 }
 
-// Input types for mutations
+// Input types for mutations live in dto/ and are separate from entities
 @InputType()
 export class CreateUserInput {
-  @Field()
-  @IsString()
-  @IsNotEmpty()
-  @MinLength(2)
-  @MaxLength(100)
+  @Field() @IsString() @IsNotEmpty() @MinLength(2) @MaxLength(100)
   name: string;
 
-  @Field()
-  @IsEmail()
+  @Field() @IsEmail()
   email: string;
 
-  @Field()
-  @IsString()
-  @MinLength(8)
-  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
+  @Field() @IsString() @MinLength(8)
   password: string;
 }
 
-// Mapped types for variations
 @InputType()
 export class UpdateUserInput extends PartialType(CreateUserInput) {}
-
-@InputType()
-export class UserFilterInput {
-  @Field({ nullable: true })
-  @IsOptional()
-  @IsString()
-  search?: string;
-
-  @Field({ nullable: true })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  limit: number = 20;
-}
-
-// Groups for conditional serialization
-@ObjectType()
-export class UserType {
-  @Field()
-  id: string;
-
-  @Field()
-  name: string;
-
-  @Field({ description: 'Only visible to admins' })
-  @Expose({ groups: ['admin'] })
-  email: string;
-
-  @Field()
-  @Expose({ groups: ['admin'] })
-  createdAt: Date;
-
-  @Field()
-  @Expose({ groups: ['admin', 'owner'] })
-  settings: UserSettings;
-}
 ```
 
-Reference: [NestJS Serialization](https://docs.nestjs.com/techniques/serialization) | [GraphQL Mapped Types](https://docs.nestjs.com/graphql/mapped-types)
+When a field should only be visible to some roles, gate it with a schema directive (`common/directives/`) rather than per-group serialization.
+
+Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers) | [NestJS GraphQL Mapped Types](https://docs.nestjs.com/graphql/mapped-types) | [Mongoose select](https://mongoosejs.com/docs/api/schematype.html#schematype_SchemaType-select)

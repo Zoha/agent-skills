@@ -1,6 +1,6 @@
 # NestJS Best Practices
 
-**Version 1.2.0**
+**Version 1.3.0**
 NestJS Best Practices
 October 2026
 
@@ -36,7 +36,7 @@ Comprehensive best practices and architecture guide for NestJS applications, des
    - 2.6 [Use Injection Tokens for Interfaces](#26-use-injection-tokens-for-interfaces)
 3. [Error Handling](#3-error-handling) — **HIGH**
    - 3.1 [Handle Async Errors Properly](#31-handle-async-errors-properly)
-   - 3.2 [Throw GraphQL Errors from Services](#32-throw-graphql-errors-from-services)
+   - 3.2 [Throw Domain Errors from Services](#32-throw-domain-errors-from-services)
    - 3.3 [Use Exception Filters for Error Handling](#33-use-exception-filters-for-error-handling)
 4. [Security](#4-security) — **HIGH**
    - 4.1 [Implement Secure JWT Authentication](#41-implement-secure-jwt-authentication)
@@ -60,15 +60,15 @@ Comprehensive best practices and architecture guide for NestJS applications, des
 8. [Cross-Cutting Concerns](#8-cross-cutting-concerns) — **MEDIUM**
    - 8.1 [Use Interceptors for Cross-Cutting Concerns](#81-use-interceptors-for-cross-cutting-concerns)
    - 8.2 [Use Pipes for Input Transformation](#82-use-pipes-for-input-transformation)
-   - 8.3 [Use Types and Serialization for GraphQL Responses](#83-use-types-and-serialization-for-graphql-responses)
+   - 8.3 [Control Response Exposure with GraphQL Types](#83-control-response-exposure-with-graphql-types)
 9. [Microservices](#9-microservices) — **MEDIUM**
-   - 9.1 [Implement Health Checks for Microservices](#91-implement-health-checks-for-microservices)
-   - 9.2 [Use Message and Event Patterns Correctly](#92-use-message-and-event-patterns-correctly)
-   - 9.3 [Use Message Queues for Background Jobs](#93-use-message-queues-for-background-jobs)
+   - 9.1 [Use Message and Event Patterns Correctly](#91-use-message-and-event-patterns-correctly)
+   - 9.2 [Use Message Queues for Background Jobs](#92-use-message-queues-for-background-jobs)
 10. [DevOps & Deployment](#10-devops-deployment) — **LOW-MEDIUM**
    - 10.1 [Implement Graceful Shutdown](#101-implement-graceful-shutdown)
    - 10.2 [Use ConfigModule for Environment Configuration](#102-use-configmodule-for-environment-configuration)
-   - 10.3 [Use Structured Logging](#103-use-structured-logging)
+   - 10.3 [Implement Health Checks](#103-implement-health-checks)
+   - 10.4 [Use Structured Logging](#104-use-structured-logging)
 
 ---
 
@@ -158,17 +158,17 @@ Reference: [NestJS Circular Dependency](https://docs.nestjs.com/fundamentals/cir
 
 **Impact: CRITICAL** — 3-5x faster onboarding and development
 
-Organize your application into feature modules that encapsulate related functionality. Each feature module should be self-contained with its own controllers, services, entities, and DTOs. Avoid organizing by technical layer (all controllers together, all services together). This enables 3-5x faster onboarding and feature development.
+Organize your application into feature modules that encapsulate related functionality. Each feature module should be self-contained with its own resolvers, services, repositories, entities, inputs, and args. Avoid organizing by technical layer (all resolvers together, all services together). This enables 3-5x faster onboarding and feature development. A feature that grows is decomposed into nested modules rather than becoming one large module (see `struct-feature-decomposition` in `nestjs-graphql-structure`).
 
 **Incorrect (technical layer organization):**
 
 ```typescript
 // Technical layer organization (anti-pattern)
 src/
-├── controllers/
-│   ├── users.controller.ts
-│   ├── orders.controller.ts
-│   └── products.controller.ts
+├── resolvers/
+│   ├── users.resolver.ts
+│   ├── orders.resolver.ts
+│   └── products.resolver.ts
 ├── services/
 │   ├── users.service.ts
 │   ├── orders.service.ts
@@ -183,48 +183,41 @@ src/
 **Correct (feature module organization):**
 
 ```typescript
-// Feature module organization
+// Feature module organization — a feature-first layout
+// The full annotated map is owned by nestjs-graphql-structure -> struct-canonical-layout;
+// this is a compact representative example.
 src/
-├── users/
-│   ├── dto/
-│   │   ├── create-user.dto.ts
-│   │   └── update-user.dto.ts
-│   ├── entities/
-│   │   └── user.entity.ts
-│   ├── users.controller.ts
-│   ├── users.service.ts
-│   ├── users.repository.ts
-│   └── users.module.ts
-├── orders/
-│   ├── dto/
-│   ├── entities/
-│   ├── orders.controller.ts
-│   ├── orders.service.ts
-│   └── orders.module.ts
-├── shared/
-│   ├── guards/
-│   ├── interceptors/
-│   ├── filters/
-│   └── shared.module.ts
-└── app.module.ts
+├── main.ts
+├── app.module.ts                        // composition root: imports modules, no logic
+├── common/                              // feature-agnostic building blocks
+├── infra/                               // one-time infrastructure
+├── modules/
+│   └── users/                           // one folder per bounded context
+│       ├── resolvers/                   // users.query.resolver.ts, users.mutation.resolver.ts
+│       ├── services/                    // users.service.ts
+│       ├── repositories/                // users.repository.ts
+│       ├── dto/                         // create-user.input.ts, find-users.args.ts
+│       ├── entities/                    // user.entity.ts
+│       └── users.module.ts
+└── test/
+    └── users.e2e-spec.ts
 
-// users.module.ts
+// modules/users/users.module.ts
 @Module({
-  imports: [TypeOrmModule.forFeature([User])],
-  controllers: [UsersController],
-  providers: [UsersService, UsersRepository],
-  exports: [UsersService], // Only export what others need
+  imports: [MongooseModule.forFeature([{ name: User.name, schema: UserSchema }])],
+  providers: [UsersQueryResolver, UsersMutationResolver, UsersService, UsersRepository],
+  exports: [UsersService], // Only export the feature's public API
 })
 export class UsersModule {}
 
-// app.module.ts
+// app.module.ts — the composition root lists modules, not providers
 @Module({
   imports: [
-    ConfigModule.forRoot(),
-    TypeOrmModule.forRoot(),
+    ConfigModule.forRoot({ isGlobal: true }),
+    DatabaseModule,        // infra/database — connection configured once
+    GraphqlInfraModule,    // infra/graphql — GraphQLModule + context
     UsersModule,
     OrdersModule,
-    SharedModule,
   ],
 })
 export class AppModule {}
@@ -244,7 +237,7 @@ NestJS modules are singletons by default. When a service is properly exported fr
 
 ```typescript
 // StorageService provided directly in multiple modules - WRONG
-// storage.service.ts
+// common/services/storage.service.ts
 @Injectable()
 export class StorageService {
   private cache = new Map(); // Each instance has separate state!
@@ -254,49 +247,45 @@ export class StorageService {
   }
 }
 
-// app.module.ts
+// modules/videos/videos.module.ts
 @Module({
   providers: [StorageService], // Instance #1
-  controllers: [AppController],
-})
-export class AppModule {}
-
-// videos.module.ts
-@Module({
-  providers: [StorageService], // Instance #2 - different from AppModule!
-  controllers: [VideosController],
 })
 export class VideosModule {}
 
+// modules/channels/channels.module.ts
+@Module({
+  providers: [StorageService], // Instance #2 - different from VideosModule!
+})
+export class ChannelsModule {}
+
 // Problems:
 // 1. Two separate StorageService instances exist
-// 2. cache.set() in VideosModule doesn't affect AppModule's cache
+// 2. cache.set() in ChannelsModule doesn't affect VideosModule's cache
 // 3. Memory wasted on duplicate instances
 // 4. Debugging nightmares when state doesn't sync
 ```
 
-**Correct (dedicated module with exports):**
+**Correct (dedicated shared module with exports):**
 
 ```typescript
-// storage/storage.module.ts
+// common/shared.module.ts
 @Module({
   providers: [StorageService],
   exports: [StorageService], // Make available to importers
 })
-export class StorageModule {}
+export class SharedModule {}
 
-// videos/videos.module.ts
+// modules/videos/videos.module.ts
 @Module({
-  imports: [StorageModule], // Import the module, not the service
-  controllers: [VideosController],
+  imports: [SharedModule], // Import the module, not the service
   providers: [VideosService],
 })
 export class VideosModule {}
 
-// channels/channels.module.ts
+// modules/channels/channels.module.ts
 @Module({
-  imports: [StorageModule], // Same instance shared
-  controllers: [ChannelsController],
+  imports: [SharedModule], // Same instance shared
   providers: [ChannelsService],
 })
 export class ChannelsModule {}
@@ -304,7 +293,7 @@ export class ChannelsModule {}
 // app.module.ts
 @Module({
   imports: [
-    StorageModule, // Only if AppModule itself needs StorageService
+    SharedModule, // Only if AppModule itself needs StorageService
     VideosModule,
     ChannelsModule,
   ],
@@ -320,54 +309,55 @@ export class AppModule {}
 // ONLY for truly cross-cutting concerns
 @Global()
 @Module({
-  providers: [ConfigService, LoggerService],
-  exports: [ConfigService, LoggerService],
+  providers: [LoggerService, HashingService],
+  exports: [LoggerService, HashingService],
 })
-export class CoreModule {}
+export class SharedModule {}
 
 // Import once in AppModule
 @Module({
-  imports: [CoreModule], // Registered globally, available everywhere
+  imports: [SharedModule], // Registered globally, available everywhere
 })
 export class AppModule {}
 
-// Other modules don't need to import CoreModule
+// Other modules don't need to import SharedModule
 @Module({
-  controllers: [UsersController],
-  providers: [UsersService], // Can inject ConfigService without importing
+  providers: [UsersService], // Can inject LoggerService without importing
 })
 export class UsersModule {}
 
 // WARNING: Don't make everything global!
 // - Hides dependencies (can't see what a module needs from imports)
 // - Makes testing harder
-// - Reserve for: config, logging, database connections
+// - Reserve for: config, logging, and other genuinely app-wide providers
 ```
 
-**Module re-exporting pattern:**
+**Re-exporting shared providers:**
 
 ```typescript
-// common.module.ts - shared utilities
+// common/shared.module.ts - shared utilities
 @Module({
   providers: [DateService, ValidationService],
   exports: [DateService, ValidationService],
 })
-export class CommonModule {}
+export class SharedModule {}
 
-// core.module.ts - re-exports common for convenience
+// common/building-blocks.module.ts - re-exports shared providers for convenience
 @Module({
-  imports: [CommonModule, DatabaseModule],
-  exports: [CommonModule, DatabaseModule], // Re-export for consumers
+  imports: [SharedModule],
+  exports: [SharedModule], // Re-export for consumers
 })
-export class CoreModule {}
+export class BuildingBlocksModule {}
 
-// feature.module.ts - imports CoreModule, gets both
+// a feature imports BuildingBlocksModule and gets every shared provider
 @Module({
-  imports: [CoreModule], // Gets CommonModule + DatabaseModule
-  controllers: [FeatureController],
+  imports: [BuildingBlocksModule],
+  providers: [FeatureService],
 })
 export class FeatureModule {}
 ```
+
+Infrastructure is **not** shared through this module. The database connection, `GraphQLModule`, and config registration are one-time infrastructure imported by the composition root from `infra/` — they are never re-exported by `SharedModule`.
 
 Reference: [NestJS Modules](https://docs.nestjs.com/modules#shared-modules)
 
@@ -379,12 +369,14 @@ Reference: [NestJS Modules](https://docs.nestjs.com/modules#shared-modules)
 
 Use GraphQL's `@deprecated` directive and additive changes when making breaking changes to your schema. Add new fields and types instead of modifying existing ones. This allows old clients to continue working while new clients use updated fields. For major overhauls, use schema federation.
 
+The generated SDL is never hand-edited — evolve the `@ObjectType()` classes and let the schema regenerate.
+
 **Incorrect (breaking changes without deprecation):**
 
 ```typescript
 // Breaking changes without deprecation
 @ObjectType()
-export class UserType {
+export class User {
   @Field()
   id: string;
 
@@ -405,7 +397,7 @@ export class UserType {
 ```typescript
 // Use @deprecated for field evolution
 @ObjectType()
-export class UserType {
+export class User {
   @Field()
   id: string;
 
@@ -422,9 +414,9 @@ export class UserType {
   lastName: string;
 }
 
-// For breaking changes: add new types
+// For breaking changes: add a new type instead of mutating the old one
 @ObjectType()
-export class UserTypeV2 {
+export class UserV2 {
   @Field()
   id: string;
 
@@ -441,23 +433,24 @@ export class UserTypeV2 {
   createdAt: Date;
 }
 
-// Query returns both during transition
+// Entry-point resolvers return both during transition
+// modules/users/resolvers/users.query.resolver.ts
 @Resolver(() => User)
-export class UsersResolver {
-  @Query(() => [UserType])
-  async users(): Promise<UserType[]> {
+export class UsersQueryResolver {
+  @Query(() => [User])
+  async users(): Promise<User[]> {
     return this.usersService.findAll();
   }
 
-  @Query(() => [UserTypeV2])
-  async usersV2(): Promise<UserTypeV2[]> {
+  @Query(() => [UserV2])
+  async usersV2(): Promise<UserV2[]> {
     return this.usersService.findAllV2();
   }
 }
 
 // Deprecation with replacement strategy
 @ObjectType()
-export class UserType {
+export class User {
   @Field()
   id: string;
 
@@ -472,7 +465,7 @@ export class UserType {
 // Use @nestjs/graphql federation to split schema across services
 @Directive('@key(fields: "id")')
 @ObjectType()
-export class UserType {
+export class User {
   @Field()
   id: string;
 
@@ -480,14 +473,14 @@ export class UserType {
   name: string;
 
   // External field resolved by another service
-  @Field(() => [OrderType], { nullable: true })
+  @Field(() => [Order], { nullable: true })
   @requires('id')
-  orders?: OrderType[];
+  orders?: Order[];
 }
 
 // Rename field with deprecation period
 @ObjectType()
-export class ProductType {
+export class Product {
   @Field()
   id: string;
 
@@ -502,17 +495,16 @@ export class ProductType {
 }
 
 // Enum evolution - add values, don't remove
+// constants/user-status.enum.ts — enums live in their own file, never in a class file
 export enum UserStatus {
-  @EnumMember('ACTIVE')
   ACTIVE = 'active',
-
-  @EnumMember('INACTIVE')
   INACTIVE = 'inactive',
 
   // New value - safe to add
-  @EnumMember('SUSPENDED')
   SUSPENDED = 'suspended',
 }
+
+registerEnumType(UserStatus, { name: 'UserStatus' });
 
 // Input type evolution
 @InputType()
@@ -614,18 +606,21 @@ export class OrderStatsService {
   }
 }
 
-// Orchestration in controller or dedicated orchestrator
-@Controller('orders')
-export class OrdersController {
+// Orchestration in a thin resolver or a dedicated orchestrator
+@Resolver(() => Order)
+export class OrdersMutationResolver {
   constructor(
-    private orders: OrdersService,
-    private payment: PaymentService,
-    private notifications: NotificationService,
+    private readonly orders: OrdersService,
+    private readonly payment: PaymentService,
+    private readonly notifications: NotificationService,
   ) {}
 
-  @Post()
-  async create(@CurrentUser() user: User, @Body() dto: CreateOrderDto) {
-    const order = await this.orders.create(user.id, dto);
+  @Mutation(() => Order)
+  async createOrder(
+    @Args('input') input: CreateOrderInput,
+    @CurrentUser() user: User,
+  ): Promise<Order> {
+    const order = await this.orders.create(user.id, input);
     await this.payment.charge(order);
     await this.notifications.sendOrderConfirmation(order);
     return order;
@@ -748,6 +743,8 @@ Reference: [NestJS Events](https://docs.nestjs.com/techniques/events)
 **Impact: HIGH** — Decouples business logic from database
 
 Create custom repositories to encapsulate complex queries and database logic. This keeps services focused on business logic, makes testing easier with mock repositories, and allows changing database implementations without affecting business code.
+
+The examples below use TypeORM's `Repository`. If your project uses Mongoose (see `db-avoid-n-plus-one` and the data rules in `nestjs-graphql-structure`), the custom repository wraps the injected model instead (`data-repository` in that skill).
 
 **Incorrect (complex queries in services):**
 
@@ -1728,11 +1725,11 @@ Reference: [Node.js Unhandled Rejections](https://nodejs.org/api/process.html#ev
 
 ---
 
-### 3.2 Throw GraphQL Errors from Services
+### 3.2 Throw Domain Errors from Services
 
 **Impact: HIGH** — Keeps resolvers thin and simplifies error handling
 
-Throw `GraphQLError` from services to communicate error states in GraphQL. Use `extensions` for error codes and metadata. This keeps resolvers thin and allows services to communicate appropriate error states. For layer-agnostic services, use domain exceptions that map to GraphQL errors.
+Services communicate error states by throwing, which keeps resolvers thin and puts error handling in one place. Throw a typed **domain exception** from the service and let a central exception filter map it to a `GraphQLError` with `extensions`. Each exception is its own file under `exceptions/`, extending the shared `DomainException` — never define an exception class inline in a service, and never build the GraphQL error shape inside the service.
 
 **Incorrect (return error objects instead of throwing):**
 
@@ -1741,141 +1738,98 @@ Throw `GraphQLError` from services to communicate error states in GraphQL. Use `
 @Injectable()
 export class UsersService {
   async findById(id: string): Promise<{ user?: User; error?: string }> {
-    const user = await this.repo.findOne({ where: { id } });
+    const user = await this.repo.findById(id);
     if (!user) {
       return { error: 'User not found' }; // Resolver must check this
     }
     return { user };
   }
 }
-
-@Resolver(() => User)
-export class UsersResolver {
-  @Query(() => User)
-  async user(@Args('id') id: string) {
-    const result = await this.usersService.findById(id);
-    if (result.error) {
-      throw new GraphQLError(result.error);
-    }
-    return result.user;
-  }
-}
 ```
 
-**Correct (throw GraphQL errors directly from service):**
+**Incorrect (GraphQL error shape built inside the service, exception declared inline):**
 
 ```typescript
-// Throw GraphQL errors directly from service
-import { GraphQLError } from 'graphql';
+// The service now knows about GraphQL, and the exception has no home
+@Injectable()
+export class UsersService {
+  async findById(id: string): Promise<User> {
+    const user = await this.repo.findById(id);
+    if (!user) {
+      throw new GraphQLError(`User #${id} not found`, {
+        extensions: { code: 'USER_NOT_FOUND' }, // transport detail leaks into business code
+      });
+    }
+    return user;
+  }
+}
+
+class EntityNotFoundError extends Error {} // declared inline — no file, cannot be reused or filtered
+```
+
+**Correct (typed domain exception, one file, mapped by a central filter):**
+
+```typescript
+// common/exceptions/domain.exception.ts — the shared base
+export class DomainException extends Error {
+  constructor(
+    message: string,
+    public readonly code: string,
+  ) {
+    super(message);
+  }
+}
+
+// modules/users/exceptions/user-not-found.exception.ts — feature-local, one file
+export class UserNotFoundException extends DomainException {
+  constructor(id: string) {
+    super(`User #${id} not found`, 'USER_NOT_FOUND');
+  }
+}
+
+// modules/users/services/users.service.ts — imports and throws the domain exception
+import { UserNotFoundException } from '../exceptions/user-not-found.exception';
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly repo: UserRepository) {}
+  constructor(private readonly usersRepository: UsersRepository) {}
 
   async findById(id: string): Promise<User> {
-    const user = await this.repo.findOne({ where: { id } });
+    const user = await this.usersRepository.findById(id);
     if (!user) {
-      throw new GraphQLError(`User #${id} not found`, {
-        extensions: {
-          code: 'USER_NOT_FOUND',
-          http: { status: 404 },
-        },
-      });
+      throw new UserNotFoundException(id);
     }
     return user;
   }
 
   async create(dto: CreateUserInput): Promise<User> {
-    const existing = await this.repo.findOne({
-      where: { email: dto.email },
-    });
+    const existing = await this.usersRepository.findByEmail(dto.email);
     if (existing) {
-      throw new GraphQLError('Email already registered', {
-        extensions: {
-          code: 'CONFLICT',
-          http: { status: 409 },
-        },
-      });
+      throw new EmailAlreadyRegisteredException(dto.email);
     }
-    return this.repo.save(dto);
+    return this.usersRepository.create(dto);
   }
 
   async update(id: string, dto: UpdateUserInput): Promise<User> {
     const user = await this.findById(id); // Throws if not found
-    Object.assign(user, dto);
-    return this.repo.save(user);
+    return this.usersRepository.update(id, { ...user, ...dto });
   }
 }
 
-// Resolver stays thin
+// Resolver stays thin — no try/catch, no GraphQL error construction
+// modules/users/resolvers/users.query.resolver.ts
 @Resolver(() => User)
-export class UsersResolver {
+export class UsersQueryResolver {
+  constructor(private readonly usersService: UsersService) {}
+
   @Query(() => User)
-  user(@Args('id') id: string): Promise<User> {
-    return this.usersService.findById(id);
-  }
-
-  @Mutation(() => User)
-  createUser(@Args('input') input: CreateUserInput): Promise<User> {
-    return this.usersService.create(input);
-  }
-}
-
-// For layer-agnostic services, use domain exceptions
-export class EntityNotFoundError extends Error {
-  constructor(
-    public readonly entity: string,
-    public readonly id: string,
-  ) {
-    super(`${entity} with ID "${id}" not found`);
-  }
-}
-
-// Map to GraphQL error in exception filter
-@Catch(EntityNotFoundError)
-export class EntityNotFoundFilter implements ExceptionFilter {
-  catch(exception: EntityNotFoundError, host: ArgumentsHost) {
-    throw new GraphQLError(exception.message, {
-      extensions: {
-        code: 'ENTITY_NOT_FOUND',
-        entity: exception.entity,
-        id: exception.id,
-        http: { status: 404 },
-      },
-    });
-  }
-}
-
-// Common GraphQL error patterns
-@Injectable()
-export class UsersService {
-  async findById(id: string): Promise<User> {
-    const user = await this.repo.findOne({ where: { id } });
-    if (!user) {
-      throw new GraphQLError(`User #${id} not found`, {
-        extensions: {
-          code: 'BAD_USER_INPUT',
-          http: { status: 400 },
-        },
-      });
-    }
-    return user;
-  }
-
-  async delete(id: string): Promise<void> {
-    const user = await this.findById(id);
-    if (user.isAdmin) {
-      throw new GraphQLError('Cannot delete admin users', {
-        extensions: {
-          code: 'FORBIDDEN',
-          http: { status: 403 },
-        },
-      });
-    }
-    await this.repo.delete(id);
+  user(@Args() args: FindUserArgs): Promise<User> {
+    return this.usersService.findById(args.id);
   }
 }
 ```
+
+The mapping from domain exception to GraphQL error happens once, in an exception filter (see `error-use-exception-filters`), so error codes and `extensions` are consistent across the whole API.
 
 Reference: [NestJS Exception Filters](https://docs.nestjs.com/exception-filters) | [GraphQL Error Handling](https://graphql.org/learn/serving-over-http/#errors)
 
@@ -1885,31 +1839,23 @@ Reference: [NestJS Exception Filters](https://docs.nestjs.com/exception-filters)
 
 **Impact: HIGH** — Consistent, centralized error handling
 
-Never catch exceptions and manually format error responses in resolvers. Use NestJS exception filters to handle errors consistently across your application. Create custom exception filters for specific error types and a global filter for unhandled exceptions. In GraphQL, format errors as `GraphQLError` with extensions.
+Never catch exceptions and manually format error responses in resolvers. Use NestJS exception filters to handle errors consistently across your application. Create custom exception filters for specific error types and a global filter for unhandled exceptions. In GraphQL, a filter converts a domain exception into a `GraphQLError` with `extensions` — it does not write an HTTP response. Filters live in `common/filters/`.
 
 **Incorrect (manual error handling in resolvers):**
 
 ```typescript
 // Manual error handling in resolvers
 @Resolver(() => User)
-export class UsersResolver {
+export class UsersQueryResolver {
   @Query(() => User)
-  async user(@Args('id') id: string, @Res() res: Response) {
+  async user(@Args() args: FindUserArgs): Promise<User> {
     try {
-      const user = await this.usersService.findById(id);
-      if (!user) {
-        return res.status(404).json({
-          statusCode: 404,
-          message: 'User not found',
-        });
-      }
+      const user = await this.usersService.findById(args.id);
       return user;
     } catch (error) {
       console.error(error);
-      return res.status(500).json({
-        statusCode: 500,
-        message: 'Internal server error',
-      });
+      // Reformatted by hand in every resolver, inconsistently
+      return { message: 'Internal server error', code: 'INTERNAL_SERVER_ERROR' } as User;
     }
   }
 }
@@ -1918,114 +1864,57 @@ export class UsersResolver {
 **Correct (exception filters with consistent GraphQL handling):**
 
 ```typescript
-// Use built-in and custom exceptions
-@Resolver(() => User)
-export class UsersResolver {
-  @Query(() => User)
-  async user(@Args('id') id: string): Promise<User> {
-    const user = await this.usersService.findById(id);
-    if (!user) {
-      throw new GraphQLError(`User #${id} not found`, {
-        extensions: { code: 'USER_NOT_FOUND' },
-      });
-    }
-    return user;
+// A domain exception thrown by the service (one file per exception)
+export class UserNotFoundException extends DomainException {
+  constructor(userId: string) {
+    super(`User with ID "${userId}" not found`, 'USER_NOT_FOUND');
   }
 }
 
-// Custom domain exception
-export class UserNotFoundException extends GraphQLError {
-  constructor(userId: string) {
-    super(`User with ID "${userId}" not found`, {
+// common/filters/domain-exception.filter.ts — maps domain exceptions to GraphQL errors
+@Catch(DomainException)
+export class DomainExceptionFilter implements ExceptionFilter {
+  catch(exception: DomainException, host: ArgumentsHost) {
+    // GraphQL-native: rethrow a GraphQLError the schema layers understand
+    throw new GraphQLError(exception.message, {
       extensions: {
-        code: 'USER_NOT_FOUND',
-        http: { status: 404 },
+        code: exception.code,
+        timestamp: new Date().toISOString(),
       },
     });
   }
 }
 
-// Custom exception filter for domain errors
-@Catch(DomainException)
-export class DomainExceptionFilter implements ExceptionFilter {
-  catch(exception: DomainException, host: ArgumentsHost) {
-    const ctx = host.switchToHttp();
-    const response = ctx.getResponse<Response>();
-    const request = ctx.getRequest<Request>();
-
-    const status = exception.extensions?.http?.status || 400;
-
-    response.status(status).json({
-      errors: [
-        {
-          message: exception.message,
-          extensions: {
-            code: exception.extensions?.code,
-            timestamp: new Date().toISOString(),
-            path: request.url,
-          },
-        },
-      ],
-    });
-  }
-}
-
-// Global exception filter for unhandled errors
+// common/filters/all-exceptions.filter.ts — global filter for unhandled errors
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   constructor(private readonly logger: Logger) {}
 
   catch(exception: unknown, host: ArgumentsHost) {
-    const ctx = host.switchToHttp();
-    const response = ctx.getResponse<Response>();
-    const request = ctx.getRequest<Request>();
-
-    const status =
-      exception instanceof HttpException
-        ? exception.getStatus()
-        : HttpStatus.INTERNAL_SERVER_ERROR;
-
     const message =
       exception instanceof Error
         ? exception.message
         : 'Internal server error';
 
     this.logger.error(
-      `${request.method} ${request.url}`,
+      'Unhandled exception',
       exception instanceof Error ? exception.stack : exception,
     );
 
-    response.status(status).json({
-      errors: [
-        {
-          message,
-          extensions: {
-            code: 'INTERNAL_SERVER_ERROR',
-            timestamp: new Date().toISOString(),
-            path: request.url,
-          },
-        },
-      ],
+    throw new GraphQLError(message, {
+      extensions: {
+        code: 'INTERNAL_SERVER_ERROR',
+        timestamp: new Date().toISOString(),
+      },
     });
   }
 }
 
-// Register globally in main.ts
+// Register globally in main.ts — bootstrap wires the global concerns
 app.useGlobalFilters(
   new AllExceptionsFilter(app.get(Logger)),
   new DomainExceptionFilter(),
 );
-
-// Or via module
-@Module({
-  providers: [
-    {
-      provide: APP_FILTER,
-      useClass: AllExceptionsFilter,
-    },
-  ],
-})
-export class AppModule {}
 ```
 
 Reference: [NestJS Exception Filters](https://docs.nestjs.com/exception-filters) | [GraphQL Other Features](https://docs.nestjs.com/graphql/other-features)
@@ -2040,7 +1929,9 @@ Reference: [NestJS Exception Filters](https://docs.nestjs.com/exception-filters)
 
 **Impact: CRITICAL** — Essential for secure GraphQL APIs
 
-Use `@nestjs/jwt` with `@nestjs/passport` for authentication in GraphQL. Extract the JWT token from the GraphQL context (`context.req.headers.authorization`), populate `context.user`, and use guards on resolvers. Store secrets securely, use appropriate token lifetimes, implement refresh tokens, and validate tokens properly. Never expose sensitive data in JWT payloads.
+Use `@nestjs/jwt` with `@nestjs/passport` for authentication in GraphQL. Read the token from the GraphQL request (`GqlExecutionContext.create(context).getContext().req`), populate the context's `user`, and use guards on resolvers. Store secrets securely, use appropriate token lifetimes, implement refresh tokens, and validate tokens properly. Never expose sensitive data in JWT payloads.
+
+Auth is its own feature module. Strategies live in `modules/auth/strategies/`, auth services in `modules/auth/services/`, and `AuthModule` depends on `UsersModule` — never the reverse.
 
 **Incorrect (insecure JWT implementation):**
 
@@ -2087,9 +1978,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 **Correct (secure JWT with refresh tokens in GraphQL):**
 
 ```typescript
-// Secure JWT configuration
+// modules/auth/auth.module.ts — auth depends on users, one way
 @Module({
   imports: [
+    UsersModule,
+    PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -2102,12 +1995,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         },
       }),
     }),
-    PassportModule.register({ defaultStrategy: 'jwt' }),
   ],
+  providers: [AuthService, JwtStrategy, AuthMutationResolver],
+  exports: [AuthService],
 })
 export class AuthModule {}
 
-// Minimal JWT payload
+// modules/auth/services/auth.service.ts — minimal JWT payload
 @Injectable()
 export class AuthService {
   async login(user: User): Promise<TokenResponse> {
@@ -2138,44 +2032,27 @@ export class AuthService {
   }
 }
 
-// GraphQL context with JWT
+// common/guards/jwt-auth.guard.ts — delegates token verification to the JWT strategy below,
+// so req.user is the validated User (not the raw token payload)
 @Injectable()
-export class JwtAuthGuard implements CanActivate {
-  constructor(
-    private jwtService: JwtService,
-    private reflector: Reflector,
-  ) {}
+export class JwtAuthGuard extends AuthGuard('jwt') {
+  constructor(private readonly reflector: Reflector) {
+    super();
+  }
 
-  async canActivate(context: ExecutionContext): Promise<boolean> {
+  canActivate(context: ExecutionContext) {
     const isPublic = this.reflector.getAllAndOverride<boolean>('isPublic', [
       context.getHandler(),
       context.getClass(),
     ]);
     if (isPublic) return true;
 
-    const ctx = context.switchToHttp();
-    const request = ctx.getRequest();
-    const token = this.extractToken(request);
-
-    if (!token) {
-      throw new UnauthorizedException('No token provided');
-    }
-
-    try {
-      request.user = await this.jwtService.verifyAsync(token);
-      return true;
-    } catch {
-      throw new UnauthorizedException('Invalid token');
-    }
-  }
-
-  private extractToken(request: Request): string | undefined {
-    const [type, token] = request.headers.authorization?.split(' ') ?? [];
-    return type === 'Bearer' ? token : undefined;
+    // Passport runs JwtStrategy; req.user becomes the User returned by validate()
+    return super.canActivate(context);
   }
 }
 
-// Proper JWT strategy with validation
+// modules/auth/strategies/jwt.strategy.ts — proper JWT strategy with validation
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
@@ -2209,10 +2086,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 }
 
-// Resolver with auth
+// modules/users/resolvers/users.query.resolver.ts — resolver with auth
 @Resolver(() => User)
 @UseGuards(JwtAuthGuard)
-export class UsersResolver {
+export class UsersQueryResolver {
   @Query(() => User)
   me(@CurrentUser() user: User) {
     return user;
@@ -2227,11 +2104,11 @@ export class UsersResolver {
   }
 }
 
-// Auth context
-export const createContext = ({ req }: { req: Request }) => {
+// infra/graphql/graphql.context.ts — the per-request context (see infra-graphql)
+export function buildContext(req: Request) {
   // Extract user from JWT and add to context
   return { req, user: req.user };
-};
+}
 ```
 
 Reference: [NestJS Authentication](https://docs.nestjs.com/security/authentication) | [GraphQL Authentication](https://docs.nestjs.com/security/authentication#graphql)
@@ -2344,8 +2221,7 @@ export class CustomThrottlerGuard extends ThrottlerGuard {
   }
 
   protected async getLimit(context: ExecutionContext): Promise<number> {
-    const ctx = context.switchToHttp();
-    const request = ctx.getRequest();
+    const request = GqlExecutionContext.create(context).getContext().req;
 
     if (request.user) {
       return request.user.isPremium ? 1000 : 200;
@@ -2370,7 +2246,7 @@ const schema = buildSchema({
 @Injectable()
 export class ComplexityRateLimitGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
-    const info = context.getArgByIndex(1);
+    const info = GqlExecutionContext.create(context).getInfo();
     const complexity = this.calculateComplexity(info);
 
     if (complexity > 1000) {
@@ -2534,31 +2410,31 @@ Reference: [OWASP XSS Prevention](https://cheatsheetseries.owasp.org/cheatsheets
 
 **Impact: HIGH** — Enforces access control before handlers execute
 
-Guards determine whether a request should be handled based on authentication state, roles, permissions, or other conditions. They run after middleware but before pipes and interceptors, making them ideal for access control. Use guards instead of manual checks in controllers.
+Guards determine whether a request should be handled based on authentication state, roles, permissions, or other conditions. They run after middleware but before pipes and interceptors, making them ideal for access control. Use guards instead of manual checks in resolvers. In GraphQL, guards read the request through `GqlExecutionContext`; shared guards live in `common/guards/`.
 
 **Incorrect (manual auth checks in every handler):**
 
 ```typescript
-// Manual auth checks in every handler
-@Controller('admin')
-export class AdminController {
-  @Get('users')
-  async getUsers(@Request() req) {
-    if (!req.user) {
+// Manual auth checks in every resolver
+@Resolver()
+export class AdminResolver {
+  @Query(() => [User])
+  async users(@Context() ctx: GqlContext) {
+    if (!ctx.user) {
       throw new UnauthorizedException();
     }
-    if (!req.user.roles.includes('admin')) {
+    if (!ctx.user.roles.includes('admin')) {
       throw new ForbiddenException();
     }
     return this.adminService.getUsers();
   }
 
-  @Delete('users/:id')
-  async deleteUser(@Request() req, @Param('id') id: string) {
-    if (!req.user) {
+  @Mutation(() => Boolean)
+  async deleteUser(@Args('id') id: string, @Context() ctx: GqlContext) {
+    if (!ctx.user) {
       throw new UnauthorizedException();
     }
-    if (!req.user.roles.includes('admin')) {
+    if (!ctx.user.roles.includes('admin')) {
       throw new ForbiddenException();
     }
     return this.adminService.deleteUser(id);
@@ -2569,15 +2445,15 @@ export class AdminController {
 **Correct (guards with declarative decorators):**
 
 ```typescript
-// JWT Auth Guard
+// common/guards/jwt-auth.guard.ts — authentication: delegates to the 'jwt' Passport strategy
+// (see security-auth-jwt), which sets req.user to the validated user
 @Injectable()
-export class JwtAuthGuard implements CanActivate {
-  constructor(
-    private jwtService: JwtService,
-    private reflector: Reflector,
-  ) {}
+export class JwtAuthGuard extends AuthGuard('jwt') {
+  constructor(private readonly reflector: Reflector) {
+    super();
+  }
 
-  async canActivate(context: ExecutionContext): Promise<boolean> {
+  canActivate(context: ExecutionContext) {
     // Check for @Public() decorator
     const isPublic = this.reflector.getAllAndOverride<boolean>('isPublic', [
       context.getHandler(),
@@ -2585,28 +2461,11 @@ export class JwtAuthGuard implements CanActivate {
     ]);
     if (isPublic) return true;
 
-    const request = context.switchToHttp().getRequest();
-    const token = this.extractToken(request);
-
-    if (!token) {
-      throw new UnauthorizedException('No token provided');
-    }
-
-    try {
-      request.user = await this.jwtService.verifyAsync(token);
-      return true;
-    } catch {
-      throw new UnauthorizedException('Invalid token');
-    }
-  }
-
-  private extractToken(request: Request): string | undefined {
-    const [type, token] = request.headers.authorization?.split(' ') ?? [];
-    return type === 'Bearer' ? token : undefined;
+    return super.canActivate(context);
   }
 }
 
-// Roles Guard
+// common/guards/roles.guard.ts
 @Injectable()
 export class RolesGuard implements CanActivate {
   constructor(private reflector: Reflector) {}
@@ -2619,16 +2478,16 @@ export class RolesGuard implements CanActivate {
 
     if (!requiredRoles) return true;
 
-    const { user } = context.switchToHttp().getRequest();
+    const { user } = GqlExecutionContext.create(context).getContext().req;
     return requiredRoles.some((role) => user.roles?.includes(role));
   }
 }
 
-// Decorators
+// common/decorators/public.decorator.ts, roles.decorator.ts
 export const Public = () => SetMetadata('isPublic', true);
 export const Roles = (...roles: Role[]) => SetMetadata('roles', roles);
 
-// Register guards globally
+// Register guards globally in AppModule (APP_GUARD is the idiomatic global registration)
 @Module({
   providers: [
     { provide: APP_GUARD, useClass: JwtAuthGuard },
@@ -2637,24 +2496,24 @@ export const Roles = (...roles: Role[]) => SetMetadata('roles', roles);
 })
 export class AppModule {}
 
-// Clean controller
-@Controller('admin')
-@Roles(Role.Admin) // Applied to all routes
-export class AdminController {
-  @Get('users')
-  getUsers(): Promise<User[]> {
+// Clean resolver
+@Resolver()
+@Roles(Role.Admin) // Applied to every query and mutation on this resolver
+export class AdminResolver {
+  @Query(() => [User])
+  users(): Promise<User[]> {
     return this.adminService.getUsers();
   }
 
-  @Delete('users/:id')
-  deleteUser(@Param('id') id: string): Promise<void> {
+  @Mutation(() => Boolean)
+  deleteUser(@Args('id') id: string): Promise<boolean> {
     return this.adminService.deleteUser(id);
   }
 
   @Public() // Override: no auth required
-  @Get('health')
-  health() {
-    return { status: 'ok' };
+  @Query(() => String)
+  health(): string {
+    return 'ok';
   }
 }
 ```
@@ -2667,14 +2526,14 @@ Reference: [NestJS Guards](https://docs.nestjs.com/guards)
 
 **Impact: HIGH** — First line of defense against attacks
 
-Always validate incoming data using class-validator decorators on GraphQL input types and the global ValidationPipe. Never trust user input. Validate all mutation inputs, query arguments, and field arguments before processing. In GraphQL, use `@InputType()` instead of `@Body()` DTOs.
+Always validate incoming data using class-validator decorators on GraphQL inputs and the global ValidationPipe. Never trust user input. Validate all mutation inputs, query arguments, and field arguments before processing. In GraphQL, use `@InputType()` for inputs and `@ArgsType()` for grouped arguments — never one in place of the other — instead of `@Body()` DTOs.
 
 **Incorrect (trust raw input without validation):**
 
 ```typescript
 // Trust raw input without validation
 @Resolver(() => User)
-export class UsersResolver {
+export class UsersMutationResolver {
   @Mutation(() => User)
   createUser(@Args('input') input: any) {
     // input could contain anything - SQL injection, XSS, etc.
@@ -2702,7 +2561,7 @@ export class CreateUserInput {
 }
 ```
 
-**Correct (validated input types with global ValidationPipe):**
+**Correct (validated inputs and args with global ValidationPipe):**
 
 ```typescript
 // Enable ValidationPipe globally in main.ts
@@ -2720,7 +2579,7 @@ async function bootstrap() {
     }),
   );
 
-  await app.listen(3000);
+  await app.listen(process.env.PORT ?? 3000);
 }
 
 // Create well-validated input types
@@ -2738,6 +2597,7 @@ import {
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
+// dto/create-user.input.ts
 @InputType()
 export class CreateUserInput {
   @Field()
@@ -2769,16 +2629,16 @@ export class CreateUserInput {
   password: string;
 }
 
-// Query input with defaults and transformation
-@InputType()
-export class FindUsersInput {
+// dto/find-users.args.ts — query arguments are an @ArgsType(), never an @InputType()
+@ArgsType()
+export class FindUsersArgs {
   @Field({ nullable: true })
   @IsOptional()
   @IsString()
   @MaxLength(100)
   search?: string;
 
-  @Field({ nullable: true })
+  @Field(() => Int, { nullable: true })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
@@ -2786,7 +2646,7 @@ export class FindUsersInput {
   @Max(100)
   limit: number = 20;
 
-  @Field({ nullable: true })
+  @Field(() => Int, { nullable: true })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
@@ -2794,30 +2654,35 @@ export class FindUsersInput {
   offset: number = 0;
 }
 
-// Argument validation
-@InputType()
-export class UserIdArgs {
+// dto/find-user.args.ts — a single-argument group is still an @ArgsType()
+@ArgsType()
+export class FindUserArgs {
   @Field()
   @IsUUID('4')
   id: string;
 }
 
+// modules/users/resolvers/users.mutation.resolver.ts
 @Resolver(() => User)
-export class UsersResolver {
+export class UsersMutationResolver {
   @Mutation(() => User)
   createUser(@Args('input') input: CreateUserInput): Promise<User> {
     // input is guaranteed to be valid
     return this.usersService.create(input);
   }
+}
 
+// modules/users/resolvers/users.query.resolver.ts
+@Resolver(() => User)
+export class UsersQueryResolver {
   @Query(() => [User])
-  users(@Args('input') input: FindUsersInput): Promise<User[]> {
-    // input.limit is a number, input.search is sanitized
-    return this.usersService.findAll(input);
+  users(@Args() args: FindUsersArgs): Promise<User[]> {
+    // args.limit is a number, args.search is sanitized
+    return this.usersService.findAll(args);
   }
 
   @Query(() => User)
-  user(@Args() args: UserIdArgs): Promise<User> {
+  user(@Args() args: FindUserArgs): Promise<User> {
     // args.id is a valid UUID
     return this.usersService.findById(args.id);
   }
@@ -3062,7 +2927,7 @@ Reference: [NestJS Lazy Loading Modules](https://docs.nestjs.com/fundamentals/la
 
 **Impact: HIGH** — Database queries are typically the largest source of latency
 
-Select only needed columns, use proper indexes, avoid over-fetching relations, and consider query performance when designing your data access. Most API slowness traces back to inefficient database queries.
+Select only needed columns, use proper indexes, avoid over-fetching, and consider query performance when designing your data access. Most API slowness traces back to inefficient database queries. For GraphQL, relations are resolved on demand with a request-scoped DataLoader — not by widening the parent query — and large lists are paged with a cursor (see `db-avoid-n-plus-one`).
 
 **Incorrect (over-fetching data and missing indexes):**
 
@@ -3076,23 +2941,22 @@ export class UsersService {
     return users.map((u) => u.email);
   }
 
-  async getUserSummary(id: string): Promise<UserSummary> {
-    const user = await this.repo.findOne({
+  async getProfile(id: string): Promise<User> {
+    return this.repo.findOne({
       where: { id },
-      relations: ['posts', 'posts.comments', 'posts.comments.author', 'followers'],
+      populate: ['posts', 'posts.comments', 'posts.comments.author', 'followers'],
     });
-    // Over-fetches massive relation tree
-    return { name: user.name, postCount: user.posts.length };
+    // Over-fetches a massive relation tree the client may never request
   }
 }
 
 // No indexes on frequently queried columns
-@Entity()
+@Schema()
 export class Order {
-  @Column()
-  userId: string; // No index - full table scan on every lookup
+  @Prop()
+  userId: string; // No index - full collection scan on every lookup
 
-  @Column()
+  @Prop()
   status: string; // No index - slow status filtering
 }
 ```
@@ -3104,86 +2968,56 @@ export class Order {
 @Injectable()
 export class UsersService {
   async findAllEmails(): Promise<string[]> {
-    const users = await this.repo.find({
-      select: ['email'], // Only fetch email column
-    });
+    const users = await this.repo.find({}, { email: 1 });
+    // Only fetches the email column
     return users.map((u) => u.email);
   }
 
-  // Use QueryBuilder for complex selections
+  // Use an aggregation pipeline for complex selections
   async getUserSummary(id: string): Promise<UserSummary> {
-    return this.repo
-      .createQueryBuilder('user')
-      .select('user.name', 'name')
-      .addSelect('COUNT(post.id)', 'postCount')
-      .leftJoin('user.posts', 'post')
-      .where('user.id = :id', { id })
-      .groupBy('user.id')
-      .getRawOne();
-  }
-
-  // Fetch relations only when needed
-  async getFullProfile(id: string): Promise<User> {
-    return this.repo.findOne({
-      where: { id },
-      relations: ['posts'], // Only immediate relation
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        posts: {
-          id: true,
-          title: true,
-        },
-      },
-    });
+    return this.repo.aggregate([
+      { $match: { _id: new Types.ObjectId(id) } },
+      { $project: { name: 1, postCount: { $size: '$postIds' } } },
+    ]);
   }
 }
 
-// Add indexes on frequently queried columns
-@Entity()
-@Index(['userId'])
-@Index(['status'])
-@Index(['createdAt'])
-@Index(['userId', 'status']) // Composite index for common query pattern
+// Add indexes on frequently queried fields
+@Schema({ collection: 'orders' })
 export class Order {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
-
-  @Column()
+  @Prop({ required: true, index: true })
   userId: string;
 
-  @Column()
+  @Prop({ index: true })
   status: string;
 
-  @CreateDateColumn()
+  @Prop()
   createdAt: Date;
 }
 
-// Always paginate large datasets
+// Compound index for a common query pattern
+OrderSchema.index({ userId: 1, status: 1 });
+
+// Page large datasets with a cursor (keyset) — the GraphQL default
 @Injectable()
 export class OrdersService {
-  async findAll(page = 1, limit = 20): Promise<PaginatedResult<Order>> {
-    const [items, total] = await this.repo.findAndCount({
-      skip: (page - 1) * limit,
-      take: limit,
-      order: { createdAt: 'DESC' },
-    });
-
-    return {
-      items,
-      meta: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
+  async findPage(first = 20, after?: string): Promise<Order[]> {
+    return this.ordersRepository.find(
+      {
+        ...(after ? { createdAt: { $lt: new Date(after) } } : {}),
       },
-    };
+      {
+        sort: { createdAt: -1 },
+        limit: first,
+      },
+    );
   }
 }
 ```
 
-Reference: [TypeORM Query Builder](https://typeorm.io/select-query-builder)
+Return a cursor-based `Paginated<T>` from the resolver (see `type-pagination` in `nestjs-graphql-structure`). Use offset `page`/`limit` only for a small, bounded, non-growing list.
+
+Reference: [MongoDB Indexes](https://www.mongodb.com/docs/manual/indexes/) | [TypeORM Query Builder](https://typeorm.io/select-query-builder)
 
 ---
 
@@ -3274,20 +3108,22 @@ export class ProductsService {
   }
 }
 
-// Decorator-based caching with auto-interceptor
-@Controller('categories')
+// Decorator-based caching with auto-interceptor (interceptors live in common/interceptors/)
+@Resolver(() => Category)
 @UseInterceptors(CacheInterceptor)
-export class CategoriesController {
-  @Get()
+export class CategoriesQueryResolver {
+  constructor(private readonly categoriesService: CategoriesService) {}
+
+  @Query(() => [Category])
   @CacheTTL(30 * 60 * 1000) // 30 minutes - categories rarely change
   findAll(): Promise<Category[]> {
     return this.categoriesService.findAll();
   }
 
-  @Get(':id')
+  @Query(() => Category)
   @CacheTTL(60 * 1000) // 1 minute
   @CacheKey('category')
-  findOne(@Param('id') id: string): Promise<Category> {
+  findOne(@Args('id', ParseObjectIdPipe) id: string): Promise<Category> {
     return this.categoriesService.findOne(id);
   }
 }
@@ -3321,21 +3157,21 @@ Reference: [NestJS Caching](https://docs.nestjs.com/techniques/caching)
 
 **Impact: HIGH** — Validates the full request/response cycle
 
-End-to-end tests use Supertest to make real HTTP requests against your NestJS application. They test the full stack including middleware, guards, pipes, and interceptors. E2E tests catch integration issues that unit tests miss.
+End-to-end tests use Supertest to make real HTTP requests against your NestJS application. In a code-first GraphQL app that means POSTing a query or mutation to the single GraphQL endpoint (default `/graphql`) and asserting on `res.body.data` / `res.body.errors`. They test the full stack — guards, pipes, interceptors, and the generated schema. E2E specs live in the top-level `test/` folder as `test/<feature>.e2e-spec.ts`.
 
-**Incorrect (no proper E2E setup or teardown):**
+**Incorrect (only unit-testing resolvers, or an e2e without setup/teardown):**
 
 ```typescript
-// Only unit test controllers
-describe('UsersController', () => {
+// Only unit test the resolver
+describe('UsersResolver', () => {
   it('should return users', async () => {
     const service = { findAll: jest.fn().mockResolvedValue([]) };
-    const controller = new UsersController(service as any);
+    const resolver = new UsersResolver(service as any);
 
-    const result = await controller.findAll();
+    const result = await resolver.users();
 
     expect(result).toEqual([]);
-    // Doesn't test: routes, guards, pipes, serialization
+    // Doesn't test: guards, pipes, interceptors, the schema
   });
 });
 
@@ -3350,16 +3186,16 @@ describe('Users API', () => {
 });
 ```
 
-**Correct (proper E2E setup with Supertest):**
+**Correct (proper E2E setup with Supertest against the GraphQL endpoint):**
 
 ```typescript
-// Proper E2E test setup
+// test/users.e2e-spec.ts
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import * as request from 'supertest';
 import { AppModule } from '../src/app.module';
 
-describe('UsersController (e2e)', () => {
+describe('Users (e2e)', () => {
   let app: INestApplication;
 
   beforeAll(async () => {
@@ -3385,41 +3221,58 @@ describe('UsersController (e2e)', () => {
     await app.close();
   });
 
-  describe('/users (POST)', () => {
+  describe('createUser mutation', () => {
     it('should create a user', () => {
       return request(app.getHttpServer())
-        .post('/users')
-        .send({ name: 'John', email: 'john@test.com' })
-        .expect(201)
+        .post('/graphql')
+        .send({
+          query: `
+            mutation($input: CreateUserInput!) {
+              createUser(input: $input) { _id name email }
+            }
+          `,
+          variables: { input: { name: 'John', email: 'john@test.com' } },
+        })
+        .expect(200)
         .expect((res) => {
-          expect(res.body).toHaveProperty('id');
-          expect(res.body.name).toBe('John');
-          expect(res.body.email).toBe('john@test.com');
+          expect(res.body.errors).toBeUndefined();
+          expect(res.body.data.createUser.name).toBe('John');
+          expect(res.body.data.createUser.email).toBe('john@test.com');
         });
     });
 
-    it('should return 400 for invalid email', () => {
+    it('should report a validation error for an invalid email', () => {
       return request(app.getHttpServer())
-        .post('/users')
-        .send({ name: 'John', email: 'invalid-email' })
-        .expect(400)
+        .post('/graphql')
+        .send({
+          query: `mutation($input: CreateUserInput!) { createUser(input: $input) { _id } }`,
+          variables: { input: { name: 'John', email: 'invalid-email' } },
+        })
+        .expect(200)
         .expect((res) => {
-          expect(res.body.message).toContain('email');
+          expect(res.body.errors[0].message).toContain('email');
         });
     });
   });
 
-  describe('/users/:id (GET)', () => {
-    it('should return 404 for non-existent user', () => {
+  describe('user query', () => {
+    it('should return an error for a non-existent user', () => {
       return request(app.getHttpServer())
-        .get('/users/non-existent-id')
-        .expect(404);
+        .post('/graphql')
+        .send({
+          query: `query($id: String!) { user(id: $id) { _id } }`,
+          variables: { id: '000000000000000000000000' },
+        })
+        .expect(200)
+        .expect((res) => {
+          expect(res.body.errors[0].extensions.code).toBe('USER_NOT_FOUND');
+        });
     });
   });
 });
 
-// Testing with authentication
-describe('Protected Routes (e2e)', () => {
+// GraphQL returns 200 with an `errors` array — assert on it, not on HTTP status
+describe('Protected queries (e2e)', () => {
   let app: INestApplication;
   let authToken: string;
 
@@ -3434,33 +3287,41 @@ describe('Protected Routes (e2e)', () => {
 
     // Get auth token
     const loginResponse = await request(app.getHttpServer())
-      .post('/auth/login')
-      .send({ email: 'test@test.com', password: 'password' });
+      .post('/graphql')
+      .send({
+        query: `mutation($input: LoginInput!) { login(input: $input) { accessToken } }`,
+        variables: { input: { email: 'test@test.com', password: 'password' } },
+      });
 
-    authToken = loginResponse.body.accessToken;
+    authToken = loginResponse.body.data.login.accessToken;
   });
 
-  it('should return 401 without token', () => {
+  it('should return an UNAUTHENTICATED error without a token', () => {
     return request(app.getHttpServer())
-      .get('/users/me')
-      .expect(401);
-  });
-
-  it('should return user profile with valid token', () => {
-    return request(app.getHttpServer())
-      .get('/users/me')
-      .set('Authorization', `Bearer ${authToken}`)
+      .post('/graphql')
+      .send({ query: `query { me { _id email } }` })
       .expect(200)
       .expect((res) => {
-        expect(res.body.email).toBe('test@test.com');
+        expect(res.body.errors[0].extensions.code).toBe('UNAUTHENTICATED');
+      });
+  });
+
+  it('should return the profile with a valid token', () => {
+    return request(app.getHttpServer())
+      .post('/graphql')
+      .set('Authorization', `Bearer ${authToken}`)
+      .send({ query: `query { me { email } }` })
+      .expect(200)
+      .expect((res) => {
+        expect(res.body.data.me.email).toBe('test@test.com');
       });
   });
 });
 
 // Database isolation for E2E tests
-describe('Orders API (e2e)', () => {
+describe('Orders (e2e)', () => {
   let app: INestApplication;
-  let dataSource: DataSource;
+  let connection: Connection;
 
   beforeAll(async () => {
     const moduleFixture = await Test.createTestingModule({
@@ -3473,23 +3334,23 @@ describe('Orders API (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    dataSource = moduleFixture.get(DataSource);
+    connection = moduleFixture.get(getConnectionToken());
     await app.init();
   });
 
   beforeEach(async () => {
     // Clean database between tests
-    await dataSource.synchronize(true);
+    await connection.dropDatabase();
   });
 
   afterAll(async () => {
-    await dataSource.destroy();
+    await connection.close();
     await app.close();
   });
 });
 ```
 
-Reference: [NestJS E2E Testing](https://docs.nestjs.com/fundamentals/testing#end-to-end-testing)
+Reference: [NestJS E2E Testing](https://docs.nestjs.com/fundamentals/testing#end-to-end-testing) | [GraphQL over HTTP](https://graphql.org/learn/serving-over-http/)
 
 ---
 
@@ -3692,12 +3553,12 @@ describe('UsersService', () => {
 });
 
 // Test implementation details
-describe('UsersController', () => {
+describe('UsersMutationResolver', () => {
   it('should call service', async () => {
     const service = { create: jest.fn() };
-    const controller = new UsersController(service as any);
+    const resolver = new UsersMutationResolver(service as any);
 
-    await controller.create({ name: 'Test' });
+    await resolver.createUser({ name: 'Test' });
 
     expect(service.create).toHaveBeenCalled(); // Tests implementation, not behavior
   });
@@ -3792,28 +3653,33 @@ describe('RolesGuard', () => {
   });
 
   it('should allow when no roles required', () => {
-    const context = createMockExecutionContext({ user: { roles: [] } });
+    const context = createMockGqlExecutionContext({ user: { roles: [] } });
     jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(undefined);
 
     expect(guard.canActivate(context)).toBe(true);
   });
 
-  it('should allow admin for admin-only route', () => {
-    const context = createMockExecutionContext({ user: { roles: ['admin'] } });
+  it('should allow admin for an admin-only resolver', () => {
+    const context = createMockGqlExecutionContext({ user: { roles: ['admin'] } });
     jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(['admin']);
 
     expect(guard.canActivate(context)).toBe(true);
   });
 });
 
-function createMockExecutionContext(request: Partial<Request>): ExecutionContext {
+// GraphQL guards read the request through GqlExecutionContext, so the mock
+// ExecutionContext must expose the GraphQL args: [root, args, context, info].
+function createMockGqlExecutionContext(
+  request: Partial<Request>,
+): ExecutionContext {
+  const gqlArgs = [null, null, { req: request }, null];
   return {
-    switchToHttp: () => ({
-      getRequest: () => request,
-    }),
+    getArgs: () => gqlArgs,
+    getArgByIndex: (index: number) => gqlArgs[index],
+    getType: () => 'graphql',
     getHandler: () => jest.fn(),
     getClass: () => jest.fn(),
-  } as ExecutionContext;
+  } as unknown as ExecutionContext;
 }
 ```
 
@@ -3829,106 +3695,43 @@ Reference: [NestJS Testing](https://docs.nestjs.com/fundamentals/testing)
 
 **Impact: HIGH** — N+1 queries are one of the most common performance killers
 
-N+1 queries occur when you fetch a list of entities, then make an additional query for each entity to load related data. Use eager loading with `relations`, query builder joins, or DataLoader to batch queries efficiently.
+N+1 queries occur when a list of parents is fetched, then one extra query runs for each parent to load related data. In GraphQL this happens the moment a field resolver runs once per parent. Batch those per-parent loads with a request-scoped `DataLoader`; for a single aggregate, use one query/join in the repository. Never issue a query per parent inside a field resolver, and do not eager-load GraphQL relations in the parent query.
 
-**Incorrect (lazy loading in loops causes N+1):**
+**Incorrect (lazy loading in loops and in field resolvers causes N+1):**
 
 ```typescript
-// Lazy loading in loops causes N+1
-@Injectable()
-export class OrdersService {
-  async getOrdersWithItems(userId: string): Promise<Order[]> {
-    const orders = await this.orderRepo.find({ where: { userId } });
-    // 1 query for orders
-
-    for (const order of orders) {
-      // N additional queries - one per order!
-      order.items = await this.itemRepo.find({ where: { orderId: order.id } });
-    }
-
-    return orders;
+// A field resolver that queries once per parent
+// modules/users/resolvers/user.resolver.ts
+@Resolver(() => User)
+export class UserResolver {
+  @ResolveField(() => [Post])
+  posts(@Parent() user: User): Promise<Post[]> {
+    // Runs once per user => N queries
+    return this.postsRepository.findByUserId(user._id.toString());
   }
 }
 
-// Accessing lazy relations without loading
-@Controller('users')
-export class UsersController {
-  @Get()
-  async findAll(): Promise<User[]> {
-    const users = await this.userRepo.find();
-    // If User.posts is lazy-loaded, serializing triggers N queries
-    return users; // Each user.posts access = 1 query
-  }
+// Accessing lazy relations while serializing a list does the same
+@Query(() => [User])
+async users(): Promise<User[]> {
+  const users = await this.usersService.findAll();
+  return users; // Each user.posts access = 1 query
 }
 ```
 
-**Correct (use relations for eager loading):**
+**Correct (batch with a request-scoped DataLoader):**
 
 ```typescript
-// Use relations option for eager loading
-@Injectable()
-export class OrdersService {
-  async getOrdersWithItems(userId: string): Promise<Order[]> {
-    // Single query with JOIN
-    return this.orderRepo.find({
-      where: { userId },
-      relations: ['items', 'items.product'],
-    });
-  }
-}
-
-// Use QueryBuilder for complex joins
-@Injectable()
-export class UsersService {
-  async getUsersWithPostCounts(): Promise<UserWithPostCount[]> {
-    return this.userRepo
-      .createQueryBuilder('user')
-      .leftJoin('user.posts', 'post')
-      .select('user.id', 'id')
-      .addSelect('user.name', 'name')
-      .addSelect('COUNT(post.id)', 'postCount')
-      .groupBy('user.id')
-      .getRawMany();
-  }
-
-  async getActiveUsersWithPosts(): Promise<User[]> {
-    return this.userRepo
-      .createQueryBuilder('user')
-      .leftJoinAndSelect('user.posts', 'post')
-      .leftJoinAndSelect('post.comments', 'comment')
-      .where('user.isActive = :active', { active: true })
-      .andWhere('post.status = :status', { status: 'published' })
-      .getMany();
-  }
-}
-
-// Use find options for specific fields
-async getOrderSummaries(userId: string): Promise<OrderSummary[]> {
-  return this.orderRepo.find({
-    where: { userId },
-    relations: ['items'],
-    select: {
-      id: true,
-      total: true,
-      status: true,
-      items: {
-        id: true,
-        quantity: true,
-        price: true,
-      },
-    },
-  });
-}
-
-// Use DataLoader for GraphQL to batch and cache queries
+// Use DataLoader for GraphQL to batch and cache per-parent loads
 import DataLoader from 'dataloader';
 
+// modules/users/loaders/user-posts.loader.ts — one instance per request
 @Injectable({ scope: Scope.REQUEST })
-export class PostsLoader {
-  constructor(private postsService: PostsService) {}
+export class UserPostsLoader {
+  constructor(private readonly postsService: PostsService) {}
 
   readonly batchPosts = new DataLoader<string, Post[]>(async (userIds) => {
-    // Single query for all users' posts
+    // One query for every user's posts
     const posts = await this.postsService.findByUserIds([...userIds]);
 
     // Group by userId
@@ -3939,26 +3742,35 @@ export class PostsLoader {
       postsMap.set(post.userId, userPosts);
     }
 
-    // Return in same order as input
+    // Return in the same order as the input keys (DataLoader contract)
     return userIds.map((id) => postsMap.get(id) || []);
   });
 }
 
-// In resolver
+// In the field resolver — the loader batches every call in the tick into one query
 @ResolveField()
 async posts(@Parent() user: User): Promise<Post[]> {
-  // DataLoader batches multiple calls into single query
-  return this.postsLoader.batchPosts.load(user.id);
+  return this.userPostsLoader.batchPosts.load(user._id.toString());
+}
+
+// For a computed aggregate, compute it in the database, not in a loop
+@Injectable()
+export class UsersService {
+  async getUsersWithPostCounts(): Promise<UserWithPostCount[]> {
+    return this.usersRepository.countPostsByUser();
+    // e.g. a Mongo aggregation: { $project: { postCount: { $size: '$postIds' } } }
+  }
 }
 
 // Enable query logging in development to detect N+1
-TypeOrmModule.forRoot({
-  logging: ['query', 'error'],
-  logger: 'advanced-console',
+MongooseModule.forRoot(uri, {
+  // dev only: log every query so a per-parent query stands out
 });
 ```
 
-Reference: [TypeORM Relations](https://typeorm.io/relations)
+The loader's lifetime and placement are owned by `relations-dataloader` in `nestjs-graphql-structure`; this rule owns making the batch function itself do one query.
+
+Reference: [graphql/dataloader](https://github.com/graphql/dataloader)
 
 ---
 
@@ -3966,43 +3778,34 @@ Reference: [TypeORM Relations](https://typeorm.io/relations)
 
 **Impact: HIGH** — Enables safe, repeatable database schema changes
 
-Never use `synchronize: true` in production. Use migrations for all schema changes. Migrations provide version control for your database, enable safe rollbacks, and ensure consistency across all environments.
+Never apply schema changes by hand. Use migrations for all schema changes. Migrations provide version control for your database, enable safe rollbacks, and ensure consistency across all environments. The connection and the migrations both live in `infra/database/` — configured once from typed config, never in a feature module or the composition root.
 
-**Incorrect (using synchronize or manual SQL):**
+The examples below use TypeORM. If your project uses Mongoose (see `db-avoid-n-plus-one` and the data rules in `nestjs-graphql-structure`), apply the same principle with its migration tooling — for example `migrate-mongo` — keeping the migrations under `infra/database/migrations/`.
+
+**Incorrect (manual schema changes, no home for migrations):**
 
 ```typescript
-// Use synchronize in production
-TypeOrmModule.forRoot({
-  type: 'postgres',
-  synchronize: true, // DANGEROUS in production!
-  // Can drop columns, tables, or data
-});
-
 // Manual SQL in production
 @Injectable()
 export class DatabaseService {
-  async addColumn(): Promise<void> {
+  async addField(): Promise<void> {
     await this.dataSource.query('ALTER TABLE users ADD COLUMN age INT');
     // No version control, no rollback, inconsistent across envs
   }
 }
 
-// Modify entities without migration
-@Entity()
-export class User {
-  @Column()
-  email: string;
+// Feature module owns the connection
+// modules/users/users.module.ts
+@Module({ imports: [MongooseModule.forRoot(process.env.MONGO_URI)] })
+export class UsersModule {}
 
-  @Column() // Added without migration
-  newField: string; // Will crash in production if synchronize is false
-}
+// migrations/0001-init.ts dumped at the repository root
 ```
 
-**Correct (use migrations for all schema changes):**
+**Correct (one infrastructure module; migrations under infra/database/):**
 
 ```typescript
-// Configure TypeORM for migrations
-// data-source.ts
+// infra/database/data-source.ts — used by the migration CLI
 export const dataSource = new DataSource({
   type: 'postgres',
   host: process.env.DB_HOST,
@@ -4011,24 +3814,39 @@ export const dataSource = new DataSource({
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
   entities: ['dist/**/*.entity.js'],
-  migrations: ['dist/migrations/*.js'],
-  synchronize: false, // Always false in production
+  migrations: ['dist/infra/database/migrations/*.js'],
+  synchronize: false, // Always false outside local development
   migrationsRun: true, // Run migrations on startup
 });
 
-// app.module.ts
-TypeOrmModule.forRootAsync({
-  inject: [ConfigService],
-  useFactory: (config: ConfigService) => ({
-    type: 'postgres',
-    host: config.get('DB_HOST'),
-    synchronize: config.get('NODE_ENV') === 'development', // Only in dev
-    migrations: ['dist/migrations/*.js'],
-    migrationsRun: true,
-  }),
-});
+// infra/database/database.module.ts — the connection is configured once
+@Module({
+  imports: [
+    TypeOrmModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        type: 'postgres',
+        host: config.get('database.host'),
+        port: config.get('database.port'),
+        username: config.get('database.username'),
+        password: config.get('database.password'),
+        database: config.get('database.name'),
+        synchronize: false, // Only enabled locally, never in production
+        migrations: ['dist/infra/database/migrations/*.js'],
+        migrationsRun: true,
+        autoLoadEntities: true,
+      }),
+    }),
+  ],
+  exports: [TypeOrmModule],
+})
+export class DatabaseModule {}
 
-// migrations/1705312800000-AddUserAge.ts
+// a feature registers only the entities it owns
+@Module({ imports: [TypeOrmModule.forFeature([User])] })
+export class UsersModule {}
+
+// infra/database/migrations/1705312800000-AddUserAge.ts
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
 export class AddUserAge1705312800000 implements MigrationInterface {
@@ -4094,6 +3912,8 @@ Reference: [TypeORM Migrations](https://typeorm.io/migrations)
 **Impact: HIGH** — Ensures data consistency in multi-step operations
 
 When multiple database operations must succeed or fail together, wrap them in a transaction. This prevents partial updates that leave your data in an inconsistent state. Use TypeORM's transaction APIs or the DataSource query runner for complex scenarios.
+
+The examples below use TypeORM. If your project uses Mongoose (see `db-avoid-n-plus-one` and the data rules in `nestjs-graphql-structure`), wrap the same steps in a MongoDB session transaction (`session.withTransaction(...)`) inside the repository.
 
 **Incorrect (multiple saves without transaction):**
 
@@ -4235,14 +4055,14 @@ Reference: [TypeORM Transactions](https://typeorm.io/transactions)
 
 **Impact: MEDIUM-HIGH** — Interceptors provide clean separation for cross-cutting logic
 
-Interceptors can transform responses, add logging, handle caching, and measure performance without polluting your business logic. They wrap the resolver execution, giving you access to both the request and response streams. Interceptors work identically in GraphQL resolvers via `@UseInterceptors()` decorator.
+Interceptors can transform responses, add logging, handle caching, and measure performance without polluting your business logic. They wrap the resolver execution. Interceptors work identically in GraphQL resolvers via `@UseInterceptors()`; shared interceptors live in `common/interceptors/`, and read the request through `GqlExecutionContext`.
 
 **Incorrect (logging and transformation in every resolver):**
 
 ```typescript
 // Logging in every resolver method
 @Resolver(() => User)
-export class UsersResolver {
+export class UsersQueryResolver {
   @Query(() => [User])
   async users(): Promise<User[]> {
     const start = Date.now();
@@ -4252,17 +4072,6 @@ export class UsersResolver {
 
     this.logger.log(`users query completed in ${Date.now() - start}ms`);
     return users;
-  }
-
-  @Query(() => User)
-  async user(@Args('id') id: string): Promise<User> {
-    const start = Date.now();
-    this.logger.log(`user query called with id: ${id}`);
-
-    const user = await this.usersService.findOne(id);
-
-    this.logger.log(`user query completed in ${Date.now() - start}ms`);
-    return user;
   }
   // Repeated in every method!
 }
@@ -4281,27 +4090,26 @@ async users(): Promise<{ data: User[]; meta: Meta }> {
 **Correct (use interceptors for cross-cutting concerns):**
 
 ```typescript
-// Logging interceptor
+// common/interceptors/logging.interceptor.ts
 @Injectable()
 export class LoggingInterceptor implements NestInterceptor {
   private readonly logger = new Logger('GraphQL');
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
-    const ctx = context.switchToHttp();
-    const request = ctx.getRequest();
-    const info = context.getArgByIndex(1); // GraphQL args
+    const gqlContext = GqlExecutionContext.create(context);
+    const info = gqlContext.getInfo();
     const now = Date.now();
 
     return next.handle().pipe(
       tap({
-        next: (data) => {
+        next: () => {
           this.logger.log(
-            `${context.getHandler().name} - ${Date.now() - now}ms`,
+            `${info.parentType.name}.${info.fieldName} - ${Date.now() - now}ms`,
           );
         },
         error: (error) => {
           this.logger.error(
-            `${context.getHandler().name} - ${error.message}`,
+            `${info.parentType.name}.${info.fieldName} - ${error.message}`,
             error.stack,
           );
         },
@@ -4310,22 +4118,7 @@ export class LoggingInterceptor implements NestInterceptor {
   }
 }
 
-// Response transformation interceptor
-@Injectable()
-export class TransformInterceptor<T> implements NestInterceptor<T, Response<T>> {
-  intercept(context: ExecutionContext, next: CallHandler): Observable<Response<T>> {
-    return next.handle().pipe(
-      map((data) => ({
-        data,
-        meta: {
-          timestamp: new Date().toISOString(),
-        },
-      })),
-    );
-  }
-}
-
-// Timeout interceptor
+// common/interceptors/timeout.interceptor.ts
 @Injectable()
 export class TimeoutInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
@@ -4341,19 +4134,16 @@ export class TimeoutInterceptor implements NestInterceptor {
   }
 }
 
-// Apply globally or per-resolver
-@Module({
-  providers: [
-    { provide: APP_INTERCEPTOR, useClass: LoggingInterceptor },
-    { provide: APP_INTERCEPTOR, useClass: TransformInterceptor },
-  ],
-})
-export class AppModule {}
+// main.ts — bootstrap registers the global interceptors
+app.useGlobalInterceptors(
+  app.get(LoggingInterceptor),
+  new TimeoutInterceptor(),
+);
 
 // Or per-resolver
 @Resolver(() => User)
 @UseInterceptors(LoggingInterceptor)
-export class UsersResolver {
+export class UsersQueryResolver {
   @Query(() => [User])
   async users(): Promise<User[]> {
     // Clean business logic only
@@ -4370,7 +4160,7 @@ export class GraphQLCacheInterceptor implements NestInterceptor {
   ) {}
 
   async intercept(context: ExecutionContext, next: CallHandler): Promise<Observable<any>> {
-    const info = context.getArgByIndex(1);
+    const info = GqlExecutionContext.create(context).getInfo();
     const cacheKey = this.generateKey(context);
     const ttl = this.reflector.get<number>('cacheTTL', context.getHandler()) || 300;
 
@@ -4387,8 +4177,8 @@ export class GraphQLCacheInterceptor implements NestInterceptor {
   }
 
   private generateKey(context: ExecutionContext): string {
-    const gqlArgs = context.getArgByIndex(1);
-    return `gql:${context.getHandler().name}:${JSON.stringify(gqlArgs)}`;
+    const info = GqlExecutionContext.create(context).getInfo();
+    return `gql:${info.parentType.name}.${info.fieldName}:${JSON.stringify(context.getArgByIndex(1))}`;
   }
 }
 
@@ -4399,30 +4189,13 @@ export class GraphQLCacheInterceptor implements NestInterceptor {
 async users(): Promise<User[]> {
   return this.usersService.findAll();
 }
-
-// Error mapping interceptor
-@Injectable()
-export class ErrorMappingInterceptor implements NestInterceptor {
-  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
-    return next.handle().pipe(
-      catchError((error) => {
-        if (error instanceof EntityNotFoundError) {
-          throw new GraphQLError(error.message, {
-            extensions: { code: 'NOT_FOUND' },
-          });
-        }
-        throw error;
-      }),
-    );
-  }
-}
 ```
 
 Apply interceptors at the resolver class level:
 ```typescript
 @Resolver(() => User)
-@UseInterceptors(LoggingInterceptor, TransformInterceptor)
-export class UsersResolver {
+@UseInterceptors(LoggingInterceptor, TimeoutInterceptor)
+export class UsersQueryResolver {
   // All resolver methods now have interceptors applied
 }
 ```
@@ -4435,14 +4208,14 @@ Reference: [NestJS Interceptors](https://docs.nestjs.com/interceptors) | [GraphQ
 
 **Impact: MEDIUM** — Pipes ensure clean, validated data reaches your resolvers
 
-Use built-in pipes like `ParseIntPipe`, `ParseUUIDPipe`, and `DefaultValuePipe` for common transformations. Create custom pipes for business-specific transformations. Pipes separate validation/transformation logic from resolvers. Pipes work identically in GraphQL resolvers via `@UsePipes()` decorator.
+Use built-in pipes like `ParseIntPipe`, `ParseUUIDPipe`, and `DefaultValuePipe` for common transformations. Create custom pipes for business-specific transformations. Pipes separate validation/transformation logic from resolvers. Pipes work identically in GraphQL resolvers via `@UsePipes()` decorator. When several arguments form a group (pagination, filters, sorting), put them on an `@ArgsType()` class and let the `ValidationPipe` transform it — do not scatter raw `@Args()` scalars.
 
 **Incorrect (manual type parsing in resolvers):**
 
 ```typescript
 // Manual type parsing in resolvers
 @Resolver(() => User)
-export class UsersResolver {
+export class UsersQueryResolver {
   @Query(() => User)
   async user(@Args('id') id: string): Promise<User> {
     // Manual validation in every resolver
@@ -4453,23 +4226,11 @@ export class UsersResolver {
     return this.usersService.findOne(uuid);
   }
 
-  @Query(() => [User])
-  async users(
-    @Args('page') page: string,
-    @Args('limit') limit: string,
-  ): Promise<User[]> {
-    // Manual parsing and defaults
-    const pageNum = parseInt(page) || 1;
-    const limitNum = parseInt(limit) || 10;
-    return this.usersService.findAll(pageNum, limitNum);
+  @Query(() => [Product])
+  async search(@Args('price') price: string): Promise<Product[]> {
+    const priceNum = +price; // NaN if invalid, no error
+    return this.productsService.findByPrice(priceNum);
   }
-}
-
-// Type coercion without validation
-@Query(() => [Product])
-async search(@Args('price') price: string): Promise<Product[]> {
-  const priceNum = +price; // NaN if invalid, no error
-  return this.productsService.findByPrice(priceNum);
 }
 ```
 
@@ -4478,20 +4239,11 @@ async search(@Args('price') price: string): Promise<Product[]> {
 ```typescript
 // Use built-in pipes for common transformations
 @Resolver(() => User)
-export class UsersResolver {
+export class UsersQueryResolver {
   @Query(() => User)
   async user(@Args('id', ParseUUIDPipe) id: string): Promise<User> {
     // id is guaranteed to be a valid UUID
     return this.usersService.findOne(id);
-  }
-
-  @Query(() => [User])
-  async users(
-    @Args('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
-    @Args('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
-  ): Promise<User[]> {
-    // Automatic defaults and type conversion
-    return this.usersService.findAll(page, limit);
   }
 
   @Query(() => [User])
@@ -4522,7 +4274,7 @@ async reports(
   return this.reportsService.findBetween(from, to);
 }
 
-// Custom transformation pipes
+// Custom transformation pipe
 @Injectable()
 export class NormalizeEmailPipe implements PipeTransform<string, string> {
   transform(value: string): string {
@@ -4531,21 +4283,11 @@ export class NormalizeEmailPipe implements PipeTransform<string, string> {
   }
 }
 
-// Parse comma-separated values
-@Injectable()
-export class ParseArrayPipe implements PipeTransform<string, string[]> {
-  transform(value: string): string[] {
-    if (!value) return [];
-    return value.split(',').map((v) => v.trim()).filter(Boolean);
-  }
-}
-
 @Query(() => [Product])
 async products(
-  @Args('ids', ParseArrayPipe) ids: string[],
   @Args('email', NormalizeEmailPipe) email: string,
 ): Promise<Product[]> {
-  return this.productsService.findByIds(ids);
+  return this.productsService.findByEmail(email);
 }
 
 // Sanitize HTML input
@@ -4563,44 +4305,39 @@ app.useGlobalPipes(
     whitelist: true, // Strip non-DTO properties
     transform: true, // Auto-transform to DTO types
     transformOptions: {
-      enableImplicitConversion: true, // Convert query strings to numbers
+      enableImplicitConversion: true,
     },
     forbidNonWhitelisted: true, // Throw on extra properties
   }),
 );
 
-// Input type with transformation decorators
-@InputType()
-export class FindProductsInput {
+// Grouped arguments with transformation decorators — an @ArgsType(), never an @InputType()
+@ArgsType()
+export class FindProductsArgs {
+  @Field(() => Int, { nullable: true })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  page?: number = 1;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(100)
   limit?: number = 10;
 
+  @Field({ nullable: true })
   @IsOptional()
   @Transform(({ value }) => value?.toLowerCase())
   @IsString()
   search?: string;
 
+  @Field(() => [String], { nullable: true })
   @IsOptional()
-  @Transform(({ value }) => value?.split(','))
   @IsArray()
   @IsString({ each: true })
   categories?: string[];
 }
 
 @Query(() => [Product])
-async products(@Args('input') input: FindProductsInput): Promise<Product[]> {
-  // input is already transformed and validated
-  return this.productsService.findAll(input);
+async products(@Args() args: FindProductsArgs): Promise<Product[]> {
+  // args is already transformed and validated
+  return this.productsService.findAll(args);
 }
 
 // Pipe error customization
@@ -4634,7 +4371,7 @@ Apply pipes at the resolver class level:
 ```typescript
 @Resolver(() => User)
 @UsePipes(ValidationPipe)
-export class UsersResolver {
+export class UsersQueryResolver {
   // All resolver methods now have ValidationPipe applied
 }
 ```
@@ -4643,189 +4380,110 @@ Reference: [NestJS Pipes](https://docs.nestjs.com/pipes) | [GraphQL Resolvers - 
 
 ---
 
-### 8.3 Use Types and Serialization for GraphQL Responses
+### 8.3 Control Response Exposure with GraphQL Types
 
 **Impact: MEDIUM** — Type design prevents accidental data exposure and ensures consistency
 
-Never return entity objects directly from resolvers. Use GraphQL object types with `@ObjectType()` and `@InputType()` to control exactly what data is exposed. Use `class-transformer`'s `@Exclude()` and `@Expose()` decorators to prevent accidental exposure of sensitive fields. The GraphQL schema itself is your API contract.
+Never return a persistence document straight through a resolver. What a client can see is decided by the `@Field()` declarations on the `@ObjectType`: a field that must never leave the server is persisted with `select: false` and simply has no `@Field()`. When the API shape stops matching the stored shape, split `entities/` (persistence) from `models/` + `mappers/`. The GraphQL schema is the API contract.
 
-**Incorrect (returning entities directly):**
+**Incorrect (returning the raw document, or hand-spreading objects):**
 
 ```typescript
-// Return entities directly
+// Return the raw document
 @Resolver(() => User)
-export class UsersResolver {
+export class UsersQueryResolver {
   @Query(() => User)
-  async user(@Args('id') id: string) {
-    return this.usersService.findById(id);
-    // Returns: { id, email, passwordHash, ssn, internalNotes, ... }
-    // Exposes sensitive data!
+  async user(@Args() args: FindUserArgs) {
+    return this.usersRepository.findById(args.id);
+    // { _id, __v, passwordHash, resetToken, ... } — secrets reach the client
   }
 }
 
 // Manual object spreading (error-prone)
-@Query(() => User)
-async user(@Args('id') id: string) {
-  const user = await this.usersService.findById(id);
-  return {
-    id: user.id,
-    email: user.email,
-    name: user.name,
-    // Easy to forget to exclude sensitive fields
-  };
-}
+const user = await this.usersRepository.findById(id);
+return { id: user.id, email: user.email, name: user.name };
+// Easy to forget to exclude a sensitive field
 ```
 
-**Correct (use class-transformer with @Exclude and explicit types):**
+**Correct (declare exactly what is exposed; split when shapes diverge):**
 
 ```typescript
-// Enable class-transformer globally
-async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
-  app.useGlobalInterceptors(new ClassSerializerInterceptor(app.get(Reflector)));
-  await app.listen(3000);
-}
-
-// Entity with serialization control
-@Entity()
+// modules/users/entities/user.entity.ts — merged entity/object type (the default)
+@ObjectType()
+@Schema({ timestamps: true, collection: 'users' })
 export class User {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
+  @Field(() => ID)
+  _id: string;
 
-  @Column()
+  @Field()
+  @Prop({ required: true, unique: true, index: true })
   email: string;
 
-  @Column()
-  name: string;
-
-  @Column()
-  @Exclude() // Never include in responses
+  @Prop({ required: true, select: false }) // persisted, NOT a @Field
   passwordHash: string;
 
-  @Column({ nullable: true })
-  @Exclude()
-  ssn: string;
-
-  @Column({ default: false })
-  @Exclude({ toPlainOnly: true })
-  isAdmin: boolean;
-
-  @CreateDateColumn()
-  createdAt: Date;
-
-  @Column()
-  @Exclude()
-  internalNotes: string;
+  @Prop({ select: false })                 // persisted, NOT a @Field
+  resetToken?: string;
 }
 
-// GraphQL output type — controls what's exposed
+// When the exposed shape stops matching storage, split it:
+// modules/users/models/user.model.ts — the public graph
 @ObjectType()
-export class UserType {
-  @Field()
-  id: string;
+export class UserModel {
+  @Field(() => ID)
+  _id: string;
 
   @Field()
   email: string;
 
-  @Field()
-  name: string;
+  @Field(() => String, { nullable: true })
+  avatarUrl?: string; // computed from avatarKey
 
-  @Field()
-  @Transform(({ obj }) => obj.posts?.length || 0)
-  postCount: number;
+  @Field(() => Int)
+  postCount!: number; // computed — declared type-only, never populated
 }
 
-@ObjectType()
-export class UserDetailType extends UserType {
-  @Field()
-  createdAt: Date;
-
-  @Field(() => [PostType])
-  posts: PostType[];
+// modules/users/mappers/user.mapper.ts — one conversion, testable in isolation
+export function toUserModel(doc: UserDocument): UserModel {
+  return {
+    _id: doc._id.toString(),
+    email: doc.email,
+    avatarUrl: doc.avatarKey ? cdnUrl(doc.avatarKey) : null,
+    postCount: 0, // resolved by @ResolveField, not the mapper
+  };
 }
 
-// Resolver with explicit types
-@Resolver(() => User)
-export class UsersResolver {
-  @Query(() => [UserType])
-  async users(): Promise<UserType[]> {
-    const users = await this.usersService.findAll();
-    return users.map(u => plainToInstance(UserType, u));
-  }
+// modules/users/resolvers/user.resolver.ts — the computed field's single source of truth
+@Resolver(() => UserModel)
+export class UserResolver {
+  constructor(private readonly postsService: PostsService) {}
 
-  @Query(() => UserDetailType)
-  async user(@Args('id') id: string): Promise<UserDetailType> {
-    const user = await this.usersService.findByIdWithPosts(id);
-    return plainToInstance(UserDetailType, user, {
-      excludeExtraneousValues: true,
-    });
+  @ResolveField(() => Int)
+  postCount(@Parent() user: UserModel): Promise<number> {
+    return this.postsService.countByUserId(user._id);
   }
 }
 
-// Input types for mutations
+// Input types for mutations live in dto/ and are separate from entities
 @InputType()
 export class CreateUserInput {
-  @Field()
-  @IsString()
-  @IsNotEmpty()
-  @MinLength(2)
-  @MaxLength(100)
+  @Field() @IsString() @IsNotEmpty() @MinLength(2) @MaxLength(100)
   name: string;
 
-  @Field()
-  @IsEmail()
+  @Field() @IsEmail()
   email: string;
 
-  @Field()
-  @IsString()
-  @MinLength(8)
-  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
+  @Field() @IsString() @MinLength(8)
   password: string;
 }
 
-// Mapped types for variations
 @InputType()
 export class UpdateUserInput extends PartialType(CreateUserInput) {}
-
-@InputType()
-export class UserFilterInput {
-  @Field({ nullable: true })
-  @IsOptional()
-  @IsString()
-  search?: string;
-
-  @Field({ nullable: true })
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  limit: number = 20;
-}
-
-// Groups for conditional serialization
-@ObjectType()
-export class UserType {
-  @Field()
-  id: string;
-
-  @Field()
-  name: string;
-
-  @Field({ description: 'Only visible to admins' })
-  @Expose({ groups: ['admin'] })
-  email: string;
-
-  @Field()
-  @Expose({ groups: ['admin'] })
-  createdAt: Date;
-
-  @Field()
-  @Expose({ groups: ['admin', 'owner'] })
-  settings: UserSettings;
-}
 ```
 
-Reference: [NestJS Serialization](https://docs.nestjs.com/techniques/serialization) | [GraphQL Mapped Types](https://docs.nestjs.com/graphql/mapped-types)
+When a field should only be visible to some roles, gate it with a schema directive (`common/directives/`) rather than per-group serialization.
+
+Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers) | [NestJS GraphQL Mapped Types](https://docs.nestjs.com/graphql/mapped-types) | [Mongoose select](https://mongoosejs.com/docs/api/schematype.html#schematype_SchemaType-select)
 
 ---
 
@@ -4833,231 +4491,7 @@ Reference: [NestJS Serialization](https://docs.nestjs.com/techniques/serializati
 
 **Section Impact: MEDIUM**
 
-### 9.1 Implement Health Checks for Microservices
-
-**Impact: MEDIUM-HIGH** — Health checks enable orchestrators to manage service lifecycle
-
-Implement liveness and readiness probes using `@nestjs/terminus`. Liveness checks determine if the service should be restarted. Readiness checks determine if the service can accept traffic. Proper health checks enable Kubernetes and load balancers to route traffic correctly.
-
-**Incorrect (simple ping that doesn't check dependencies):**
-
-```typescript
-// Simple ping that doesn't check dependencies
-@Controller('health')
-export class HealthController {
-  @Get()
-  check(): string {
-    return 'OK'; // Service might be unhealthy but returns OK
-  }
-}
-
-// Health check that blocks on slow dependencies
-@Controller('health')
-export class HealthController {
-  @Get()
-  async check(): Promise<string> {
-    // If database is slow, health check times out
-    await this.userRepo.findOne({ where: { id: '1' } });
-    await this.redis.ping();
-    await this.externalApi.healthCheck();
-    return 'OK';
-  }
-}
-```
-
-**Correct (use @nestjs/terminus for comprehensive health checks):**
-
-```typescript
-// Use @nestjs/terminus for comprehensive health checks
-import {
-  HealthCheckService,
-  HttpHealthIndicator,
-  TypeOrmHealthIndicator,
-  HealthCheck,
-  DiskHealthIndicator,
-  MemoryHealthIndicator,
-} from '@nestjs/terminus';
-
-@Controller('health')
-export class HealthController {
-  constructor(
-    private health: HealthCheckService,
-    private http: HttpHealthIndicator,
-    private db: TypeOrmHealthIndicator,
-    private disk: DiskHealthIndicator,
-    private memory: MemoryHealthIndicator,
-  ) {}
-
-  // Liveness probe - is the service alive?
-  @Get('live')
-  @HealthCheck()
-  liveness() {
-    return this.health.check([
-      // Basic checks only
-      () => this.memory.checkHeap('memory_heap', 200 * 1024 * 1024), // 200MB
-    ]);
-  }
-
-  // Readiness probe - can the service handle traffic?
-  @Get('ready')
-  @HealthCheck()
-  readiness() {
-    return this.health.check([
-      () => this.db.pingCheck('database'),
-      () =>
-        this.http.pingCheck('redis', 'http://redis:6379', { timeout: 1000 }),
-      () =>
-        this.disk.checkStorage('disk', { path: '/', thresholdPercent: 0.9 }),
-    ]);
-  }
-
-  // Deep health check for debugging
-  @Get('deep')
-  @HealthCheck()
-  deepCheck() {
-    return this.health.check([
-      () => this.db.pingCheck('database'),
-      () => this.memory.checkHeap('memory_heap', 200 * 1024 * 1024),
-      () => this.memory.checkRSS('memory_rss', 300 * 1024 * 1024),
-      () =>
-        this.disk.checkStorage('disk', { path: '/', thresholdPercent: 0.9 }),
-      () =>
-        this.http.pingCheck('external-api', 'https://api.example.com/health'),
-    ]);
-  }
-}
-
-// Custom indicator for business-specific health
-@Injectable()
-export class QueueHealthIndicator extends HealthIndicator {
-  constructor(private queueService: QueueService) {
-    super();
-  }
-
-  async isHealthy(key: string): Promise<HealthIndicatorResult> {
-    const queueStats = await this.queueService.getStats();
-
-    const isHealthy = queueStats.failedCount < 100;
-    const result = this.getStatus(key, isHealthy, {
-      waiting: queueStats.waitingCount,
-      active: queueStats.activeCount,
-      failed: queueStats.failedCount,
-    });
-
-    if (!isHealthy) {
-      throw new HealthCheckError('Queue unhealthy', result);
-    }
-
-    return result;
-  }
-}
-
-// Redis health indicator
-@Injectable()
-export class RedisHealthIndicator extends HealthIndicator {
-  constructor(@InjectRedis() private redis: Redis) {
-    super();
-  }
-
-  async isHealthy(key: string): Promise<HealthIndicatorResult> {
-    try {
-      const pong = await this.redis.ping();
-      return this.getStatus(key, pong === 'PONG');
-    } catch (error) {
-      throw new HealthCheckError('Redis check failed', this.getStatus(key, false));
-    }
-  }
-}
-
-// Use custom indicators
-@Get('ready')
-@HealthCheck()
-readiness() {
-  return this.health.check([
-    () => this.db.pingCheck('database'),
-    () => this.redis.isHealthy('redis'),
-    () => this.queue.isHealthy('job-queue'),
-  ]);
-}
-
-// Graceful shutdown handling
-@Injectable()
-export class GracefulShutdownService implements OnApplicationShutdown {
-  private isShuttingDown = false;
-
-  isShutdown(): boolean {
-    return this.isShuttingDown;
-  }
-
-  async onApplicationShutdown(signal: string): Promise<void> {
-    this.isShuttingDown = true;
-    console.log(`Shutting down on ${signal}`);
-
-    // Wait for in-flight requests
-    await new Promise((resolve) => setTimeout(resolve, 5000));
-  }
-}
-
-// Health check respects shutdown state
-@Get('ready')
-@HealthCheck()
-readiness() {
-  if (this.shutdownService.isShutdown()) {
-    throw new ServiceUnavailableException('Shutting down');
-  }
-
-  return this.health.check([
-    () => this.db.pingCheck('database'),
-  ]);
-}
-```
-
-### Kubernetes Configuration
-
-```yaml
-# Kubernetes deployment with probes
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: api-service
-spec:
-  template:
-    spec:
-      containers:
-        - name: api
-          image: api-service:latest
-          ports:
-            - containerPort: 3000
-          livenessProbe:
-            httpGet:
-              path: /health/live
-              port: 3000
-            initialDelaySeconds: 30
-            periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 3
-          readinessProbe:
-            httpGet:
-              path: /health/ready
-              port: 3000
-            initialDelaySeconds: 5
-            periodSeconds: 5
-            timeoutSeconds: 3
-            failureThreshold: 3
-          startupProbe:
-            httpGet:
-              path: /health/live
-              port: 3000
-            initialDelaySeconds: 0
-            periodSeconds: 5
-            failureThreshold: 30
-```
-
-Reference: [NestJS Terminus](https://docs.nestjs.com/recipes/terminus)
-
----
-
-### 9.2 Use Message and Event Patterns Correctly
+### 9.1 Use Message and Event Patterns Correctly
 
 **Impact: MEDIUM** — Proper patterns ensure reliable microservice communication
 
@@ -5222,26 +4656,23 @@ Reference: [NestJS Microservices](https://docs.nestjs.com/microservices/basics)
 
 ---
 
-### 9.3 Use Message Queues for Background Jobs
+### 9.2 Use Message Queues for Background Jobs
 
 **Impact: MEDIUM-HIGH** — Queues enable reliable background processing
 
-Use `@nestjs/bullmq` for background job processing. Queues decouple long-running tasks from HTTP requests, enable retry logic, and distribute workload across workers. Use them for emails, file processing, notifications, and any task that shouldn't block user requests.
+Use `@nestjs/bullmq` for background job processing. Queues decouple long-running tasks from the request path, enable retry logic, and distribute workload across workers. Use them for emails, file processing, notifications, and any task that shouldn't block a request. The queue connection is one-time infrastructure in `infra/queue/`; the processors and scheduled jobs live with the feature that owns the data they touch.
 
-**Incorrect (long-running tasks in HTTP handlers):**
+**Incorrect (long-running work inline on the request path):**
 
 ```typescript
-// Long-running tasks in HTTP handlers
-@Controller('reports')
-export class ReportsController {
-  @Post()
-  async generate(@Body() dto: GenerateReportDto): Promise<Report> {
-    // This blocks the request for potentially minutes
-    const data = await this.fetchLargeDataset(dto);
-    const report = await this.processData(data); // Slow!
-    await this.sendEmail(dto.email, report); // Can fail!
-    return report; // Client times out
-  }
+// modules/reports/resolvers/reports.mutation.resolver.ts
+@Mutation(() => Report)
+async generateReport(@Args('input') input: ReportInput): Promise<Report> {
+  // This blocks the request for potentially minutes
+  const data = await this.fetchLargeDataset(input);
+  const report = await this.processData(data); // Slow!
+  await this.sendEmail(input.email, report); // Can fail!
+  return report; // Client times out
 }
 
 // Fire-and-forget without retry
@@ -5260,50 +4691,53 @@ setInterval(async () => {
 }, 60000); // No error handling, memory leaks
 ```
 
-**Correct (use BullMQ for background processing):**
+**Correct (BullMQ; connection in infra/, processors in the owning feature):**
 
 ```typescript
-// Configure BullMQ
+// infra/queue/queue.module.ts — the queue connection is configured once
 import { BullModule } from '@nestjs/bullmq';
 
 @Module({
   imports: [
-    BullModule.forRoot({
-      connection: {
-        host: 'localhost',
-        port: 6379,
-      },
-      defaultJobOptions: {
-        removeOnComplete: 1000,
-        removeOnFail: 5000,
-        attempts: 3,
-        backoff: {
-          type: 'exponential',
-          delay: 1000,
+    BullModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        connection: {
+          host: config.get<string>('queue.host'),
+          port: config.get<number>('queue.port'),
         },
-      },
+        defaultJobOptions: {
+          removeOnComplete: 1000,
+          removeOnFail: 5000,
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 1000 },
+        },
+      }),
     }),
-    BullModule.registerQueue(
-      { name: 'email' },
-      { name: 'reports' },
-      { name: 'notifications' },
-    ),
   ],
+  exports: [BullModule],
 })
-export class QueueModule {}
+export class QueueInfraModule {}
 
-// Producer: Add jobs to queue
+// modules/reports/reports.module.ts — the feature registers its own queue
+@Module({
+  imports: [
+    BullModule.registerQueue({ name: 'reports' }),
+    MongooseModule.forFeature([{ name: Report.name, schema: ReportSchema }]),
+  ],
+  providers: [ReportsService, ReportsProcessor, ReportsJob, ReportsQueryResolver],
+})
+export class ReportsModule {}
+
+// modules/reports/services/reports.service.ts — producer: return immediately, process in background
 @Injectable()
 export class ReportsService {
-  constructor(
-    @InjectQueue('reports') private reportsQueue: Queue,
-  ) {}
+  constructor(@InjectQueue('reports') private readonly reportsQueue: Queue) {}
 
-  async requestReport(dto: GenerateReportDto): Promise<{ jobId: string }> {
-    // Return immediately, process in background
-    const job = await this.reportsQueue.add('generate', dto, {
-      priority: dto.urgent ? 1 : 10,
-      delay: dto.scheduledFor ? Date.parse(dto.scheduledFor) - Date.now() : 0,
+  async requestReport(input: ReportInput): Promise<{ jobId: string }> {
+    const job = await this.reportsQueue.add('generate', input, {
+      priority: input.urgent ? 1 : 10,
+      delay: input.scheduledFor ? Date.parse(input.scheduledFor) - Date.now() : 0,
     });
 
     return { jobId: job.id };
@@ -5319,28 +4753,22 @@ export class ReportsService {
   }
 }
 
-// Consumer: Process jobs
+// modules/reports/processors/reports.processor.ts — consumer in the owning feature
 @Processor('reports')
 export class ReportsProcessor {
   private readonly logger = new Logger(ReportsProcessor.name);
 
+  constructor(private readonly reportsService: ReportsService) {}
+
   @Process('generate')
-  async generateReport(job: Job<GenerateReportDto>): Promise<Report> {
+  async generateReport(job: Job<ReportInput>): Promise<void> {
     this.logger.log(`Processing report job ${job.id}`);
 
-    // Update progress
     await job.updateProgress(10);
-
-    const data = await this.fetchData(job.data);
+    const data = await this.reportsService.fetchData(job.data);
     await job.updateProgress(50);
-
-    const report = await this.processData(data);
-    await job.updateProgress(90);
-
-    await this.saveReport(report);
+    await this.reportsService.processData(data);
     await job.updateProgress(100);
-
-    return report;
   }
 
   @OnQueueActive()
@@ -5349,7 +4777,7 @@ export class ReportsProcessor {
   }
 
   @OnQueueCompleted()
-  onCompleted(job: Job, result: any) {
+  onCompleted(job: Job) {
     this.logger.log(`Job ${job.id} completed`);
   }
 
@@ -5359,39 +4787,15 @@ export class ReportsProcessor {
   }
 }
 
-// Email queue with retry
-@Processor('email')
-export class EmailProcessor {
-  @Process('send')
-  async sendEmail(job: Job<SendEmailDto>): Promise<void> {
-    const { to, template, data } = job.data;
-
-    try {
-      await this.mailer.send({
-        to,
-        template,
-        context: data,
-      });
-    } catch (error) {
-      // BullMQ will retry based on job options
-      throw error;
-    }
-  }
-}
-
-// Usage
+// modules/notifications/services/notifications.service.ts — enqueue with retry
 @Injectable()
-export class NotificationService {
-  constructor(@InjectQueue('email') private emailQueue: Queue) {}
+export class NotificationsService {
+  constructor(@InjectQueue('email') private readonly emailQueue: Queue) {}
 
   async sendWelcome(user: User): Promise<void> {
     await this.emailQueue.add(
       'send',
-      {
-        to: user.email,
-        template: 'welcome',
-        data: { name: user.name },
-      },
+      { to: user.email, template: 'welcome', data: { name: user.name } },
       {
         attempts: 5,
         backoff: { type: 'exponential', delay: 5000 },
@@ -5400,75 +4804,26 @@ export class NotificationService {
   }
 }
 
-// Scheduled jobs
+// modules/reports/jobs/reports.job.ts — scheduled work lives in jobs/, not via setInterval
 @Injectable()
-export class ScheduledJobsService implements OnModuleInit {
-  constructor(@InjectQueue('maintenance') private queue: Queue) {}
+export class ReportsJob {
+  constructor(private readonly reportsService: ReportsService) {}
 
-  async onModuleInit(): Promise<void> {
-    // Clean up old reports daily at midnight
-    await this.queue.add(
-      'cleanup',
-      {},
-      {
-        repeat: { cron: '0 0 * * *' },
-        jobId: 'daily-cleanup', // Prevent duplicates
-      },
-    );
-
-    // Send digest every hour
-    await this.queue.add(
-      'digest',
-      {},
-      {
-        repeat: { every: 60 * 60 * 1000 },
-        jobId: 'hourly-digest',
-      },
-    );
-  }
-}
-
-@Processor('maintenance')
-export class MaintenanceProcessor {
-  @Process('cleanup')
-  async cleanup(): Promise<void> {
-    await this.cleanupOldReports();
-    await this.cleanupExpiredSessions();
+  @Cron('0 0 * * *')
+  async cleanupOldReports(): Promise<void> {
+    await this.reportsService.cleanupOldReports();
   }
 
-  @Process('digest')
+  @Cron('0 * * * *')
   async sendDigest(): Promise<void> {
-    const users = await this.getUsersForDigest();
-    for (const user of users) {
-      await this.emailQueue.add('send', { to: user.email, template: 'digest' });
-    }
+    await this.reportsService.sendDigest();
   }
 }
-
-// Queue monitoring with Bull Board
-import { BullBoardModule } from '@bull-board/nestjs';
-import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
-
-@Module({
-  imports: [
-    BullBoardModule.forRoot({
-      route: '/admin/queues',
-      adapter: ExpressAdapter,
-    }),
-    BullBoardModule.forFeature({
-      name: 'email',
-      adapter: BullMQAdapter,
-    }),
-    BullBoardModule.forFeature({
-      name: 'reports',
-      adapter: BullMQAdapter,
-    }),
-  ],
-})
-export class AdminModule {}
 ```
 
-Reference: [NestJS Queues](https://docs.nestjs.com/techniques/queues)
+**Queue monitoring** is an infrastructure concern: register Bull Board under `infra/queue/` (or an app-level admin module), not inside a feature.
+
+Reference: [NestJS Queues](https://docs.nestjs.com/techniques/queues) | [NestJS Task Scheduling](https://docs.nestjs.com/techniques/task-scheduling)
 
 ---
 
@@ -5611,14 +4966,21 @@ export class ShutdownService {
   }
 }
 
-@Controller('health')
-export class HealthController {
-  constructor(private shutdownService: ShutdownService) {}
+// The readiness query lives in the app-level health module (modules/health/),
+// not in AppModule or in a controller (see devops-use-health-checks).
+// modules/health/health.resolver.ts
+@Resolver()
+export class HealthResolver {
+  constructor(
+    private readonly health: HealthCheckService,
+    private readonly db: MongooseHealthIndicator,
+    private readonly shutdownService: ShutdownService,
+  ) {}
 
-  @Get('ready')
+  @Query(() => HealthCheckResult, { name: 'healthReady' })
   @HealthCheck()
   readiness(): Promise<HealthCheckResult> {
-    // Return 503 during shutdown - k8s stops sending traffic
+    // Report not-ready during shutdown so the orchestrator stops sending traffic
     if (this.shutdownService.isShutdown()) {
       throw new ServiceUnavailableException('Shutting down');
     }
@@ -5700,7 +5062,7 @@ Reference: [NestJS Lifecycle Events](https://docs.nestjs.com/fundamentals/lifecy
 
 **Impact: LOW-MEDIUM** — Proper configuration prevents deployment failures
 
-Use `@nestjs/config` for environment-based configuration. Validate configuration at startup to fail fast on misconfigurations. Use namespaced configuration for organization and type safety.
+Use `@nestjs/config` for environment-based configuration. Validate configuration at startup to fail fast on misconfigurations. Use namespaced configuration for organization and type safety. Config namespaces live in `config/`; infrastructure (such as the database connection) consumes them from `infra/`, not from the composition root.
 
 **Incorrect (accessing process.env directly):**
 
@@ -5742,7 +5104,7 @@ export const databaseConfig = registerAs('database', () => ({
   port: parseInt(process.env.DB_PORT, 10),
   username: process.env.DB_USERNAME,
   password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
+  name: process.env.DB_NAME,
 }));
 
 // config/app.config.ts
@@ -5767,7 +5129,7 @@ export const validationSchema = Joi.object({
   REDIS_URL: Joi.string().uri().required(),
 });
 
-// app.module.ts
+// app.module.ts — the composition root loads config and lists modules
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -5779,6 +5141,16 @@ export const validationSchema = Joi.object({
         allowUnknown: true, // Allow other env vars
       },
     }),
+    DatabaseModule,     // infra/database — consumes ConfigService
+    GraphqlInfraModule, // infra/graphql
+    UsersModule,
+  ],
+})
+export class AppModule {}
+
+// infra/database/database.module.ts — infrastructure consumes typed config
+@Module({
+  imports: [
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
@@ -5787,13 +5159,14 @@ export const validationSchema = Joi.object({
         port: config.get('database.port'),
         username: config.get('database.username'),
         password: config.get('database.password'),
-        database: config.get('database.database'),
+        database: config.get('database.name'),
         autoLoadEntities: true,
       }),
     }),
   ],
+  exports: [TypeOrmModule],
 })
-export class AppModule {}
+export class DatabaseModule {}
 
 // Type-safe configuration access
 export interface AppConfig {
@@ -5807,7 +5180,7 @@ export interface DatabaseConfig {
   port: number;
   username: string;
   password: string;
-  database: string;
+  name: string;
 }
 
 // Type-safe access
@@ -5861,7 +5234,156 @@ Reference: [NestJS Configuration](https://docs.nestjs.com/techniques/configurati
 
 ---
 
-### 10.3 Use Structured Logging
+### 10.3 Implement Health Checks
+
+**Impact: MEDIUM-HIGH** — Health checks enable orchestrators to manage service lifecycle
+
+Implement liveness and readiness probes using `@nestjs/terminus`. Liveness checks determine if the service should be restarted. Readiness checks determine if the service can accept traffic. Health is an app-level module, not a domain feature: `modules/health/` holds one small module and its providers.
+
+**Incorrect (a ping that doesn't check dependencies, wired into the composition root):**
+
+```typescript
+// app.module.ts owns an operational concern
+@Module({ providers: [HealthService], controllers: [HealthController] })
+export class AppModule {}
+
+// Simple ping that doesn't check dependencies
+@Controller('health')
+export class HealthController {
+  @Get()
+  check(): string {
+    return 'OK'; // Service might be unhealthy but returns OK
+  }
+}
+```
+
+**Correct (an app-level health module using @nestjs/terminus):**
+
+```typescript
+// modules/health/health.resolver.ts
+@Resolver()
+export class HealthResolver {
+  constructor(
+    private health: HealthCheckService,
+    private db: MongooseHealthIndicator,
+    private memory: MemoryHealthIndicator,
+  ) {}
+
+  // Liveness — is the service alive?
+  @Query(() => HealthCheckResult, { name: 'health' })
+  @HealthCheck()
+  check() {
+    return this.health.check([
+      () => this.memory.checkHeap('memory_heap', 200 * 1024 * 1024), // 200MB
+    ]);
+  }
+
+  // Readiness — can the service handle traffic?
+  @Query(() => HealthCheckResult, { name: 'healthReady' })
+  @HealthCheck()
+  ready() {
+    return this.health.check([
+      () => this.db.pingCheck('database'),
+      () => this.memory.checkRSS('memory_rss', 300 * 1024 * 1024),
+    ]);
+  }
+}
+
+// modules/health/health.module.ts
+@Module({
+  imports: [TerminusModule],
+  providers: [HealthResolver],
+})
+export class HealthModule {}
+
+// app.module.ts — one flat list of modules, domain and app-level alike
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    DatabaseModule,
+    GraphqlInfraModule,
+    UsersModule,
+    HealthModule,
+  ],
+})
+export class AppModule {}
+```
+
+**Custom indicators for business-specific health:**
+
+```typescript
+@Injectable()
+export class QueueHealthIndicator extends HealthIndicator {
+  constructor(private queueService: QueueService) {
+    super();
+  }
+
+  async isHealthy(key: string): Promise<HealthIndicatorResult> {
+    const queueStats = await this.queueService.getStats();
+
+    const isHealthy = queueStats.failedCount < 100;
+    const result = this.getStatus(key, isHealthy, {
+      waiting: queueStats.waitingCount,
+      active: queueStats.activeCount,
+      failed: queueStats.failedCount,
+    });
+
+    if (!isHealthy) {
+      throw new HealthCheckError('Queue unhealthy', result);
+    }
+
+    return result;
+  }
+}
+
+// Registered in the health module and used by the resolver
+@Query(() => HealthCheckResult, { name: 'healthReady' })
+@HealthCheck()
+ready() {
+  return this.health.check([
+    () => this.db.pingCheck('database'),
+    () => this.queue.isHealthy('job-queue'),
+  ]);
+}
+```
+
+**Respecting shutdown state:**
+
+```typescript
+@Injectable()
+export class GracefulShutdownService implements OnApplicationShutdown {
+  private isShuttingDown = false;
+
+  isShutdown(): boolean {
+    return this.isShuttingDown;
+  }
+
+  async onApplicationShutdown(): Promise<void> {
+    this.isShuttingDown = true;
+    // Wait for in-flight requests
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+  }
+}
+
+// In the health resolver: report not-ready once shutdown has started
+@Query(() => HealthCheckResult, { name: 'healthReady' })
+@HealthCheck()
+ready() {
+  if (this.shutdownService.isShutdown()) {
+    throw new ServiceUnavailableException('Shutting down');
+  }
+
+  return this.health.check([() => this.db.pingCheck('database')]);
+}
+```
+
+Wire your orchestrator's probes to the health module's queries; the module, not `AppModule`, owns the endpoint.
+
+Reference: [NestJS Terminus](https://docs.nestjs.com/recipes/terminus)
+
+---
+
+### 10.4 Use Structured Logging
 
 **Impact: MEDIUM-HIGH** — Structured logging enables effective debugging and monitoring
 
@@ -6101,4 +5623,4 @@ Reference: [NestJS Logger](https://docs.nestjs.com/techniques/logger)
 
 ---
 
-*Generated by build-agents.ts on 2026-10-11*
+*Generated by build-agents.ts on 2026-10-16*

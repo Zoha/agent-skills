@@ -25,12 +25,12 @@ describe('UsersService', () => {
 });
 
 // Test implementation details
-describe('UsersController', () => {
+describe('UsersMutationResolver', () => {
   it('should call service', async () => {
     const service = { create: jest.fn() };
-    const controller = new UsersController(service as any);
+    const resolver = new UsersMutationResolver(service as any);
 
-    await controller.create({ name: 'Test' });
+    await resolver.createUser({ name: 'Test' });
 
     expect(service.create).toHaveBeenCalled(); // Tests implementation, not behavior
   });
@@ -125,28 +125,33 @@ describe('RolesGuard', () => {
   });
 
   it('should allow when no roles required', () => {
-    const context = createMockExecutionContext({ user: { roles: [] } });
+    const context = createMockGqlExecutionContext({ user: { roles: [] } });
     jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(undefined);
 
     expect(guard.canActivate(context)).toBe(true);
   });
 
-  it('should allow admin for admin-only route', () => {
-    const context = createMockExecutionContext({ user: { roles: ['admin'] } });
+  it('should allow admin for an admin-only resolver', () => {
+    const context = createMockGqlExecutionContext({ user: { roles: ['admin'] } });
     jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(['admin']);
 
     expect(guard.canActivate(context)).toBe(true);
   });
 });
 
-function createMockExecutionContext(request: Partial<Request>): ExecutionContext {
+// GraphQL guards read the request through GqlExecutionContext, so the mock
+// ExecutionContext must expose the GraphQL args: [root, args, context, info].
+function createMockGqlExecutionContext(
+  request: Partial<Request>,
+): ExecutionContext {
+  const gqlArgs = [null, null, { req: request }, null];
   return {
-    switchToHttp: () => ({
-      getRequest: () => request,
-    }),
+    getArgs: () => gqlArgs,
+    getArgByIndex: (index: number) => gqlArgs[index],
+    getType: () => 'graphql',
     getHandler: () => jest.fn(),
     getClass: () => jest.fn(),
-  } as ExecutionContext;
+  } as unknown as ExecutionContext;
 }
 ```
 

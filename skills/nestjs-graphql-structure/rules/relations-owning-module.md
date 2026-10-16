@@ -20,14 +20,14 @@ even though the GraphQL types reference each other in both directions.
 `comments/resolvers/user-comments.resolver.ts`). The same file belongs to the data owner, never to
 the type's own module.
 
-**MUST.**
+**Responsibilities.**
 
 - Put the resolver in the module that owns the data the field returns.
 - Declare it `@Resolver(() => OtherType)` with a `@ResolveField(() => FieldType)` method.
 - Read the parent key from `@Parent()` and call the module's **own** service.
 - Keep every dependency pointing data-owner → type-owner.
 
-**MUST NOT.**
+**Never.**
 
 - Add the relation field inside the type's own module when that requires importing the module that
   owns the data.
@@ -35,13 +35,12 @@ the type's own module.
 - Reach into another module's repository, entity, or model.
 - Use `forwardRef` to make a relation field resolve.
 
-**Decision question.** *I need field X on type T — where does the data come from? Put the resolver
-in that module.*
+Decision question: *I need field X on type T — where does the data come from? Put the resolver in
+that module.*
 
-**Good / bad — `User.comments`:**
+**Incorrect (the type's own module declares and resolves `User.comments`):**
 
 ```typescript
-// BAD — the type's own module (users) declares and resolves User.comments
 // users/resolvers/user-comments.resolver.ts   <-- belongs in comments/, not users/
 @Resolver(() => User)
 export class UserCommentsResolver {
@@ -53,8 +52,12 @@ export class UserCommentsResolver {
 // A cycle appears the moment CommentsModule needs anything from UsersModule.
 ```
 
+Why it is wrong: the type's own module now depends on the data owner, so the dependency direction
+is reversed and a cycle is only a matter of time.
+
+**Correct (the data owner owns the field; the same resolver lives in the correct module):**
+
 ```typescript
-// GOOD — the data owner owns the field; the SAME resolver, in the correct module
 // comments/resolvers/user-comments.resolver.ts
 @Resolver(() => User)                                   // the User type class, imported
 export class UserCommentsResolver {
@@ -67,12 +70,7 @@ export class UserCommentsResolver {
 // UsersModule knows nothing about comments. Dependencies point one way -> no cycle, no forwardRef.
 ```
 
-**PR checklist.**
-
-- [ ] The relation field's resolver lives in the module that owns the returned data.
-- [ ] The resolver uses that module's own service, not another module's.
-- [ ] No type-owner module imports the data-owner module.
-- [ ] No `forwardRef` was added to make the field resolve.
-- [ ] `@Parent()` supplies the key; the parent is not re-fetched to find it.
+Why it is right: the file lives with the data it returns, the resolver uses that module's own
+service, and every dependency still points one way, so no cycle or `forwardRef` is needed.
 
 Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers) | [NestJS Circular dependency](https://docs.nestjs.com/fundamentals/circular-dependency)

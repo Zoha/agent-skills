@@ -2,111 +2,48 @@
 title: Avoid N+1 Query Problems
 impact: HIGH
 impactDescription: N+1 queries are one of the most common performance killers
-tags: database, n-plus-one, queries, performance
+tags: database, n-plus-one, dataloader, performance
 ---
 
 ## Avoid N+1 Query Problems
 
-N+1 queries occur when you fetch a list of entities, then make an additional query for each entity to load related data. Use eager loading with `relations`, query builder joins, or DataLoader to batch queries efficiently.
+N+1 queries occur when a list of parents is fetched, then one extra query runs for each parent to load related data. In GraphQL this happens the moment a field resolver runs once per parent. Batch those per-parent loads with a request-scoped `DataLoader`; for a single aggregate, use one query/join in the repository. Never issue a query per parent inside a field resolver, and do not eager-load GraphQL relations in the parent query.
 
-**Incorrect (lazy loading in loops causes N+1):**
+**Incorrect (lazy loading in loops and in field resolvers causes N+1):**
 
 ```typescript
-// Lazy loading in loops causes N+1
-@Injectable()
-export class OrdersService {
-  async getOrdersWithItems(userId: string): Promise<Order[]> {
-    const orders = await this.orderRepo.find({ where: { userId } });
-    // 1 query for orders
-
-    for (const order of orders) {
-      // N additional queries - one per order!
-      order.items = await this.itemRepo.find({ where: { orderId: order.id } });
-    }
-
-    return orders;
+// A field resolver that queries once per parent
+// modules/users/resolvers/user.resolver.ts
+@Resolver(() => User)
+export class UserResolver {
+  @ResolveField(() => [Post])
+  posts(@Parent() user: User): Promise<Post[]> {
+    // Runs once per user => N queries
+    return this.postsRepository.findByUserId(user._id.toString());
   }
 }
 
-// Accessing lazy relations without loading
-@Controller('users')
-export class UsersController {
-  @Get()
-  async findAll(): Promise<User[]> {
-    const users = await this.userRepo.find();
-    // If User.posts is lazy-loaded, serializing triggers N queries
-    return users; // Each user.posts access = 1 query
-  }
+// Accessing lazy relations while serializing a list does the same
+@Query(() => [User])
+async users(): Promise<User[]> {
+  const users = await this.usersService.findAll();
+  return users; // Each user.posts access = 1 query
 }
 ```
 
-**Correct (use relations for eager loading):**
+**Correct (batch with a request-scoped DataLoader):**
 
 ```typescript
-// Use relations option for eager loading
-@Injectable()
-export class OrdersService {
-  async getOrdersWithItems(userId: string): Promise<Order[]> {
-    // Single query with JOIN
-    return this.orderRepo.find({
-      where: { userId },
-      relations: ['items', 'items.product'],
-    });
-  }
-}
-
-// Use QueryBuilder for complex joins
-@Injectable()
-export class UsersService {
-  async getUsersWithPostCounts(): Promise<UserWithPostCount[]> {
-    return this.userRepo
-      .createQueryBuilder('user')
-      .leftJoin('user.posts', 'post')
-      .select('user.id', 'id')
-      .addSelect('user.name', 'name')
-      .addSelect('COUNT(post.id)', 'postCount')
-      .groupBy('user.id')
-      .getRawMany();
-  }
-
-  async getActiveUsersWithPosts(): Promise<User[]> {
-    return this.userRepo
-      .createQueryBuilder('user')
-      .leftJoinAndSelect('user.posts', 'post')
-      .leftJoinAndSelect('post.comments', 'comment')
-      .where('user.isActive = :active', { active: true })
-      .andWhere('post.status = :status', { status: 'published' })
-      .getMany();
-  }
-}
-
-// Use find options for specific fields
-async getOrderSummaries(userId: string): Promise<OrderSummary[]> {
-  return this.orderRepo.find({
-    where: { userId },
-    relations: ['items'],
-    select: {
-      id: true,
-      total: true,
-      status: true,
-      items: {
-        id: true,
-        quantity: true,
-        price: true,
-      },
-    },
-  });
-}
-
-// Use DataLoader for GraphQL to batch and cache queries
+// Use DataLoader for GraphQL to batch and cache per-parent loads
 import DataLoader from 'dataloader';
 
+// modules/users/loaders/user-posts.loader.ts — one instance per request
 @Injectable({ scope: Scope.REQUEST })
-export class PostsLoader {
-  constructor(private postsService: PostsService) {}
+export class UserPostsLoader {
+  constructor(private readonly postsService: PostsService) {}
 
   readonly batchPosts = new DataLoader<string, Post[]>(async (userIds) => {
-    // Single query for all users' posts
+    // One query for every user's posts
     const posts = await this.postsService.findByUserIds([...userIds]);
 
     // Group by userId
@@ -117,23 +54,32 @@ export class PostsLoader {
       postsMap.set(post.userId, userPosts);
     }
 
-    // Return in same order as input
+    // Return in the same order as the input keys (DataLoader contract)
     return userIds.map((id) => postsMap.get(id) || []);
   });
 }
 
-// In resolver
+// In the field resolver — the loader batches every call in the tick into one query
 @ResolveField()
 async posts(@Parent() user: User): Promise<Post[]> {
-  // DataLoader batches multiple calls into single query
-  return this.postsLoader.batchPosts.load(user.id);
+  return this.userPostsLoader.batchPosts.load(user._id.toString());
+}
+
+// For a computed aggregate, compute it in the database, not in a loop
+@Injectable()
+export class UsersService {
+  async getUsersWithPostCounts(): Promise<UserWithPostCount[]> {
+    return this.usersRepository.countPostsByUser();
+    // e.g. a Mongo aggregation: { $project: { postCount: { $size: '$postIds' } } }
+  }
 }
 
 // Enable query logging in development to detect N+1
-TypeOrmModule.forRoot({
-  logging: ['query', 'error'],
-  logger: 'advanced-console',
+MongooseModule.forRoot(uri, {
+  // dev only: log every query so a per-parent query stands out
 });
 ```
 
-Reference: [TypeORM Relations](https://typeorm.io/relations)
+The loader's lifetime and placement are owned by `relations-dataloader` in `nestjs-graphql-structure`; this rule owns making the batch function itself do one query.
+
+Reference: [graphql/dataloader](https://github.com/graphql/dataloader)

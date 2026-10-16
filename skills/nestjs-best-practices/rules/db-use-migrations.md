@@ -2,48 +2,39 @@
 title: Use Database Migrations
 impact: HIGH
 impactDescription: Enables safe, repeatable database schema changes
-tags: database, migrations, typeorm, schema
+tags: database, migrations, schema
 ---
 
 ## Use Database Migrations
 
-Never use `synchronize: true` in production. Use migrations for all schema changes. Migrations provide version control for your database, enable safe rollbacks, and ensure consistency across all environments.
+Never apply schema changes by hand. Use migrations for all schema changes. Migrations provide version control for your database, enable safe rollbacks, and ensure consistency across all environments. The connection and the migrations both live in `infra/database/` — configured once from typed config, never in a feature module or the composition root.
 
-**Incorrect (using synchronize or manual SQL):**
+The examples below use TypeORM. If your project uses Mongoose (see `db-avoid-n-plus-one` and the data rules in `nestjs-graphql-structure`), apply the same principle with its migration tooling — for example `migrate-mongo` — keeping the migrations under `infra/database/migrations/`.
+
+**Incorrect (manual schema changes, no home for migrations):**
 
 ```typescript
-// Use synchronize in production
-TypeOrmModule.forRoot({
-  type: 'postgres',
-  synchronize: true, // DANGEROUS in production!
-  // Can drop columns, tables, or data
-});
-
 // Manual SQL in production
 @Injectable()
 export class DatabaseService {
-  async addColumn(): Promise<void> {
+  async addField(): Promise<void> {
     await this.dataSource.query('ALTER TABLE users ADD COLUMN age INT');
     // No version control, no rollback, inconsistent across envs
   }
 }
 
-// Modify entities without migration
-@Entity()
-export class User {
-  @Column()
-  email: string;
+// Feature module owns the connection
+// modules/users/users.module.ts
+@Module({ imports: [MongooseModule.forRoot(process.env.MONGO_URI)] })
+export class UsersModule {}
 
-  @Column() // Added without migration
-  newField: string; // Will crash in production if synchronize is false
-}
+// migrations/0001-init.ts dumped at the repository root
 ```
 
-**Correct (use migrations for all schema changes):**
+**Correct (one infrastructure module; migrations under infra/database/):**
 
 ```typescript
-// Configure TypeORM for migrations
-// data-source.ts
+// infra/database/data-source.ts — used by the migration CLI
 export const dataSource = new DataSource({
   type: 'postgres',
   host: process.env.DB_HOST,
@@ -52,24 +43,39 @@ export const dataSource = new DataSource({
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
   entities: ['dist/**/*.entity.js'],
-  migrations: ['dist/migrations/*.js'],
-  synchronize: false, // Always false in production
+  migrations: ['dist/infra/database/migrations/*.js'],
+  synchronize: false, // Always false outside local development
   migrationsRun: true, // Run migrations on startup
 });
 
-// app.module.ts
-TypeOrmModule.forRootAsync({
-  inject: [ConfigService],
-  useFactory: (config: ConfigService) => ({
-    type: 'postgres',
-    host: config.get('DB_HOST'),
-    synchronize: config.get('NODE_ENV') === 'development', // Only in dev
-    migrations: ['dist/migrations/*.js'],
-    migrationsRun: true,
-  }),
-});
+// infra/database/database.module.ts — the connection is configured once
+@Module({
+  imports: [
+    TypeOrmModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        type: 'postgres',
+        host: config.get('database.host'),
+        port: config.get('database.port'),
+        username: config.get('database.username'),
+        password: config.get('database.password'),
+        database: config.get('database.name'),
+        synchronize: false, // Only enabled locally, never in production
+        migrations: ['dist/infra/database/migrations/*.js'],
+        migrationsRun: true,
+        autoLoadEntities: true,
+      }),
+    }),
+  ],
+  exports: [TypeOrmModule],
+})
+export class DatabaseModule {}
 
-// migrations/1705312800000-AddUserAge.ts
+// a feature registers only the entities it owns
+@Module({ imports: [TypeOrmModule.forFeature([User])] })
+export class UsersModule {}
+
+// infra/database/migrations/1705312800000-AddUserAge.ts
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
 export class AddUserAge1705312800000 implements MigrationInterface {

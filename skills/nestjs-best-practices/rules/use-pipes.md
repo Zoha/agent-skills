@@ -7,14 +7,14 @@ tags: graphql, pipes, validation, transformation
 
 ## Use Pipes for Input Transformation
 
-Use built-in pipes like `ParseIntPipe`, `ParseUUIDPipe`, and `DefaultValuePipe` for common transformations. Create custom pipes for business-specific transformations. Pipes separate validation/transformation logic from resolvers. Pipes work identically in GraphQL resolvers via `@UsePipes()` decorator.
+Use built-in pipes like `ParseIntPipe`, `ParseUUIDPipe`, and `DefaultValuePipe` for common transformations. Create custom pipes for business-specific transformations. Pipes separate validation/transformation logic from resolvers. Pipes work identically in GraphQL resolvers via `@UsePipes()` decorator. When several arguments form a group (pagination, filters, sorting), put them on an `@ArgsType()` class and let the `ValidationPipe` transform it — do not scatter raw `@Args()` scalars.
 
 **Incorrect (manual type parsing in resolvers):**
 
 ```typescript
 // Manual type parsing in resolvers
 @Resolver(() => User)
-export class UsersResolver {
+export class UsersQueryResolver {
   @Query(() => User)
   async user(@Args('id') id: string): Promise<User> {
     // Manual validation in every resolver
@@ -25,23 +25,11 @@ export class UsersResolver {
     return this.usersService.findOne(uuid);
   }
 
-  @Query(() => [User])
-  async users(
-    @Args('page') page: string,
-    @Args('limit') limit: string,
-  ): Promise<User[]> {
-    // Manual parsing and defaults
-    const pageNum = parseInt(page) || 1;
-    const limitNum = parseInt(limit) || 10;
-    return this.usersService.findAll(pageNum, limitNum);
+  @Query(() => [Product])
+  async search(@Args('price') price: string): Promise<Product[]> {
+    const priceNum = +price; // NaN if invalid, no error
+    return this.productsService.findByPrice(priceNum);
   }
-}
-
-// Type coercion without validation
-@Query(() => [Product])
-async search(@Args('price') price: string): Promise<Product[]> {
-  const priceNum = +price; // NaN if invalid, no error
-  return this.productsService.findByPrice(priceNum);
 }
 ```
 
@@ -50,20 +38,11 @@ async search(@Args('price') price: string): Promise<Product[]> {
 ```typescript
 // Use built-in pipes for common transformations
 @Resolver(() => User)
-export class UsersResolver {
+export class UsersQueryResolver {
   @Query(() => User)
   async user(@Args('id', ParseUUIDPipe) id: string): Promise<User> {
     // id is guaranteed to be a valid UUID
     return this.usersService.findOne(id);
-  }
-
-  @Query(() => [User])
-  async users(
-    @Args('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
-    @Args('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
-  ): Promise<User[]> {
-    // Automatic defaults and type conversion
-    return this.usersService.findAll(page, limit);
   }
 
   @Query(() => [User])
@@ -94,7 +73,7 @@ async reports(
   return this.reportsService.findBetween(from, to);
 }
 
-// Custom transformation pipes
+// Custom transformation pipe
 @Injectable()
 export class NormalizeEmailPipe implements PipeTransform<string, string> {
   transform(value: string): string {
@@ -103,21 +82,11 @@ export class NormalizeEmailPipe implements PipeTransform<string, string> {
   }
 }
 
-// Parse comma-separated values
-@Injectable()
-export class ParseArrayPipe implements PipeTransform<string, string[]> {
-  transform(value: string): string[] {
-    if (!value) return [];
-    return value.split(',').map((v) => v.trim()).filter(Boolean);
-  }
-}
-
 @Query(() => [Product])
 async products(
-  @Args('ids', ParseArrayPipe) ids: string[],
   @Args('email', NormalizeEmailPipe) email: string,
 ): Promise<Product[]> {
-  return this.productsService.findByIds(ids);
+  return this.productsService.findByEmail(email);
 }
 
 // Sanitize HTML input
@@ -135,44 +104,39 @@ app.useGlobalPipes(
     whitelist: true, // Strip non-DTO properties
     transform: true, // Auto-transform to DTO types
     transformOptions: {
-      enableImplicitConversion: true, // Convert query strings to numbers
+      enableImplicitConversion: true,
     },
     forbidNonWhitelisted: true, // Throw on extra properties
   }),
 );
 
-// Input type with transformation decorators
-@InputType()
-export class FindProductsInput {
+// Grouped arguments with transformation decorators — an @ArgsType(), never an @InputType()
+@ArgsType()
+export class FindProductsArgs {
+  @Field(() => Int, { nullable: true })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  page?: number = 1;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(100)
   limit?: number = 10;
 
+  @Field({ nullable: true })
   @IsOptional()
   @Transform(({ value }) => value?.toLowerCase())
   @IsString()
   search?: string;
 
+  @Field(() => [String], { nullable: true })
   @IsOptional()
-  @Transform(({ value }) => value?.split(','))
   @IsArray()
   @IsString({ each: true })
   categories?: string[];
 }
 
 @Query(() => [Product])
-async products(@Args('input') input: FindProductsInput): Promise<Product[]> {
-  // input is already transformed and validated
-  return this.productsService.findAll(input);
+async products(@Args() args: FindProductsArgs): Promise<Product[]> {
+  // args is already transformed and validated
+  return this.productsService.findAll(args);
 }
 
 // Pipe error customization
@@ -206,7 +170,7 @@ Apply pipes at the resolver class level:
 ```typescript
 @Resolver(() => User)
 @UsePipes(ValidationPipe)
-export class UsersResolver {
+export class UsersQueryResolver {
   // All resolver methods now have ValidationPipe applied
 }
 ```

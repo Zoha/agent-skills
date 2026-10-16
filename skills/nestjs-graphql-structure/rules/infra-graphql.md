@@ -11,8 +11,9 @@ tags: graphql, context, dataloader
 
 **Purpose.** The `GraphQLModule` configuration and the per-request context factory live in
 `infra/graphql/`. The module configures the driver, schema generation, and global options; the
-context file builds the object every request sees — the request, the authenticated user, and
-the per-request DataLoaders.
+context file builds the object every request sees — the request and the authenticated user.
+Request-scoped providers such as DataLoaders are **not** built into the context; they are
+request-scoped providers injected where they are used (see `relations-dataloader`).
 
 **Placement.** `src/infra/graphql/graphql.module.ts`, `src/infra/graphql/graphql.context.ts`.
 

@@ -2,19 +2,19 @@
 title: Validate All Input with Input Types and Pipes
 impact: HIGH
 impactDescription: First line of defense against attacks
-tags: graphql, validation, input-type, pipes
+tags: graphql, validation, input-type, args-type, pipes
 ---
 
 ## Validate All Input with Input Types and Pipes
 
-Always validate incoming data using class-validator decorators on GraphQL input types and the global ValidationPipe. Never trust user input. Validate all mutation inputs, query arguments, and field arguments before processing. In GraphQL, use `@InputType()` instead of `@Body()` DTOs.
+Always validate incoming data using class-validator decorators on GraphQL inputs and the global ValidationPipe. Never trust user input. Validate all mutation inputs, query arguments, and field arguments before processing. In GraphQL, use `@InputType()` for inputs and `@ArgsType()` for grouped arguments — never one in place of the other — instead of `@Body()` DTOs.
 
 **Incorrect (trust raw input without validation):**
 
 ```typescript
 // Trust raw input without validation
 @Resolver(() => User)
-export class UsersResolver {
+export class UsersMutationResolver {
   @Mutation(() => User)
   createUser(@Args('input') input: any) {
     // input could contain anything - SQL injection, XSS, etc.
@@ -42,7 +42,7 @@ export class CreateUserInput {
 }
 ```
 
-**Correct (validated input types with global ValidationPipe):**
+**Correct (validated inputs and args with global ValidationPipe):**
 
 ```typescript
 // Enable ValidationPipe globally in main.ts
@@ -60,7 +60,7 @@ async function bootstrap() {
     }),
   );
 
-  await app.listen(3000);
+  await app.listen(process.env.PORT ?? 3000);
 }
 
 // Create well-validated input types
@@ -78,6 +78,7 @@ import {
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
+// dto/create-user.input.ts
 @InputType()
 export class CreateUserInput {
   @Field()
@@ -109,16 +110,16 @@ export class CreateUserInput {
   password: string;
 }
 
-// Query input with defaults and transformation
-@InputType()
-export class FindUsersInput {
+// dto/find-users.args.ts — query arguments are an @ArgsType(), never an @InputType()
+@ArgsType()
+export class FindUsersArgs {
   @Field({ nullable: true })
   @IsOptional()
   @IsString()
   @MaxLength(100)
   search?: string;
 
-  @Field({ nullable: true })
+  @Field(() => Int, { nullable: true })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
@@ -126,7 +127,7 @@ export class FindUsersInput {
   @Max(100)
   limit: number = 20;
 
-  @Field({ nullable: true })
+  @Field(() => Int, { nullable: true })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
@@ -134,30 +135,35 @@ export class FindUsersInput {
   offset: number = 0;
 }
 
-// Argument validation
-@InputType()
-export class UserIdArgs {
+// dto/find-user.args.ts — a single-argument group is still an @ArgsType()
+@ArgsType()
+export class FindUserArgs {
   @Field()
   @IsUUID('4')
   id: string;
 }
 
+// modules/users/resolvers/users.mutation.resolver.ts
 @Resolver(() => User)
-export class UsersResolver {
+export class UsersMutationResolver {
   @Mutation(() => User)
   createUser(@Args('input') input: CreateUserInput): Promise<User> {
     // input is guaranteed to be valid
     return this.usersService.create(input);
   }
+}
 
+// modules/users/resolvers/users.query.resolver.ts
+@Resolver(() => User)
+export class UsersQueryResolver {
   @Query(() => [User])
-  users(@Args('input') input: FindUsersInput): Promise<User[]> {
-    // input.limit is a number, input.search is sanitized
-    return this.usersService.findAll(input);
+  users(@Args() args: FindUsersArgs): Promise<User[]> {
+    // args.limit is a number, args.search is sanitized
+    return this.usersService.findAll(args);
   }
 
   @Query(() => User)
-  user(@Args() args: UserIdArgs): Promise<User> {
+  user(@Args() args: FindUserArgs): Promise<User> {
     // args.id is a valid UUID
     return this.usersService.findById(args.id);
   }

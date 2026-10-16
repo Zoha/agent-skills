@@ -18,8 +18,8 @@ pick one per query and do not mix the two.
 
 **Placement.**
 
-- Shared: `src/common/pagination/paginated.ts` (generic `Paginated<T>` factory) and
-  `page-info.ts`.
+- Shared: `src/common/pagination/paginated.ts` (the generic `Paginated<T>` factory and
+  `PageInfo`).
 - Feature args/filters: `modules/<feature>/dto/<feature>-pagination.args.ts`,
   `filter-<feature>.input.ts`.
 
@@ -88,9 +88,9 @@ export function Paginated<T>(classRef: Type<T>) {
 @ObjectType()
 export class UserConnection extends Paginated(User) {}
 
-// modules/users/dto/search-users.args.ts
+// modules/users/dto/users-pagination.args.ts
 @ArgsType()
-export class SearchUsersArgs {
+export class UsersPaginationArgs {
   @Field(() => Int, { defaultValue: 20 })
   @IsInt() @Min(1) @Max(100)
   first = 20;
@@ -106,7 +106,7 @@ export class SearchUsersArgs {
 
 // modules/users/resolvers/users.query.resolver.ts
 @Query(() => UserConnection)
-users(@Args() args: SearchUsersArgs): Promise<UserConnection> {
+users(@Args() args: UsersPaginationArgs): Promise<UserConnection> {
   return this.usersService.search(args);
 }
 ```
