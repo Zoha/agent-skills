@@ -47,23 +47,28 @@ src/
 │   ├── database/
 │   │   ├── database.module.ts     # DB connection module
 │   │   ├── database.providers.ts  # provider/factory wiring
-│   │   └── migrations/            # DB migrations
+│   │   ├── migrations/            # DB migrations
+│   │   └── seeds/                 # repeatable seed scripts + runner
 │   ├── graphql/
 │   │   ├── graphql.module.ts      # GraphQLModule.forRootAsync + schema config
 │   │   └── graphql.context.ts     # per-request context: request + authenticated user
-│   └── <cache|queue|…>/           # other one-time infra
+│   ├── pubsub/
+│   │   └── pubsub.providers.ts    # shared PubSub provider for subscriptions
+│   └── <cache|queue|…>/           # other one-time infra (queue, cache)
 └── modules/
     ├── <feature>/                 # one folder per bounded context (domain feature)
     │   ├── <feature>.module.ts           # wiring: providers, imports, exports
     │   ├── resolvers/
-    │   │   ├── <feature>.query.resolver.ts      # queries
-    │   │   ├── <feature>.mutation.resolver.ts   # mutations
-    │   │   ├── <type>-<feature>.resolver.ts      # @ResolveField extending another module's type (data owner owns the field)
-    │   │   └── <type>.resolver.ts                # @ResolveField for a nested/computed type of this module
+    │   │   ├── <feature>.query.resolver.ts         # queries
+    │   │   ├── <feature>.mutation.resolver.ts      # mutations
+    │   │   ├── <feature>.subscription.resolver.ts  # subscriptions
+    │   │   ├── <type>-<feature>.resolver.ts         # @ResolveField extending another module's type (data owner owns the field)
+    │   │   └── <type>.resolver.ts                   # @ResolveField for a nested/computed type of this module
     │   ├── services/
     │   │   └── <feature>.service.ts             # domain logic (multiple per module)
     │   ├── repositories/
     │   │   └── <feature>.repository.ts          # data access only
+    │   ├── providers/                           # OPTIONAL: thin wrappers over third-party SDKs
     │   ├── dto/
     │   │   ├── create-<feature>.input.ts        # @InputType (+class-validator)
     │   │   ├── find-<feature>.args.ts           # @Args() class
@@ -72,13 +77,15 @@ src/
     │   │   └── <feature>-status.enum.ts
     │   ├── entities/
     │   │   └── <feature>.entity.ts              # persistence + @ObjectType (merged default)
-    │   ├── models/                              # OPTIONAL: GraphQL-only @ObjectType (split case)
+    │   ├── models/                              # OPTIONAL: GraphQL-only @ObjectType, union/interface types
     │   ├── mappers/                             # OPTIONAL: entity ⟷ model
     │   ├── loaders/
     │   │   └── <feature>.loader.ts              # DataLoader(s) for relations
     │   ├── events/
     │   │   ├── <feature>-<action>.event.ts      # domain event
     │   │   └── <feature>-<action>.listener.ts   # listener
+    │   ├── processors/                          # OPTIONAL: queue processors (e.g. BullMQ @Processor)
+    │   ├── jobs/                                # OPTIONAL: scheduled/cron jobs
     │   ├── exceptions/                          # OPTIONAL: feature-local exception classes
     │   └── guards/                              # OPTIONAL: feature-local guards/decorators
     ├── auth/                      # app-level module: authentication (see struct-auth-feature)

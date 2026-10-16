@@ -1,6 +1,6 @@
 # NestJS GraphQL Application Structure
 
-**Version 1.1.0**
+**Version 1.2.0**
 NestJS GraphQL Structure
 October 2026
 
@@ -13,7 +13,7 @@ October 2026
 
 ## Abstract
 
-File-placement and anatomy guide for NestJS GraphQL applications, designed for AI agents and LLMs. Teaches where every file belongs in a feature-first, code-first codebase — the base structure map plus per-file rules for modules, services, resolvers, inputs, entities, repositories, loaders, events, auth, exceptions, and pagination — each with purpose, responsibilities, and incorrect-vs-correct examples. It also covers how modules connect to resolve GraphQL fields and relations, including module-resolution concerns such as circular dependencies, while deferring behavioral concerns to the nestjs-best-practices skill.
+File-placement and anatomy guide for NestJS GraphQL applications, designed for AI agents and LLMs. Teaches where every file belongs in a feature-first, code-first codebase — the base structure map plus per-file rules for modules, services, resolvers, inputs, entities, repositories, loaders, events, auth, exceptions, pagination, subscriptions, providers, background jobs, scalars, and seeds — each with purpose, responsibilities, and incorrect-vs-correct examples. It also covers how modules connect to resolve GraphQL fields and relations, including module-resolution concerns such as circular dependencies, while deferring behavioral concerns to the nestjs-best-practices skill.
 
 ---
 
@@ -30,16 +30,20 @@ File-placement and anatomy guide for NestJS GraphQL applications, designed for A
    - 2.2 [Export Only the Feature's Public API (Its Services)](#22-export-only-the-feature-s-public-api-its-services-)
    - 2.3 [The Feature Module File](#23-the-feature-module-file)
 3. [Services](#3-services) — **HIGH**
-   - 3.1 [Multiple Focused Services per Module](#31-multiple-focused-services-per-module)
-   - 3.2 [Keep Service Methods Small and Focused](#32-keep-service-methods-small-and-focused)
+   - 3.1 [Keep Queue Processors and Scheduled Jobs with the Feature](#31-keep-queue-processors-and-scheduled-jobs-with-the-feature)
+   - 3.2 [Keep Third-Party Clients in providers/](#32-keep-third-party-clients-in-providers-)
+   - 3.3 [Multiple Focused Services per Module](#33-multiple-focused-services-per-module)
+   - 3.4 [Keep Service Methods Small and Focused](#34-keep-service-methods-small-and-focused)
 4. [GraphQL Resolvers](#4-graphql-resolvers) — **HIGH**
    - 4.1 [Declare Fields on the Type; Resolve Computed Ones in the Resolver](#41-declare-fields-on-the-type-resolve-computed-ones-in-the-resolver)
    - 4.2 [Split Resolvers by Role into resolvers/](#42-split-resolvers-by-role-into-resolvers-)
    - 4.3 [One Resolver File per Type That Has Field Resolvers](#43-one-resolver-file-per-type-that-has-field-resolvers)
+   - 4.4 [Put Subscription Resolvers in resolvers/ with PubSub in infra/](#44-put-subscription-resolvers-in-resolvers-with-pubsub-in-infra-)
 5. [GraphQL Types & Inputs](#5-graphql-types-inputs) — **HIGH**
    - 5.1 [Define @Args Classes in dto/](#51-define-args-classes-in-dto-)
    - 5.2 [Define GraphQL Inputs in dto/](#52-define-graphql-inputs-in-dto-)
    - 5.3 [Paginate List Queries with a Shared Page Type](#53-paginate-list-queries-with-a-shared-page-type)
+   - 5.4 [Place Union and Interface Types with the Module's Types](#54-place-union-and-interface-types-with-the-module-s-types)
 6. [Data Access](#6-data-access) — **MEDIUM-HIGH**
    - 6.1 [Place MongoDB Entities in entities/](#61-place-mongodb-entities-in-entities-)
    - 6.2 [Split models/ and mappers/ When API Differs From Storage](#62-split-models-and-mappers-when-api-differs-from-storage)
@@ -54,11 +58,13 @@ File-placement and anatomy guide for NestJS GraphQL applications, designed for A
    - 8.1 [Put Shared Types in common/types/](#81-put-shared-types-in-common-types-)
    - 8.2 [Put Shared Building Blocks in common/](#82-put-shared-building-blocks-in-common-)
    - 8.3 [Put Typed Configuration in config/](#83-put-typed-configuration-in-config-)
-   - 8.4 [Put Database Setup and Migrations in infra/database/](#84-put-database-setup-and-migrations-in-infra-database-)
-   - 8.5 [Put Schema Directives in common/directives/](#85-put-schema-directives-in-common-directives-)
-   - 8.6 [Put Exceptions in exceptions/](#86-put-exceptions-in-exceptions-)
-   - 8.7 [Put GraphQL Setup in infra/graphql/](#87-put-graphql-setup-in-infra-graphql-)
-   - 8.8 [Use a SharedModule for Cross-Cutting Services](#88-use-a-sharedmodule-for-cross-cutting-services)
+   - 8.4 [Implement Custom Scalars in common/scalars/](#84-implement-custom-scalars-in-common-scalars-)
+   - 8.5 [Put Database Setup and Migrations in infra/database/](#85-put-database-setup-and-migrations-in-infra-database-)
+   - 8.6 [Put Schema Directives in common/directives/](#86-put-schema-directives-in-common-directives-)
+   - 8.7 [Put Exceptions in exceptions/](#87-put-exceptions-in-exceptions-)
+   - 8.8 [Put GraphQL Setup in infra/graphql/](#88-put-graphql-setup-in-infra-graphql-)
+   - 8.9 [Put Seed Scripts in infra/database/seeds/](#89-put-seed-scripts-in-infra-database-seeds-)
+   - 8.10 [Use a SharedModule for Cross-Cutting Services](#810-use-a-sharedmodule-for-cross-cutting-services)
 9. [Conventions & Testing](#9-conventions-testing) — **MEDIUM**
    - 9.1 [Use the Nest CLI Generator, Then Adjust](#91-use-the-nest-cli-generator-then-adjust)
    - 9.2 [Keep Constants and Enums Out of Class Files](#92-keep-constants-and-enums-out-of-class-files)
@@ -197,23 +203,28 @@ src/
 │   ├── database/
 │   │   ├── database.module.ts     # DB connection module
 │   │   ├── database.providers.ts  # provider/factory wiring
-│   │   └── migrations/            # DB migrations
+│   │   ├── migrations/            # DB migrations
+│   │   └── seeds/                 # repeatable seed scripts + runner
 │   ├── graphql/
 │   │   ├── graphql.module.ts      # GraphQLModule.forRootAsync + schema config
 │   │   └── graphql.context.ts     # per-request context: request + authenticated user
-│   └── <cache|queue|…>/           # other one-time infra
+│   ├── pubsub/
+│   │   └── pubsub.providers.ts    # shared PubSub provider for subscriptions
+│   └── <cache|queue|…>/           # other one-time infra (queue, cache)
 └── modules/
     ├── <feature>/                 # one folder per bounded context (domain feature)
     │   ├── <feature>.module.ts           # wiring: providers, imports, exports
     │   ├── resolvers/
-    │   │   ├── <feature>.query.resolver.ts      # queries
-    │   │   ├── <feature>.mutation.resolver.ts   # mutations
-    │   │   ├── <type>-<feature>.resolver.ts      # @ResolveField extending another module's type (data owner owns the field)
-    │   │   └── <type>.resolver.ts                # @ResolveField for a nested/computed type of this module
+    │   │   ├── <feature>.query.resolver.ts         # queries
+    │   │   ├── <feature>.mutation.resolver.ts      # mutations
+    │   │   ├── <feature>.subscription.resolver.ts  # subscriptions
+    │   │   ├── <type>-<feature>.resolver.ts         # @ResolveField extending another module's type (data owner owns the field)
+    │   │   └── <type>.resolver.ts                   # @ResolveField for a nested/computed type of this module
     │   ├── services/
     │   │   └── <feature>.service.ts             # domain logic (multiple per module)
     │   ├── repositories/
     │   │   └── <feature>.repository.ts          # data access only
+    │   ├── providers/                           # OPTIONAL: thin wrappers over third-party SDKs
     │   ├── dto/
     │   │   ├── create-<feature>.input.ts        # @InputType (+class-validator)
     │   │   ├── find-<feature>.args.ts           # @Args() class
@@ -222,13 +233,15 @@ src/
     │   │   └── <feature>-status.enum.ts
     │   ├── entities/
     │   │   └── <feature>.entity.ts              # persistence + @ObjectType (merged default)
-    │   ├── models/                              # OPTIONAL: GraphQL-only @ObjectType (split case)
+    │   ├── models/                              # OPTIONAL: GraphQL-only @ObjectType, union/interface types
     │   ├── mappers/                             # OPTIONAL: entity ⟷ model
     │   ├── loaders/
     │   │   └── <feature>.loader.ts              # DataLoader(s) for relations
     │   ├── events/
     │   │   ├── <feature>-<action>.event.ts      # domain event
     │   │   └── <feature>-<action>.listener.ts   # listener
+    │   ├── processors/                          # OPTIONAL: queue processors (e.g. BullMQ @Processor)
+    │   ├── jobs/                                # OPTIONAL: scheduled/cron jobs
     │   ├── exceptions/                          # OPTIONAL: feature-local exception classes
     │   └── guards/                              # OPTIONAL: feature-local guards/decorators
     ├── auth/                      # app-level module: authentication (see struct-auth-feature)
@@ -271,10 +284,14 @@ full tree, and the linked rule gives the file's purpose and examples.
 | Passport strategy | `modules/auth/strategies/<name>.strategy.ts` | `struct-auth-feature` |
 | Query resolver | `modules/<f>/resolvers/<f>.query.resolver.ts` | `resolver-organization` |
 | Mutation resolver | `modules/<f>/resolvers/<f>.mutation.resolver.ts` | `resolver-organization` |
+| Subscription resolver | `modules/<f>/resolvers/<f>.subscription.resolver.ts` | `resolver-subscriptions` |
 | Cross-module field resolver | `modules/<f>/resolvers/<type>-<f>.resolver.ts` | `relations-owning-module` |
 | Own-type field resolver | `modules/<f>/resolvers/<type>.resolver.ts` | `resolver-per-type` |
 | Domain service | `modules/<f>/services/<f>.service.ts` | `service-single-responsibility` |
 | Custom repository | `modules/<f>/repositories/<f>.repository.ts` | `data-repository` |
+| Third-party provider | `modules/<f>/providers/<vendor>.provider.ts` | `service-external-providers` |
+| Queue processor | `modules/<f>/processors/<f>.processor.ts` | `service-background-jobs` |
+| Scheduled job | `modules/<f>/jobs/<f>.job.ts` | `service-background-jobs` |
 | GraphQL input | `modules/<f>/dto/create-<f>.input.ts` | `type-inputs` |
 | GraphQL args | `modules/<f>/dto/find-<f>.args.ts` | `type-args` |
 | Pagination args | `modules/<f>/dto/<f>-pagination.args.ts` | `type-pagination` |
@@ -282,11 +299,13 @@ full tree, and the linked rule gives the file's purpose and examples.
 | Feature-local exception | `modules/<f>/exceptions/<name>.exception.ts` | `infra-exceptions` |
 | Persistence entity / object type | `modules/<f>/entities/<f>.entity.ts` | `data-entity-mongodb` |
 | GraphQL-only model (split) | `modules/<f>/models/<f>.model.ts` | `data-models-mappers` |
+| GraphQL union / interface | `modules/<f>/models/<name>.union.ts` | `type-unions-interfaces` |
 | Mapper | `modules/<f>/mappers/<f>.mapper.ts` | `data-models-mappers` |
 | DataLoader | `modules/<f>/loaders/<f>.loader.ts` | `relations-dataloader` |
 | Domain event / listener | `modules/<f>/events/` | `relations-events` |
 | Config namespace | `config/` | `infra-config` |
-| Shared guard/filter/interceptor/pipe/scalar | `common/` | `infra-common` |
+| Shared guard/filter/interceptor/pipe | `common/` | `infra-common` |
+| Custom scalar | `common/scalars/<name>.scalar.ts` | `infra-custom-scalars` |
 | Schema directive | `common/directives/<name>.directive.ts` | `infra-directives` |
 | Shared type (context, auth user) | `common/types/<name>.ts` | `infra-common-types` |
 | Shared/base exception | `common/exceptions/<name>.exception.ts` | `infra-exceptions` |
@@ -295,7 +314,10 @@ full tree, and the linked rule gives the file's purpose and examples.
 | Shared service | `common/services/<name>.service.ts` | `infra-shared-module` |
 | Shared module | `common/shared.module.ts` | `infra-shared-module` |
 | GraphQL setup / context | `infra/graphql/` | `infra-graphql` |
+| PubSub provider | `infra/pubsub/` | `resolver-subscriptions` |
 | DB setup / migrations | `infra/database/` | `infra-database` |
+| Seed script | `infra/database/seeds/<name>.seed.ts` | `infra-seeds` |
+| Queue setup | `infra/queue/` | `service-background-jobs` |
 | Bootstrap | `main.ts` | `module-bootstrap` |
 | Composition root | `app.module.ts` | `module-bootstrap` |
 | Generated SDL | path from `autoSchemaFile` | `struct-schema-artifact` |
@@ -681,7 +703,163 @@ Reference: [NestJS Modules](https://docs.nestjs.com/modules)
 
 **Section Impact: HIGH**
 
-### 3.1 Multiple Focused Services per Module
+### 3.1 Keep Queue Processors and Scheduled Jobs with the Feature
+
+**Impact: MEDIUM-HIGH** — producers in services, consumers in the owning feature
+
+**Purpose.** Long-running or scheduled work runs outside the request: enqueue a job from the
+service that owns the action, and process it in the feature that owns the data the job touches.
+The queue connection is one-time infrastructure in `infra/queue/`; the processors and scheduled
+jobs are feature-local providers, because they inject the feature's own services. This keeps the
+producer/consumer split clean and the processors unit-testable.
+
+**Placement.**
+
+- Queue connection/registration: `src/infra/queue/queue.module.ts`.
+- Queue processor: `modules/<feature>/processors/<feature>.processor.ts` (class `<Feature>Processor`).
+- Scheduled/cron job: `modules/<feature>/jobs/<feature>.job.ts` (class `<Feature>Job`).
+- Producer: a method on the feature's service (it holds the queue handle).
+
+**Responsibilities.**
+
+- Register the queue connection once, in `infra/queue/`.
+- Enqueue from the service that owns the state change.
+- Process in the feature that owns the affected data, injecting that feature's services.
+
+**Never.**
+
+- Do long-running work inline in a resolver or on the request path.
+- Process a feature's jobs from an unrelated module or from `infra/`.
+- Register the queue connection per feature.
+
+**Incorrect (a minutes-long job inline in the request):**
+
+```typescript
+// modules/reports/resolvers/reports.mutation.resolver.ts
+@Mutation(() => Report)
+async generateReport(@Args('input') input: ReportInput) {
+  const data = await this.fetchHugeDataset(input); // blocks the request for minutes
+  return this.buildReport(data);
+}
+```
+
+Why it is wrong: a minutes-long task blocks the request, and there is no retry, tracking, or
+isolation.
+
+**Correct (enqueue from the service, process in the owning feature):**
+
+```typescript
+// services/reports.service.ts — producer
+@Injectable()
+export class ReportsService {
+  constructor(@InjectQueue('reports') private readonly reportsQueue: Queue) {}
+
+  async requestReport(input: ReportInput): Promise<{ jobId: string }> {
+    const job = await this.reportsQueue.add('generate', input);
+    return { jobId: job.id };
+  }
+}
+
+// modules/reports/processors/reports.processor.ts — consumer in the owning feature
+@Processor('reports')
+export class ReportsProcessor {
+  constructor(private readonly reportsService: ReportsService) {}
+
+  @Process('generate')
+  async generate(job: Job<ReportInput>): Promise<void> {
+    await this.reportsService.buildReport(job.data);
+  }
+}
+```
+
+Why it is right: the request returns immediately with a job id, the consumer lives with the data
+it touches, and the connection is configured once in `infra/queue/`.
+
+Reference: [NestJS Queues](https://docs.nestjs.com/techniques/queues) | [NestJS Task Scheduling](https://docs.nestjs.com/techniques/task-scheduling)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `micro-use-queues`.
+
+---
+
+### 3.2 Keep Third-Party Clients in providers/
+
+**Impact: MEDIUM-HIGH** — vendor SDKs are wrapped behind a thin, injectable provider
+
+**Purpose.** A feature that talks to an external system — a payment gateway, object storage, a
+mailer, an SMS or analytics API — wraps that vendor SDK in a thin provider. Providers live in the
+feature's `providers/` folder, next to the services that use them, so the vendor's types and error
+shapes stay at the edge and the feature's services depend on a narrow, mockable wrapper. Business
+logic stays in `services/`; the provider only translates.
+
+**Placement.** `modules/<feature>/providers/<vendor>.provider.ts` (class `<Vendor>Provider`).
+Configuration is read from `config/` (see `infra-config`), never hardcoded.
+
+**Responsibilities.**
+
+- Wrap one external system per file, exposing intention-revealing methods.
+- Translate vendor errors into domain errors (see `infra-exceptions`).
+- Be injectable so tests can substitute a fake.
+
+**Never.**
+
+- Call a vendor SDK directly from a service or resolver.
+- Leak a vendor-specific type or error shape into the feature's services' contract.
+- Hardcode credentials or endpoints — read typed config.
+
+**Incorrect (vendor SDK called directly from business logic):**
+
+```typescript
+// services/payments.service.ts
+@Injectable()
+export class PaymentsService {
+  async charge(order: Order) {
+    const stripe = new Stripe(process.env.STRIPE_KEY); // SDK + secret inside the service
+    const res = await stripe.paymentIntents.create({ /* ... */ }); // vendor shapes leak inward
+    return res.id;
+  }
+}
+```
+
+Why it is wrong: the vendor SDK and its error shapes leak into business logic, the secret is read
+ad hoc, and the service cannot be tested without the vendor.
+
+**Correct (a thin provider wraps the vendor; the service depends on it):**
+
+```typescript
+// modules/payments/providers/stripe.provider.ts
+@Injectable()
+export class StripeProvider {
+  private readonly stripe: Stripe;
+
+  constructor(config: ConfigService) {
+    this.stripe = new Stripe(config.get<string>('payment.stripeKey'));
+  }
+
+  async charge(amount: number, currency: string): Promise<{ id: string }> {
+    const intent = await this.stripe.paymentIntents.create({ amount, currency });
+    return { id: intent.id };
+  }
+}
+
+// services/payments.service.ts
+@Injectable()
+export class PaymentsService {
+  constructor(private readonly stripe: StripeProvider) {}
+
+  async charge(order: Order): Promise<void> {
+    await this.stripe.charge(order.total, order.currency);
+  }
+}
+```
+
+Why it is right: the vendor stays at the edge, the service depends on a narrow provider that is
+trivial to mock, and the secret comes from typed config.
+
+Reference: [NestJS Providers](https://docs.nestjs.com/providers) | [NestJS Custom Providers](https://docs.nestjs.com/fundamentals/custom-providers)
+
+---
+
+### 3.3 Multiple Focused Services per Module
 
 **Impact: HIGH** — split by responsibility; a module usually has several services
 
@@ -766,7 +944,7 @@ Reference: [NestJS Providers](https://docs.nestjs.com/providers)
 
 ---
 
-### 3.2 Keep Service Methods Small and Focused
+### 3.4 Keep Service Methods Small and Focused
 
 **Impact: HIGH** — easier to read, test, and change
 
@@ -1134,6 +1312,86 @@ Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
 
 ---
 
+### 4.4 Put Subscription Resolvers in resolvers/ with PubSub in infra/
+
+**Impact: HIGH** — one place for real-time entry points and the PubSub provider
+
+**Purpose.** A GraphQL subscription is a third resolver role alongside query and mutation.
+Subscription resolvers live in the feature's `resolvers/` folder, named by role, and stay thin —
+they subscribe to a topic and map the payload. The `PubSub` engine they use is one-time
+infrastructure: a single provider in `infra/pubsub/`, swapping the in-memory engine for a Redis
+one in production.
+
+**Placement.**
+
+- Subscription resolver: `modules/<feature>/resolvers/<feature>.subscription.resolver.ts`
+  (class `<Feature>SubscriptionResolver`).
+- PubSub provider: `src/infra/pubsub/pubsub.providers.ts`.
+- WebSocket/subscription transport option: `infra/graphql/graphql.module.ts` (the `subscriptions`
+  config).
+
+**Responsibilities.**
+
+- Declare `@Subscription(() => Type)` methods that subscribe to a named topic.
+- Emit to the same topic from the owning service (see `relations-events` for the emit-side pattern).
+- Provide one `PubSub` instance in `infra/pubsub/`, injected where needed.
+
+**Never.**
+
+- Emit events from a subscription resolver — emit from the service that owns the state change.
+- Create a `new PubSub()` per resolver or per feature; it is one shared provider.
+- Put a subscription resolver in `common/` or inside a service.
+
+**Incorrect (a PubSub instance per feature, topic emitted from the resolver):**
+
+```typescript
+// modules/orders/resolvers/orders.subscription.resolver.ts
+const pubSub = new PubSub(); // a second instance — events never reach other instances
+
+@Subscription(() => Order)
+orderCreated() {
+  pubSub.publish('order.created', { orderCreated: {} }); // emitting from the resolver
+  return pubSub.asyncIterableIterator('order.created');
+}
+```
+
+Why it is wrong: each `new PubSub()` is isolated, so the subscription may never receive the event,
+and the resolver emits instead of the service that changed the state.
+
+**Correct (one shared PubSub in infra/, thin subscription resolver):**
+
+```typescript
+// infra/pubsub/pubsub.providers.ts
+export const PUB_SUB = 'PUB_SUB';
+export const pubSubProvider: Provider = {
+  provide: PUB_SUB,
+  useValue: new PubSub(), // swap this one provider for a Redis-backed PubSub in production
+};
+
+// modules/orders/resolvers/orders.subscription.resolver.ts
+@Resolver(() => Order)
+export class OrdersSubscriptionResolver {
+  constructor(@Inject(PUB_SUB) private readonly pubSub: PubSub) {}
+
+  @Subscription(() => Order, { name: 'orderCreated' })
+  orderCreated() {
+    return this.pubSub.asyncIterableIterator('order.created');
+  }
+}
+
+// modules/orders/services/orders.service.ts — the state owner emits
+this.pubSub.publish('order.created', { orderCreated: order });
+```
+
+Why it is right: one PubSub instance is shared across the app, the resolver only subscribes, and
+the state-owning service emits.
+
+Reference: [NestJS GraphQL Subscriptions](https://docs.nestjs.com/graphql/subscriptions) | [NestJS GraphQL Other features](https://docs.nestjs.com/graphql/other-features)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `arch-use-events`.
+
+---
+
 ## 5. GraphQL Types & Inputs
 
 **Section Impact: HIGH**
@@ -1402,6 +1660,77 @@ When to use offset instead: a small, bounded, non-growing list where `page`/`lim
 Choose per query and stay consistent within it; see `type-args` for the offset-style args shape.
 
 Reference: [GraphQL Pagination](https://graphql.org/learn/pagination/) | [Relay Cursor Connections](https://relay.dev/graphql/connections.htm) | [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
+
+---
+
+### 5.4 Place Union and Interface Types with the Module's Types
+
+**Impact: MEDIUM-HIGH** — polymorphic types have one home and one resolveType
+
+**Purpose.** Abstract GraphQL types — interfaces and unions — are declared in code-first NestJS
+with `@InterfaceType()` or `createUnionType()`. They are GraphQL-only types, so they live with the
+module's other GraphQL types (`models/` in the split case, or `entities/` in the merged case), and
+their `resolveType` is implemented in one place. They are not put in `common/` and not re-declared
+per resolver.
+
+**Placement.** `modules/<feature>/models/<name>.interface.ts` and `models/<name>.union.ts` (or the
+module's type folder in the merged case). The `resolveType` implementation lives with the type —
+in `models/` for the union/interface, or in `resolvers/<name>.resolver.ts` when it needs a service.
+
+**Responsibilities.**
+
+- Declare each interface or union once, in the module that owns the types it groups.
+- Implement `resolveType` centrally, in one place.
+- Keep the concrete `@ObjectType`s in the same module.
+
+**Never.**
+
+- Declare a union or interface inline inside a query resolver.
+- Put a feature's union or interface in `common/` — that couples `common/` to a feature.
+- Re-implement `resolveType` in more than one place.
+
+**Incorrect (union declared inline, resolveType scattered):**
+
+```typescript
+// modules/search/resolvers/search.query.resolver.ts
+const SearchResult = createUnionType({ name: 'SearchResult', types: () => [User, Post] });
+
+@Query(() => [SearchResult])
+search() { /* ... */ }
+// resolveType handled ad hoc in several resolvers
+```
+
+Why it is wrong: the union has no stable home, so it is rebuilt wherever it is needed and the
+`resolveType` logic drifts.
+
+**Correct (declared once with the module's types, resolved in one place):**
+
+```typescript
+// modules/search/models/search-result.union.ts
+export const SearchResult = createUnionType({
+  name: 'SearchResult',
+  types: () => [User, Post] as const,
+  resolveType: (value) => (value.kind === 'user' ? User : Post),
+});
+
+// modules/search/models/searchable.interface.ts
+@InterfaceType({ resolveType: (value) => (value.kind === 'user' ? User : Post) })
+export abstract class Searchable {
+  @Field(() => ID)
+  id: string;
+}
+
+// modules/search/resolvers/search.query.resolver.ts — just uses it
+@Query(() => [SearchResult])
+search(@Args() args: SearchArgs): Promise<SearchResult[]> {
+  return this.searchService.search(args);
+}
+```
+
+Why it is right: the polymorphic type has one home and one `resolveType`, and the concrete types
+sit beside it in the same module.
+
+Reference: [NestJS GraphQL Unions and Enums](https://docs.nestjs.com/graphql/unions-and-enums) | [NestJS GraphQL Interfaces](https://docs.nestjs.com/graphql/interfaces)
 
 ---
 
@@ -2261,7 +2590,78 @@ Reference: [NestJS Configuration](https://docs.nestjs.com/techniques/configurati
 
 ---
 
-### 8.4 Put Database Setup and Migrations in infra/database/
+### 8.4 Implement Custom Scalars in common/scalars/
+
+**Impact: MEDIUM** — scalars are defined once and registered once
+
+**Purpose.** A custom scalar (a `Date`, a `JSON` blob, an opaque id) is one definition shared by
+every feature that references it. It lives in `common/scalars/` and is registered once at
+bootstrap. This avoids re-declaring a `DateScalar` per feature and keeps the schema's scalar set
+consistent.
+
+**Placement.** `src/common/scalars/<name>.scalar.ts` (class `<Name>Scalar`). Registered once, as a
+provider available to the schema builder (for example via `common/shared.module.ts`).
+
+**Responsibilities.**
+
+- Define the scalar once, implementing `CustomScalar` (`serialize` / `parseValue` / `parseLiteral`).
+- Register it once.
+- Keep it feature-agnostic.
+
+**Never.**
+
+- Re-declare the same scalar in more than one feature.
+- Register the same scalar in several modules.
+- Put feature-specific parsing in a shared scalar.
+
+**Incorrect (a Date scalar re-declared per feature):**
+
+```typescript
+// modules/users/date.scalar.ts
+@Scalar('Date', () => Date)
+export class DateScalar implements CustomScalar<number, Date> { /* copy 1 */ }
+
+// modules/orders/date.scalar.ts
+@Scalar('Date', () => Date)
+export class DateScalar implements CustomScalar<number, Date> { /* copy 2, drifting */ }
+```
+
+Why it is wrong: the same scalar exists twice and drifts, and the schema has no single definition.
+
+**Correct (one shared scalar, provided once):**
+
+```typescript
+// common/scalars/date.scalar.ts
+@Scalar('Date', () => Date)
+export class DateScalar implements CustomScalar<number, Date> {
+  description = 'Date custom scalar type';
+
+  serialize(value: Date): number {
+    return value.getTime();
+  }
+
+  parseValue(value: number): Date {
+    return new Date(value);
+  }
+
+  parseLiteral(ast: ValueNode): Date | null {
+    return ast.kind === Kind.INT ? new Date(parseInt(ast.value, 10)) : null;
+  }
+}
+
+// common/shared.module.ts — provided once, so the schema builder registers it
+@Module({ providers: [DateScalar], exports: [DateScalar] })
+export class SharedModule {}
+```
+
+Why it is right: the scalar has one definition and one registration point, and every feature that
+uses `Date` shares it.
+
+Reference: [NestJS GraphQL Scalars](https://docs.nestjs.com/graphql/scalars) | [NestJS GraphQL Other features](https://docs.nestjs.com/graphql/other-features)
+
+---
+
+### 8.5 Put Database Setup and Migrations in infra/database/
 
 **Impact: MEDIUM** — the connection is configured once
 
@@ -2324,7 +2724,7 @@ Reference: [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb)
 
 ---
 
-### 8.5 Put Schema Directives in common/directives/
+### 8.6 Put Schema Directives in common/directives/
 
 **Impact: MEDIUM** — GraphQL schema directives differ from param decorators
 
@@ -2388,7 +2788,7 @@ Reference: [NestJS GraphQL Directives](https://docs.nestjs.com/graphql/directive
 
 ---
 
-### 8.6 Put Exceptions in exceptions/
+### 8.7 Put Exceptions in exceptions/
 
 **Impact: MEDIUM-HIGH** — one home for shared and feature-local error types
 
@@ -2462,7 +2862,7 @@ Reference: [NestJS Exception Filters](https://docs.nestjs.com/exception-filters)
 
 ---
 
-### 8.7 Put GraphQL Setup in infra/graphql/
+### 8.8 Put GraphQL Setup in infra/graphql/
 
 **Impact: MEDIUM** — one place configures the server and its context
 
@@ -2532,7 +2932,63 @@ Reference: [NestJS GraphQL Quick Start](https://docs.nestjs.com/graphql/quick-st
 
 ---
 
-### 8.8 Use a SharedModule for Cross-Cutting Services
+### 8.9 Put Seed Scripts in infra/database/seeds/
+
+**Impact: MEDIUM** — repeatable seed data has one home and one entry point
+
+**Purpose.** Seed data — the baseline rows a fresh environment needs for local development,
+demos, or tests — is a runnable concern, not application code. Seed scripts live beside migrations
+in `infra/database/seeds/`, are idempotent, and are run through a single documented entry point.
+They are never triggered from the request path or from a feature module's lifecycle.
+
+**Placement.** `src/infra/database/seeds/<name>.seed.ts`, with a runner such as
+`seeds/run-seeds.ts` (or an npm script) as the one entry point.
+
+**Responsibilities.**
+
+- Keep each seed script focused and idempotent (safe to run twice).
+- Read connection details from `config/`, not hardcoded.
+- Provide one documented way to run all seeds.
+
+**Never.**
+
+- Seed from a feature module or a resolver.
+- Ship non-idempotent seeds that duplicate rows on every run.
+- Hardcode credentials in a seed script.
+
+**Incorrect (seed data created in application code on every startup):**
+
+```typescript
+// modules/users/users.module.ts
+async onModuleInit() {
+  await this.usersRepository.create({ email: 'admin@example.com' }); // runs on every boot
+}
+```
+
+Why it is wrong: seeding happens in application code on every start, duplicates rows, and cannot
+be run or skipped deliberately.
+
+**Correct (one idempotent seed script behind a runner):**
+
+```typescript
+// infra/database/seeds/admin-user.seed.ts
+export async function seedAdminUser(users: UsersRepository): Promise<void> {
+  const existing = await users.findByEmail('admin@example.com');
+  if (existing) return; // idempotent
+  await users.create({ email: 'admin@example.com', roles: ['admin'] });
+}
+
+// infra/database/seeds/run-seeds.ts — the single entry point
+// `npm run seed` runs every seed script once, against the configured database
+```
+
+Why it is right: seed data has one home, is idempotent, and runs only when asked.
+
+Reference: [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb) | [migrate-mongo](https://github.com/seppevs/migrate-mongo)
+
+---
+
+### 8.10 Use a SharedModule for Cross-Cutting Services
 
 **Impact: MEDIUM-HIGH** — one home for shared providers; explicit by default
 
@@ -2803,6 +3259,12 @@ Why it is wrong: the filename does not say what the file is or where it belongs.
 | Loader | `<feature>.loader.ts` | `<Feature>Loader` |
 | Event | `<feature>-<action>.event.ts` | `<Feature><Action>Event` |
 | Listener | `<feature>-<action>.listener.ts` | `<Feature><Action>Listener` |
+| Subscription resolver | `<feature>.subscription.resolver.ts` | `<Feature>SubscriptionResolver` |
+| Provider (third-party client) | `<vendor>.provider.ts` | `<Vendor>Provider` |
+| Queue processor | `<feature>.processor.ts` | `<Feature>Processor` |
+| Scheduled job | `<feature>.job.ts` | `<Feature>Job` |
+| Custom scalar | `<name>.scalar.ts` | `<Name>Scalar` |
+| Union / interface type | `<name>.union.ts` / `<name>.interface.ts` | — |
 | Passport strategy | `<name>.strategy.ts` | `<Name>Strategy` |
 | Exception | `<name>.exception.ts` | `<Name>Exception` |
 | Schema directive | `<name>.directive.ts` | `<Name>Directive` |

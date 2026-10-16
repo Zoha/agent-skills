@@ -54,6 +54,12 @@ Why it is wrong: the filename does not say what the file is or where it belongs.
 | Loader | `<feature>.loader.ts` | `<Feature>Loader` |
 | Event | `<feature>-<action>.event.ts` | `<Feature><Action>Event` |
 | Listener | `<feature>-<action>.listener.ts` | `<Feature><Action>Listener` |
+| Subscription resolver | `<feature>.subscription.resolver.ts` | `<Feature>SubscriptionResolver` |
+| Provider (third-party client) | `<vendor>.provider.ts` | `<Vendor>Provider` |
+| Queue processor | `<feature>.processor.ts` | `<Feature>Processor` |
+| Scheduled job | `<feature>.job.ts` | `<Feature>Job` |
+| Custom scalar | `<name>.scalar.ts` | `<Name>Scalar` |
+| Union / interface type | `<name>.union.ts` / `<name>.interface.ts` | — |
 | Passport strategy | `<name>.strategy.ts` | `<Name>Strategy` |
 | Exception | `<name>.exception.ts` | `<Name>Exception` |
 | Schema directive | `<name>.directive.ts` | `<Name>Directive` |

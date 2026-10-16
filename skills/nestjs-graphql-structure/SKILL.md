@@ -4,7 +4,7 @@ description: Application structure and file-placement guide for NestJS GraphQL (
 license: MIT
 metadata:
   author: Zoha
-  version: "1.1.0"
+  version: "1.2.0"
 ---
 
 # NestJS GraphQL Structure
@@ -60,6 +60,8 @@ Reference these guidelines when:
 
 ### 3. Services (HIGH)
 
+- `service-background-jobs` - Keep Queue Processors and Scheduled Jobs with the Feature
+- `service-external-providers` - Keep Third-Party Clients in providers/
 - `service-single-responsibility` - Multiple Focused Services per Module
 - `service-small-focused-methods` - Keep Service Methods Small and Focused
 
@@ -68,12 +70,14 @@ Reference these guidelines when:
 - `resolver-computed-fields` - Declare Fields on the Type; Resolve Computed Ones in the Resolver
 - `resolver-organization` - Split Resolvers by Role into resolvers/
 - `resolver-per-type` - One Resolver File per Type That Has Field Resolvers
+- `resolver-subscriptions` - Put Subscription Resolvers in resolvers/ with PubSub in infra/
 
 ### 5. GraphQL Types & Inputs (HIGH)
 
 - `type-args` - Define @Args Classes in dto/
 - `type-inputs` - Define GraphQL Inputs in dto/
 - `type-pagination` - Paginate List Queries with a Shared Page Type
+- `type-unions-interfaces` - Place Union and Interface Types with the Module's Types
 
 ### 6. Data Access (MEDIUM-HIGH)
 
@@ -94,10 +98,12 @@ Reference these guidelines when:
 - `infra-common-types` - Put Shared Types in common/types/
 - `infra-common` - Put Shared Building Blocks in common/
 - `infra-config` - Put Typed Configuration in config/
+- `infra-custom-scalars` - Implement Custom Scalars in common/scalars/
 - `infra-database` - Put Database Setup and Migrations in infra/database/
 - `infra-directives` - Put Schema Directives in common/directives/
 - `infra-exceptions` - Put Exceptions in exceptions/
 - `infra-graphql` - Put GraphQL Setup in infra/graphql/
+- `infra-seeds` - Put Seed Scripts in infra/database/seeds/
 - `infra-shared-module` - Use a SharedModule for Cross-Cutting Services
 
 ### 9. Conventions & Testing (MEDIUM)
