@@ -161,7 +161,7 @@ src/
 │   │   └── migrations/            # DB migrations
 │   ├── graphql/
 │   │   ├── graphql.module.ts      # GraphQLModule.forRootAsync + schema config
-│   │   └── graphql.context.ts     # per-request context: user + DataLoaders
+│   │   └── graphql.context.ts     # per-request context: request + authenticated user
 │   └── <cache|queue|…>/           # other one-time infra
 └── modules/
     └── <feature>/                 # one folder per bounded context
@@ -303,3 +303,18 @@ adding a new file to the map together with its rule.
   cross-reference it.
 - The section taxonomy and index explicitly reserve space for **module-resolution rules**
   (§2.1) in `module-` and `relations-`, even when none exist yet.
+
+## 14. Implementation note (2026-10-16)
+
+Implemented as v1.1.0 (30 → 36 rules). Six rules were added beyond the initial deliverable,
+covering real-project structure gaps: `struct-auth-feature`, `struct-module-kinds`,
+`infra-exceptions`, `infra-common-types`, `infra-directives`, and `type-pagination`.
+
+- **Pagination policy.** Cursor/Relay connections are the default (`type-pagination`); offset
+  (`page`/`limit`) is allowed only for small, bounded lists. `type-args` now cross-references
+  `type-pagination` for this reason.
+- **DataLoader scope.** This supersedes the §7 tree comment. DataLoaders are **request-scoped
+  providers** injected where used (see `infra-graphql` and `relations-dataloader`), not built into
+  the GraphQL context object.
+- **Base map additions.** `common/{constants,directives,exceptions,pagination,types}/`, app-level
+  modules (`auth/`, `health/`), and feature `exceptions/` — all reflected in `struct-canonical-layout`.

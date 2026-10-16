@@ -77,4 +77,7 @@ users(@Args() args: FindUsersArgs) {
 Why it is right: the argument group is one validated, reusable, named type with sensible
 defaults, and the resolver stays a one-line translation.
 
+For a list query that can grow, prefer cursor arguments (`first`/`after`) — see `type-pagination`.
+The `page`/`limit` shape above is the offset alternative, kept for small, bounded lists.
+
 Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
