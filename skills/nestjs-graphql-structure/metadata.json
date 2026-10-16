@@ -1,9 +1,9 @@
 {
   "title": "NestJS GraphQL Application Structure",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "organization": "NestJS GraphQL Structure",
   "date": "October 2026",
-  "abstract": "File-placement and anatomy guide for NestJS GraphQL applications, designed for AI agents and LLMs. Teaches where every file belongs in a feature-first, code-first codebase — the base structure map plus per-file rules for modules, services, resolvers, inputs, entities, repositories, loaders, and events — each with purpose, responsibilities, and incorrect-vs-correct examples. It also covers how modules connect to resolve GraphQL fields and relations, including module-resolution concerns such as circular dependencies, while deferring behavioral concerns to the nestjs-best-practices skill.",
+  "abstract": "File-placement and anatomy guide for NestJS GraphQL applications, designed for AI agents and LLMs. Teaches where every file belongs in a feature-first, code-first codebase — the base structure map plus per-file rules for modules, services, resolvers, inputs, entities, repositories, loaders, events, auth, exceptions, and pagination — each with purpose, responsibilities, and incorrect-vs-correct examples. It also covers how modules connect to resolve GraphQL fields and relations, including module-resolution concerns such as circular dependencies, while deferring behavioral concerns to the nestjs-best-practices skill.",
   "references": [
     "https://docs.nestjs.com/modules",
     "https://docs.nestjs.com/graphql/resolvers",

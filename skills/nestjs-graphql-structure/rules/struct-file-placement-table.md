@@ -18,6 +18,9 @@ full tree, and the linked rule gives the file's purpose and examples.
 | File kind | Location | Rule |
 |-----------|----------|------|
 | Feature module | `modules/<f>/<f>.module.ts` | `module-feature-module` |
+| App-level module (auth, health) | `modules/<name>/<name>.module.ts` | `struct-module-kinds` |
+| Auth feature module | `modules/auth/auth.module.ts` | `struct-auth-feature` |
+| Passport strategy | `modules/auth/strategies/<name>.strategy.ts` | `struct-auth-feature` |
 | Query resolver | `modules/<f>/resolvers/<f>.query.resolver.ts` | `resolver-organization` |
 | Mutation resolver | `modules/<f>/resolvers/<f>.mutation.resolver.ts` | `resolver-organization` |
 | Cross-module field resolver | `modules/<f>/resolvers/<type>-<f>.resolver.ts` | `relations-owning-module` |
@@ -26,7 +29,9 @@ full tree, and the linked rule gives the file's purpose and examples.
 | Custom repository | `modules/<f>/repositories/<f>.repository.ts` | `data-repository` |
 | GraphQL input | `modules/<f>/dto/create-<f>.input.ts` | `type-inputs` |
 | GraphQL args | `modules/<f>/dto/find-<f>.args.ts` | `type-args` |
+| Pagination args | `modules/<f>/dto/<f>-pagination.args.ts` | `type-pagination` |
 | Constants / enums | `modules/<f>/constants/` | `conventions-constants-enums` |
+| Feature-local exception | `modules/<f>/exceptions/<name>.exception.ts` | `infra-exceptions` |
 | Persistence entity / object type | `modules/<f>/entities/<f>.entity.ts` | `data-entity-mongodb` |
 | GraphQL-only model (split) | `modules/<f>/models/<f>.model.ts` | `data-models-mappers` |
 | Mapper | `modules/<f>/mappers/<f>.mapper.ts` | `data-models-mappers` |
@@ -34,6 +39,11 @@ full tree, and the linked rule gives the file's purpose and examples.
 | Domain event / listener | `modules/<f>/events/` | `relations-events` |
 | Config namespace | `config/` | `infra-config` |
 | Shared guard/filter/interceptor/pipe/scalar | `common/` | `infra-common` |
+| Schema directive | `common/directives/<name>.directive.ts` | `infra-directives` |
+| Shared type (context, auth user) | `common/types/<name>.ts` | `infra-common-types` |
+| Shared/base exception | `common/exceptions/<name>.exception.ts` | `infra-exceptions` |
+| Cross-cutting constant / enum | `common/constants/` | `conventions-constants-enums` |
+| Shared page types | `common/pagination/` | `type-pagination` |
 | Shared service | `common/services/<name>.service.ts` | `infra-shared-module` |
 | Shared module | `common/shared.module.ts` | `infra-shared-module` |
 | GraphQL setup / context | `infra/graphql/` | `infra-graphql` |

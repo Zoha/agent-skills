@@ -1,6 +1,6 @@
 # NestJS GraphQL Application Structure
 
-**Version 1.0.0**
+**Version 1.1.0**
 NestJS GraphQL Structure
 October 2026
 
@@ -13,16 +13,18 @@ October 2026
 
 ## Abstract
 
-File-placement and anatomy guide for NestJS GraphQL applications, designed for AI agents and LLMs. Teaches where every file belongs in a feature-first, code-first codebase — the base structure map plus per-file rules for modules, services, resolvers, inputs, entities, repositories, loaders, and events — each with purpose, responsibilities, and incorrect-vs-correct examples. It also covers how modules connect to resolve GraphQL fields and relations, including module-resolution concerns such as circular dependencies, while deferring behavioral concerns to the nestjs-best-practices skill.
+File-placement and anatomy guide for NestJS GraphQL applications, designed for AI agents and LLMs. Teaches where every file belongs in a feature-first, code-first codebase — the base structure map plus per-file rules for modules, services, resolvers, inputs, entities, repositories, loaders, events, auth, exceptions, and pagination — each with purpose, responsibilities, and incorrect-vs-correct examples. It also covers how modules connect to resolve GraphQL fields and relations, including module-resolution concerns such as circular dependencies, while deferring behavioral concerns to the nestjs-best-practices skill.
 
 ---
 
 ## Table of Contents
 
 1. [Application Structure](#1-application-structure) — **CRITICAL**
-   - 1.1 [Canonical Application Structure](#11-canonical-application-structure)
-   - 1.2 [File Placement Table](#12-file-placement-table)
-   - 1.3 [Locate and Policy the Generated Schema Artifact](#13-locate-and-policy-the-generated-schema-artifact)
+   - 1.1 [Keep Authentication in Its Own Feature Module](#11-keep-authentication-in-its-own-feature-module)
+   - 1.2 [Canonical Application Structure](#12-canonical-application-structure)
+   - 1.3 [File Placement Table](#13-file-placement-table)
+   - 1.4 [Distinguish Domain Features from App-Level Modules](#14-distinguish-domain-features-from-app-level-modules)
+   - 1.5 [Locate and Policy the Generated Schema Artifact](#15-locate-and-policy-the-generated-schema-artifact)
 2. [Modules & Bootstrap](#2-modules-bootstrap) — **CRITICAL**
    - 2.1 [Keep main.ts and app.module.ts Thin](#21-keep-main-ts-and-app-module-ts-thin)
    - 2.2 [Export Only the Feature's Public API (Its Services)](#22-export-only-the-feature-s-public-api-its-services-)
@@ -37,6 +39,7 @@ File-placement and anatomy guide for NestJS GraphQL applications, designed for A
 5. [GraphQL Types & Inputs](#5-graphql-types-inputs) — **HIGH**
    - 5.1 [Define @Args Classes in dto/](#51-define-args-classes-in-dto-)
    - 5.2 [Define GraphQL Inputs in dto/](#52-define-graphql-inputs-in-dto-)
+   - 5.3 [Paginate List Queries with a Shared Page Type](#53-paginate-list-queries-with-a-shared-page-type)
 6. [Data Access](#6-data-access) — **MEDIUM-HIGH**
    - 6.1 [Place MongoDB Entities in entities/](#61-place-mongodb-entities-in-entities-)
    - 6.2 [Split models/ and mappers/ When API Differs From Storage](#62-split-models-and-mappers-when-api-differs-from-storage)
@@ -48,11 +51,14 @@ File-placement and anatomy guide for NestJS GraphQL applications, designed for A
    - 7.4 [Resolve Relations with @ResolveField](#74-resolve-relations-with-resolvefield)
    - 7.5 [Put a Relation Field in the Module That Owns Its Data](#75-put-a-relation-field-in-the-module-that-owns-its-data)
 8. [Config, Common & Infra](#8-config-common-infra) — **MEDIUM**
-   - 8.1 [Put Shared Building Blocks in common/](#81-put-shared-building-blocks-in-common-)
-   - 8.2 [Put Typed Configuration in config/](#82-put-typed-configuration-in-config-)
-   - 8.3 [Put Database Setup and Migrations in infra/database/](#83-put-database-setup-and-migrations-in-infra-database-)
-   - 8.4 [Put GraphQL Setup in infra/graphql/](#84-put-graphql-setup-in-infra-graphql-)
-   - 8.5 [Use a SharedModule for Cross-Cutting Services](#85-use-a-sharedmodule-for-cross-cutting-services)
+   - 8.1 [Put Shared Types in common/types/](#81-put-shared-types-in-common-types-)
+   - 8.2 [Put Shared Building Blocks in common/](#82-put-shared-building-blocks-in-common-)
+   - 8.3 [Put Typed Configuration in config/](#83-put-typed-configuration-in-config-)
+   - 8.4 [Put Database Setup and Migrations in infra/database/](#84-put-database-setup-and-migrations-in-infra-database-)
+   - 8.5 [Put Schema Directives in common/directives/](#85-put-schema-directives-in-common-directives-)
+   - 8.6 [Put Exceptions in exceptions/](#86-put-exceptions-in-exceptions-)
+   - 8.7 [Put GraphQL Setup in infra/graphql/](#87-put-graphql-setup-in-infra-graphql-)
+   - 8.8 [Use a SharedModule for Cross-Cutting Services](#88-use-a-sharedmodule-for-cross-cutting-services)
 9. [Conventions & Testing](#9-conventions-testing) — **MEDIUM**
    - 9.1 [Use the Nest CLI Generator, Then Adjust](#91-use-the-nest-cli-generator-then-adjust)
    - 9.2 [Keep Constants and Enums Out of Class Files](#92-keep-constants-and-enums-out-of-class-files)
@@ -65,7 +71,91 @@ File-placement and anatomy guide for NestJS GraphQL applications, designed for A
 
 **Section Impact: CRITICAL**
 
-### 1.1 Canonical Application Structure
+### 1.1 Keep Authentication in Its Own Feature Module
+
+**Impact: CRITICAL** — auth is a bounded context with its own strategies and guards
+
+**Purpose.** Authentication and authorization form their own bounded context. Login, token
+refresh, and logout operations, token issuance, Passport strategies, and auth-specific services
+belong to one `modules/auth/` feature — not scattered into `common/` or bolted onto the users
+feature. This keeps the module graph one-directional (auth depends on users; users never depends
+on auth) and mirrors the NestJS convention of keeping auth in its own `auth/` folder.
+
+**Placement.** `modules/auth/` with `strategies/`, `services/`, `resolvers/`, `dto/`, and
+`auth.module.ts`. Shared, feature-agnostic guards (`JwtAuthGuard`, `RolesGuard`) and decorators
+(`@CurrentUser`, `@Public`, `@Roles`) live in `common/guards/` and `common/decorators/` — see
+`infra-common`. An auth-owned entity such as a session or refresh token lives in
+`modules/auth/entities/`.
+
+**Responsibilities.**
+
+- Own the auth feature's resolvers (login, refresh, logout), services, and Passport strategies.
+- Declare a `strategies/` folder holding each Passport strategy (`jwt.strategy.ts`,
+  `local.strategy.ts`).
+- Import `UsersModule` and inject its exported service; never the reverse.
+
+**Never.**
+
+- Put a Passport strategy in `common/` — a strategy is a provider of a feature, not a shared helper.
+- Let `UsersModule` import `AuthModule`; the dependency points auth → users only.
+- Scatter `@CurrentUser` / `@Public` / `@Roles` across features — they are shared, so they live in
+  `common/`.
+
+**Incorrect (strategy scattered into common/, and users depends on auth):**
+
+```typescript
+// common/strategies/jwt.strategy.ts — a Passport strategy is not a shared helper
+@Injectable()
+export class JwtStrategy extends PassportStrategy(Strategy) { /* ... */ }
+
+// modules/users/users.module.ts
+@Module({ imports: [AuthModule] }) // users now depends on auth — the wrong direction
+export class UsersModule {}
+```
+
+Why it is wrong: the strategy has no feature owner, and the dependency points the wrong way, so
+`AuthModule` can no longer inject `UsersService` without a cycle.
+
+**Correct (auth is its own feature; shared guards and decorators stay in common/):**
+
+```typescript
+// modules/auth/strategies/jwt.strategy.ts
+@Injectable()
+export class JwtStrategy extends PassportStrategy(Strategy) {
+  constructor(
+    config: ConfigService,
+    private readonly usersService: UsersService, // auth depends on users, one way
+  ) {
+    super({ /* ... */ });
+  }
+
+  validate(payload: JwtPayload) {
+    return this.usersService.findById(payload.sub);
+  }
+}
+
+// modules/auth/auth.module.ts
+@Module({
+  imports: [UsersModule, PassportModule, JwtModule.registerAsync(/* ... */)],
+  providers: [AuthService, JwtStrategy, AuthMutationResolver],
+  exports: [AuthService],
+})
+export class AuthModule {}
+
+// common/decorators/public.decorator.ts — shared, so it lives in common/
+export const Public = () => SetMetadata('isPublic', true);
+```
+
+Why it is right: auth owns its strategies and services, it depends on users one way, and the
+guards and decorators every feature needs stay in `common/`.
+
+Reference: [NestJS Authentication](https://docs.nestjs.com/security/authentication) | [NestJS Guards](https://docs.nestjs.com/guards)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `security-auth-jwt`, `security-use-guards`.
+
+---
+
+### 1.2 Canonical Application Structure
 
 **Impact: CRITICAL** — the map every other placement rule hangs from
 
@@ -75,9 +165,10 @@ module. Consult it first when deciding where a new file goes; then read the per-
 that kind of file for its purpose, responsibilities, and examples.
 
 **How to read it.** `common/` holds reusable, feature-agnostic building blocks; `infra/` holds
-one-time infrastructure imported by the composition root; `modules/<feature>/` holds one
-bounded context each, and every *kind* of file inside it gets its own subfolder. Files marked
-`OPTIONAL` exist only in the situations their rule describes.
+one-time infrastructure imported by the composition root; `modules/` holds both domain features
+(one bounded context each) and a few small app-level modules such as `auth/` and `health/`. Inside
+a feature, every *kind* of file gets its own subfolder. Files marked `OPTIONAL` exist only in the
+situations their rule describes.
 
 ```text
 src/
@@ -88,14 +179,19 @@ src/
 │   ├── database.config.ts         # typed config namespace
 │   └── validation.schema.ts       # env validation (Joi/Zod) — fail fast
 ├── common/                        # feature-agnostic, reusable building blocks
-│   ├── decorators/                # e.g. @CurrentUser()
+│   ├── constants/                 # cross-cutting constants and enums
+│   ├── decorators/                # e.g. @CurrentUser(), @Public()
+│   ├── directives/                # GraphQL schema directives (e.g. @Auth)
+│   ├── exceptions/                # shared/base exception classes
 │   ├── filters/                   # GraphQL exception filters
 │   ├── guards/                    # shared auth/roles guards
 │   ├── interceptors/              # logging, transform
+│   ├── pagination/                # generic Paginated<T> factory + PageInfo
 │   ├── pipes/                     # shared validation/parse pipes
 │   ├── scalars/                   # custom GraphQL scalars
 │   ├── services/                  # shared services (hashing, ids, mailer wrapper)
 │   ├── shared.module.ts           # provides + exports the shared services
+│   ├── types/                     # shared types: GqlContext, AuthenticatedUser
 │   └── utils/
 ├── infra/                         # one-time infrastructure, imported by the composition root
 │   ├── database/
@@ -107,32 +203,40 @@ src/
 │   │   └── graphql.context.ts     # per-request context: request + authenticated user
 │   └── <cache|queue|…>/           # other one-time infra
 └── modules/
-    └── <feature>/                 # one folder per bounded context
-        ├── <feature>.module.ts           # wiring: providers, imports, exports
-        ├── resolvers/
-        │   ├── <feature>.query.resolver.ts      # queries
-        │   ├── <feature>.mutation.resolver.ts   # mutations
-        │   ├── <type>-<feature>.resolver.ts      # @ResolveField extending another module's type (data owner owns the field)
-        │   └── <type>.resolver.ts                # @ResolveField for a nested/computed type of this module
-        ├── services/
-        │   └── <feature>.service.ts             # domain logic (multiple per module)
-        ├── repositories/
-        │   └── <feature>.repository.ts          # data access only
-        ├── dto/
-        │   ├── create-<feature>.input.ts        # @InputType (+class-validator)
-        │   └── find-<feature>.args.ts           # @Args() class
-        ├── constants/                           # constants and enums (no stray values in class files)
-        │   └── <feature>-status.enum.ts
-        ├── entities/
-        │   └── <feature>.entity.ts              # persistence + @ObjectType (merged default)
-        ├── models/                              # OPTIONAL: GraphQL-only @ObjectType (split case)
-        ├── mappers/                             # OPTIONAL: entity ⟷ model
-        ├── loaders/
-        │   └── <feature>.loader.ts              # DataLoader(s) for relations
-        ├── events/
-        │   ├── <feature>-<action>.event.ts      # domain event
-        │   └── <feature>-<action>.listener.ts   # listener
-        └── guards/                              # OPTIONAL: feature-local guards/decorators
+    ├── <feature>/                 # one folder per bounded context (domain feature)
+    │   ├── <feature>.module.ts           # wiring: providers, imports, exports
+    │   ├── resolvers/
+    │   │   ├── <feature>.query.resolver.ts      # queries
+    │   │   ├── <feature>.mutation.resolver.ts   # mutations
+    │   │   ├── <type>-<feature>.resolver.ts      # @ResolveField extending another module's type (data owner owns the field)
+    │   │   └── <type>.resolver.ts                # @ResolveField for a nested/computed type of this module
+    │   ├── services/
+    │   │   └── <feature>.service.ts             # domain logic (multiple per module)
+    │   ├── repositories/
+    │   │   └── <feature>.repository.ts          # data access only
+    │   ├── dto/
+    │   │   ├── create-<feature>.input.ts        # @InputType (+class-validator)
+    │   │   ├── find-<feature>.args.ts           # @Args() class
+    │   │   └── filter-<feature>.input.ts        # OPTIONAL: filter/sort input for list queries
+    │   ├── constants/                           # constants and enums (no stray values in class files)
+    │   │   └── <feature>-status.enum.ts
+    │   ├── entities/
+    │   │   └── <feature>.entity.ts              # persistence + @ObjectType (merged default)
+    │   ├── models/                              # OPTIONAL: GraphQL-only @ObjectType (split case)
+    │   ├── mappers/                             # OPTIONAL: entity ⟷ model
+    │   ├── loaders/
+    │   │   └── <feature>.loader.ts              # DataLoader(s) for relations
+    │   ├── events/
+    │   │   ├── <feature>-<action>.event.ts      # domain event
+    │   │   └── <feature>-<action>.listener.ts   # listener
+    │   ├── exceptions/                          # OPTIONAL: feature-local exception classes
+    │   └── guards/                              # OPTIONAL: feature-local guards/decorators
+    ├── auth/                      # app-level module: authentication (see struct-auth-feature)
+    │   ├── auth.module.ts
+    │   ├── resolvers/             # login / refresh / logout mutations
+    │   ├── services/              # token issuance, credential checks
+    │   └── strategies/            # Passport strategies (jwt.strategy.ts, local.strategy.ts)
+    └── health/                    # app-level module: liveness/readiness (see struct-module-kinds)
 test/
 └── <feature>.e2e-spec.ts          # e2e specs (unit specs are co-located)
 ```
@@ -141,13 +245,15 @@ test/
 
 - A feature owns its own files; moving or deleting a feature is moving or deleting one folder.
 - Cross-cutting code is never duplicated into features — it lives in `common/`.
+- `modules/` holds domain features and a few small app-level modules (`auth/`, `health/`); both
+  have one home and register once in the composition root.
 - A new file kind is placed by its *role*, not by the feature it happens to serve first.
 
 Reference: [NestJS Modules](https://docs.nestjs.com/modules) | [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
 
 ---
 
-### 1.2 File Placement Table
+### 1.3 File Placement Table
 
 **Impact: HIGH** — one lookup answers "where does this file go?"
 
@@ -160,6 +266,9 @@ full tree, and the linked rule gives the file's purpose and examples.
 | File kind | Location | Rule |
 |-----------|----------|------|
 | Feature module | `modules/<f>/<f>.module.ts` | `module-feature-module` |
+| App-level module (auth, health) | `modules/<name>/<name>.module.ts` | `struct-module-kinds` |
+| Auth feature module | `modules/auth/auth.module.ts` | `struct-auth-feature` |
+| Passport strategy | `modules/auth/strategies/<name>.strategy.ts` | `struct-auth-feature` |
 | Query resolver | `modules/<f>/resolvers/<f>.query.resolver.ts` | `resolver-organization` |
 | Mutation resolver | `modules/<f>/resolvers/<f>.mutation.resolver.ts` | `resolver-organization` |
 | Cross-module field resolver | `modules/<f>/resolvers/<type>-<f>.resolver.ts` | `relations-owning-module` |
@@ -168,7 +277,9 @@ full tree, and the linked rule gives the file's purpose and examples.
 | Custom repository | `modules/<f>/repositories/<f>.repository.ts` | `data-repository` |
 | GraphQL input | `modules/<f>/dto/create-<f>.input.ts` | `type-inputs` |
 | GraphQL args | `modules/<f>/dto/find-<f>.args.ts` | `type-args` |
+| Pagination args | `modules/<f>/dto/<f>-pagination.args.ts` | `type-pagination` |
 | Constants / enums | `modules/<f>/constants/` | `conventions-constants-enums` |
+| Feature-local exception | `modules/<f>/exceptions/<name>.exception.ts` | `infra-exceptions` |
 | Persistence entity / object type | `modules/<f>/entities/<f>.entity.ts` | `data-entity-mongodb` |
 | GraphQL-only model (split) | `modules/<f>/models/<f>.model.ts` | `data-models-mappers` |
 | Mapper | `modules/<f>/mappers/<f>.mapper.ts` | `data-models-mappers` |
@@ -176,6 +287,11 @@ full tree, and the linked rule gives the file's purpose and examples.
 | Domain event / listener | `modules/<f>/events/` | `relations-events` |
 | Config namespace | `config/` | `infra-config` |
 | Shared guard/filter/interceptor/pipe/scalar | `common/` | `infra-common` |
+| Schema directive | `common/directives/<name>.directive.ts` | `infra-directives` |
+| Shared type (context, auth user) | `common/types/<name>.ts` | `infra-common-types` |
+| Shared/base exception | `common/exceptions/<name>.exception.ts` | `infra-exceptions` |
+| Cross-cutting constant / enum | `common/constants/` | `conventions-constants-enums` |
+| Shared page types | `common/pagination/` | `type-pagination` |
 | Shared service | `common/services/<name>.service.ts` | `infra-shared-module` |
 | Shared module | `common/shared.module.ts` | `infra-shared-module` |
 | GraphQL setup / context | `infra/graphql/` | `infra-graphql` |
@@ -198,7 +314,80 @@ Reference: [NestJS Modules](https://docs.nestjs.com/modules)
 
 ---
 
-### 1.3 Locate and Policy the Generated Schema Artifact
+### 1.4 Distinguish Domain Features from App-Level Modules
+
+**Impact: HIGH** — modules/ holds bounded contexts plus a few app-level modules
+
+**Purpose.** `modules/` is not only domain features. A real application also has a small number
+of app-level modules that expose infrastructure or operational endpoints rather than a business
+domain — for example `health/` (liveness/readiness) and `auth/` (authentication, see
+`struct-auth-feature`). They live under `modules/` too, in the same shape (module + providers),
+so the composition root stays a flat list of modules and every module has one home.
+
+**Placement.** `modules/<name>/<name>.module.ts` for every module, domain or app-level. App-level
+examples: `modules/health/`, `modules/auth/`.
+
+**Responsibilities.**
+
+- Keep every module — domain or app-level — in one folder with its own `<name>.module.ts`.
+- Keep app-level modules small: one module and a few providers, no business logic.
+- Register every module once, in `app.module.ts`.
+
+**Never.**
+
+- Bury an app-level module inside a domain feature (`modules/users/health/`).
+- Define an operational endpoint in `main.ts` or `AppModule` directly.
+- Give an app-level module a domain dependency it does not need.
+
+**Incorrect (an operational endpoint wired into the composition root):**
+
+```typescript
+// app.module.ts — the composition root owns an operational concern
+@Module({ providers: [HealthService], controllers: [HealthController] })
+export class AppModule {}
+```
+
+Why it is wrong: `AppModule` becomes the home for a health endpoint, and that endpoint has no
+owner or boundary of its own.
+
+**Correct (app-level module beside the domain features):**
+
+```typescript
+// modules/health/health.resolver.ts
+@Resolver()
+export class HealthResolver {
+  @Query(() => String, { name: 'health' })
+  health(): string {
+    return 'ok';
+  }
+}
+
+// modules/health/health.module.ts
+@Module({ imports: [TerminusModule], providers: [HealthResolver] })
+export class HealthModule {}
+
+// app.module.ts — one flat list of modules, domain and app-level alike
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    DatabaseModule,
+    GraphqlInfraModule,
+    UsersModule,
+    AuthModule,
+    HealthModule,
+  ],
+})
+export class AppModule {}
+```
+
+Why it is right: the operational module has a home next to the domain ones, stays small, and
+`app.module.ts` remains a flat list of modules.
+
+Reference: [NestJS Terminus](https://docs.nestjs.com/recipes/terminus) | [NestJS Modules](https://docs.nestjs.com/modules)
+
+---
+
+### 1.5 Locate and Policy the Generated Schema Artifact
 
 **Impact: MEDIUM** — the SDL is generated, not hand-edited
 
@@ -1097,6 +1286,122 @@ Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
 
 ---
 
+### 5.3 Paginate List Queries with a Shared Page Type
+
+**Impact: HIGH** — one cursor-connection pattern for every list
+
+**Purpose.** Every list query needs pagination. GraphQL's recommended pattern is cursor-based
+pagination ("connections"): a `first`/`after` args type plus an edge/node/`pageInfo` result type.
+Define the shared building blocks once in `common/pagination/` — a generic `Paginated<T>` factory
+and a `PageInfo` type — and reuse them for every list; keep a feature's own args and filter types
+in its `dto/`. For a small, bounded, non-growing admin list offset (`page`/`limit`) is acceptable;
+pick one per query and do not mix the two.
+
+**Placement.**
+
+- Shared: `src/common/pagination/paginated.ts` (generic `Paginated<T>` factory) and
+  `page-info.ts`.
+- Feature args/filters: `modules/<feature>/dto/<feature>-pagination.args.ts`,
+  `filter-<feature>.input.ts`.
+
+**Responsibilities.**
+
+- Define the generic `Paginated<T>` connection factory once, in `common/pagination/`.
+- Give each list query an `@ArgsType()` with `first`/`after` (and filters) in the feature's `dto/`.
+- Return a `Paginated<T>` from the query and build it from the service result.
+
+**Never.**
+
+- Return a bare `[Item]` array from a list query that can grow.
+- Re-implement an edge/`pageInfo` type per feature — import the shared factory.
+- Mix offset (`page`/`limit`) and cursor (`first`/`after`) on the same query.
+
+**Incorrect (bare array, unbounded and unpaged):**
+
+```typescript
+@Query(() => [User])
+users() {
+  return this.usersService.findAll(); // grows without limit, no way to page
+}
+```
+
+Why it is wrong: the list is unbounded and the client has no cursor or page to move through it.
+
+**Correct (shared connection factory, feature args, paged result):**
+
+```typescript
+// common/pagination/paginated.ts — defined once for the whole app
+@ObjectType('PageInfo')
+export class PageInfo {
+  @Field(() => String, { nullable: true })
+  endCursor?: string;
+
+  @Field()
+  hasNextPage: boolean;
+}
+
+export function Paginated<T>(classRef: Type<T>) {
+  @ObjectType(`${classRef.name}Edge`)
+  abstract class EdgeType {
+    @Field(() => String)
+    cursor: string;
+
+    @Field(() => classRef)
+    node: T;
+  }
+
+  @ObjectType({ isAbstract: true })
+  abstract class PaginatedType {
+    @Field(() => [EdgeType])
+    edges: EdgeType[];
+
+    @Field(() => PageInfo)
+    pageInfo: PageInfo;
+
+    @Field(() => Int)
+    totalCount: number;
+  }
+
+  return PaginatedType;
+}
+
+// modules/users/models/user.model.ts — one connection type per list item
+@ObjectType()
+export class UserConnection extends Paginated(User) {}
+
+// modules/users/dto/search-users.args.ts
+@ArgsType()
+export class SearchUsersArgs {
+  @Field(() => Int, { defaultValue: 20 })
+  @IsInt() @Min(1) @Max(100)
+  first = 20;
+
+  @Field({ nullable: true })
+  @IsOptional() @IsString()
+  after?: string;
+
+  @Field({ nullable: true })
+  @IsOptional() @IsString() @MaxLength(100)
+  search?: string;
+}
+
+// modules/users/resolvers/users.query.resolver.ts
+@Query(() => UserConnection)
+users(@Args() args: SearchUsersArgs): Promise<UserConnection> {
+  return this.usersService.search(args);
+}
+```
+
+Why it is right: one cursor-connection shape is defined once and reused, the args and filters live
+with the feature that owns them, and every list query pages the same way.
+
+When to use offset instead: a small, bounded, non-growing list where `page`/`limit` is simpler.
+Choose per query and stay consistent within it; see `type-args` for the offset-style args shape.
+
+Reference: [GraphQL Pagination](https://graphql.org/learn/pagination/) | [Relay Cursor Connections](https://relay.dev/graphql/connections.htm) | [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
+
+---
+
 ## 6. Data Access
 
 **Section Impact: MEDIUM-HIGH**
@@ -1753,7 +2058,74 @@ Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
 
 **Section Impact: MEDIUM**
 
-### 8.1 Put Shared Building Blocks in common/
+### 8.1 Put Shared Types in common/types/
+
+**Impact: MEDIUM** — context, auth user, and cross-cutting types have one home
+
+**Purpose.** TypeScript types and interfaces that more than one feature needs — the GraphQL
+request context, the authenticated user shape, shared pagination interfaces — are not tied to any
+one feature. They live in `common/types/` so features import a single definition instead of
+re-declaring (and drifting) their own.
+
+**Placement.** `src/common/types/<name>.ts` (for example `gql-context.ts`,
+`authenticated-user.ts`).
+
+**Responsibilities.**
+
+- Hold feature-agnostic types and interfaces: the GraphQL `Context`, the `AuthenticatedUser`,
+  shared pagination interfaces.
+- Export named types; keep one concept per file.
+- Stay free of any dependency on a feature.
+
+**Never.**
+
+- Declare a shared type inline in a resolver or in `app.module.ts`.
+- Put a feature's own type here — that belongs to the feature.
+- Use `common/types/` as a junk drawer; a type only one feature needs stays in that feature.
+
+**Incorrect (the context type redeclared wherever it is needed):**
+
+```typescript
+// modules/users/resolvers/users.query.resolver.ts
+@Query(() => User)
+user(@Context() ctx: { req: Request; user: AuthenticatedUser }) { /* ... */ }
+
+// modules/orders/... the same shape re-declared by hand, already drifting
+```
+
+Why it is wrong: the same context shape is re-declared per file, and the copies drift apart.
+
+**Correct (one shared type in common/types/):**
+
+```typescript
+// common/types/authenticated-user.ts
+export interface AuthenticatedUser {
+  id: string;
+  email: string;
+  roles: string[];
+}
+
+// common/types/gql-context.ts
+import type { Request } from 'express';
+import type { AuthenticatedUser } from './authenticated-user';
+
+export interface GqlContext {
+  req: Request;
+  user?: AuthenticatedUser;
+}
+
+// a feature imports the one definition
+import type { GqlContext } from '../../common/types/gql-context';
+```
+
+Why it is right: the context and user shapes have a single definition that every feature and
+`infra/graphql` share, so they cannot drift.
+
+Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers) | [NestJS GraphQL Other features](https://docs.nestjs.com/graphql/other-features)
+
+---
+
+### 8.2 Put Shared Building Blocks in common/
 
 **Impact: MEDIUM** — reusable, feature-agnostic helpers live here
 
@@ -1809,7 +2181,7 @@ Reference: [NestJS Custom Decorators](https://docs.nestjs.com/custom-decorators)
 
 ---
 
-### 8.2 Put Typed Configuration in config/
+### 8.3 Put Typed Configuration in config/
 
 **Impact: MEDIUM** — no process.env scattered through the app
 
@@ -1886,7 +2258,7 @@ Reference: [NestJS Configuration](https://docs.nestjs.com/techniques/configurati
 
 ---
 
-### 8.3 Put Database Setup and Migrations in infra/database/
+### 8.4 Put Database Setup and Migrations in infra/database/
 
 **Impact: MEDIUM** — the connection is configured once
 
@@ -1949,7 +2321,145 @@ Reference: [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb)
 
 ---
 
-### 8.4 Put GraphQL Setup in infra/graphql/
+### 8.5 Put Schema Directives in common/directives/
+
+**Impact: MEDIUM** — GraphQL schema directives differ from param decorators
+
+**Purpose.** A GraphQL schema directive (`@Directive()`, for example a field-level `@Auth`) is
+applied to schema elements and is a different kind of thing from a parameter decorator like
+`@CurrentUser()`. Directives are cross-cutting, so they live in `common/directives/`, alongside
+the shared decorators but in their own folder. The directive's transformer is registered once, in
+`infra/graphql/`.
+
+**Placement.** `src/common/directives/<name>.directive.ts`. Register the directive's transformer
+once in `infra/graphql/graphql.module.ts`.
+
+**Responsibilities.**
+
+- Hold reusable schema directives and any argument classes they take.
+- Register the directive once, in the GraphQL infrastructure module.
+
+**Never.**
+
+- Put a schema directive in `common/decorators/` — it is a different kind of thing.
+- Declare a directive inside a feature; directives are cross-cutting.
+- Register the same directive's transformer in more than one place.
+
+**Incorrect (directive buried in a feature, transformer registered locally):**
+
+```typescript
+// modules/users/directives/auth.directive.ts — a cross-cutting directive owned by one feature
+export const AuthDirective = Directive('@auth');
+
+// registered ad hoc inside the feature module
+```
+
+Why it is wrong: a cross-cutting directive has no shared home, so other features re-declare it and
+its transformer gets registered more than once.
+
+**Correct (one shared directive, registered once in infra/graphql/):**
+
+```typescript
+// common/directives/auth.directive.ts
+export const AuthDirective = Directive('@auth');
+
+// infra/graphql/graphql.module.ts — registered once
+GraphQLModule.forRootAsync<ApolloDriverConfig>({
+  driver: ApolloDriver,
+  useFactory: () => ({
+    autoSchemaFile: join(process.cwd(), 'src/schema.gql'),
+    // directive transformers registered here, once
+  }),
+});
+
+// a feature applies the shared directive on a field
+@Field()
+@AuthDirective()
+email: string;
+```
+
+Why it is right: the directive has one shared definition and one registration point, and features
+apply it without owning it.
+
+Reference: [NestJS GraphQL Directives](https://docs.nestjs.com/graphql/directives) | [NestJS GraphQL Other features](https://docs.nestjs.com/graphql/other-features)
+
+---
+
+### 8.6 Put Exceptions in exceptions/
+
+**Impact: MEDIUM-HIGH** — one home for shared and feature-local error types
+
+**Purpose.** Custom exception classes are their own file kind, so they get their own home. A
+shared base or application-wide exception lives in `common/exceptions/`; an exception that belongs
+to one feature lives in that feature's `exceptions/` folder, next to the module that throws it.
+This gives `UserNotFoundException` and its peers one predictable location instead of being
+declared inside a service file.
+
+**Placement.**
+
+- Shared/base: `src/common/exceptions/<name>.exception.ts` (e.g. `domain.exception.ts`).
+- Feature-local: `modules/<feature>/exceptions/<name>.exception.ts` (e.g.
+  `user-not-found.exception.ts`).
+
+**Responsibilities.**
+
+- Give each custom exception its own file and class.
+- Keep a feature exception beside the feature that throws it.
+- Keep a genuinely shared base or cross-feature exception in `common/exceptions/`.
+
+**Never.**
+
+- Declare exception classes inside a service, resolver, or module file.
+- Put a feature-specific exception in `common/` — that couples `common/` to a feature.
+- Duplicate the same exception class across features.
+
+**Incorrect (exception declared inline in a service, then duplicated):**
+
+```typescript
+// modules/users/services/users.service.ts
+class UserNotFoundException extends Error {} // hidden in a service file
+
+// modules/orders/services/orders.service.ts
+class UserNotFoundException extends Error {} // a second, drifting copy
+```
+
+Why it is wrong: the exception has no home, cannot be reused or filtered centrally, and the copies
+drift as each is edited.
+
+**Correct (one file per exception; shared base vs feature-local):**
+
+```typescript
+// common/exceptions/domain.exception.ts — the shared base
+export class DomainException extends Error {
+  constructor(
+    message: string,
+    public readonly code: string,
+  ) {
+    super(message);
+  }
+}
+
+// modules/users/exceptions/user-not-found.exception.ts — feature-local
+export class UserNotFoundException extends DomainException {
+  constructor(id: string) {
+    super(`User #${id} not found`, 'USER_NOT_FOUND');
+  }
+}
+
+// modules/users/services/users.service.ts — imports the one definition
+import { UserNotFoundException } from '../exceptions/user-not-found.exception';
+```
+
+Why it is right: each exception has one file and one home, a feature exception sits with its
+feature, and a shared base lives in `common/` so a central filter can map it.
+
+Reference: [NestJS Exception Filters](https://docs.nestjs.com/exception-filters)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `error-throw-graphql-errors`, `error-use-exception-filters`.
+
+---
+
+### 8.7 Put GraphQL Setup in infra/graphql/
 
 **Impact: MEDIUM** — one place configures the server and its context
 
@@ -2019,7 +2529,7 @@ Reference: [NestJS GraphQL Quick Start](https://docs.nestjs.com/graphql/quick-st
 
 ---
 
-### 8.5 Use a SharedModule for Cross-Cutting Services
+### 8.8 Use a SharedModule for Cross-Cutting Services
 
 **Impact: MEDIUM-HIGH** — one home for shared providers; explicit by default
 
@@ -2290,6 +2800,11 @@ Why it is wrong: the filename does not say what the file is or where it belongs.
 | Loader | `<feature>.loader.ts` | `<Feature>Loader` |
 | Event | `<feature>-<action>.event.ts` | `<Feature><Action>Event` |
 | Listener | `<feature>-<action>.listener.ts` | `<Feature><Action>Listener` |
+| Passport strategy | `<name>.strategy.ts` | `<Name>Strategy` |
+| Exception | `<name>.exception.ts` | `<Name>Exception` |
+| Schema directive | `<name>.directive.ts` | `<Name>Directive` |
+| Pagination args | `<feature>-pagination.args.ts` | `<Feature>PaginationArgs` |
+| Shared page types | `common/pagination/paginated.ts` | `Paginated<T>` / `PageInfo` |
 | Unit test | `<name>.spec.ts` | — |
 | E2E test | `<feature>.e2e-spec.ts` | — |
 
@@ -2364,4 +2879,4 @@ Reference: [NestJS Testing](https://docs.nestjs.com/fundamentals/testing)
 
 ---
 
-*Generated by build-agents.ts on 2026-10-15*
+*Generated by build-agents.ts on 2026-10-16*

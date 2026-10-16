@@ -1,15 +1,15 @@
 ---
 name: nestjs-graphql-structure
-description: Application structure and file-placement guide for NestJS GraphQL (code-first) applications. Use when deciding where a file belongs, designing or reviewing a feature-first directory layout, scaffolding a new feature module, or working out how modules connect to resolve GraphQL fields and relations. Covers the base structure map plus per-file rules for modules, services, resolvers, inputs, entities, repositories, loaders, and events — and module-resolution concerns such as circular dependencies. For behavioral rules (DI depth, security, performance, error handling) use the nestjs-best-practices skill instead.
+description: Application structure and file-placement guide for NestJS GraphQL (code-first) applications. Use when deciding where a file belongs, designing or reviewing a feature-first directory layout, scaffolding a new feature module, or working out how modules connect to resolve GraphQL fields and relations. Covers the base structure map plus per-file rules for modules, services, resolvers, inputs, entities, repositories, loaders, events, auth, exceptions, and pagination — and module-resolution concerns such as circular dependencies. For behavioral rules (DI depth, security, performance, error handling) use the nestjs-best-practices skill instead.
 license: MIT
 metadata:
   author: Zoha
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # NestJS GraphQL Structure
 
-Where every file belongs in a NestJS GraphQL (code-first) application, and how each file works. This skill is a **placement and anatomy** guide: it answers "which folder does this file go in?", "what is this file responsible for?", and "how do modules connect to resolve fields and relations?". It covers the base structure map plus per-file rules for services, resolvers, inputs, entities, repositories, loaders, and events.
+Where every file belongs in a NestJS GraphQL (code-first) application, and how each file works. This skill is a **placement and anatomy** guide: it answers "which folder does this file go in?", "what is this file responsible for?", and "how do modules connect to resolve fields and relations?". It covers the base structure map plus per-file rules for services, resolvers, inputs, entities, repositories, loaders, events, auth, exceptions, and pagination.
 
 It is deliberately separate from the `nestjs-best-practices` skill. That skill covers framework behavior (dependency-injection depth, security, performance, error handling, microservices, DevOps); this one covers structure and module composition. Where they overlap (feature modules, circular dependencies), this skill looks at it through a placement lens and cross-references the other skill for behavioral depth.
 
@@ -46,8 +46,10 @@ Reference these guidelines when:
 <!-- GENERATED:START:rules -->
 ### 1. Application Structure (CRITICAL)
 
+- `struct-auth-feature` - Keep Authentication in Its Own Feature Module
 - `struct-canonical-layout` - Canonical Application Structure
 - `struct-file-placement-table` - File Placement Table
+- `struct-module-kinds` - Distinguish Domain Features from App-Level Modules
 - `struct-schema-artifact` - Locate and Policy the Generated Schema Artifact
 
 ### 2. Modules & Bootstrap (CRITICAL)
@@ -71,6 +73,7 @@ Reference these guidelines when:
 
 - `type-args` - Define @Args Classes in dto/
 - `type-inputs` - Define GraphQL Inputs in dto/
+- `type-pagination` - Paginate List Queries with a Shared Page Type
 
 ### 6. Data Access (MEDIUM-HIGH)
 
@@ -88,9 +91,12 @@ Reference these guidelines when:
 
 ### 8. Config, Common & Infra (MEDIUM)
 
+- `infra-common-types` - Put Shared Types in common/types/
 - `infra-common` - Put Shared Building Blocks in common/
 - `infra-config` - Put Typed Configuration in config/
 - `infra-database` - Put Database Setup and Migrations in infra/database/
+- `infra-directives` - Put Schema Directives in common/directives/
+- `infra-exceptions` - Put Exceptions in exceptions/
 - `infra-graphql` - Put GraphQL Setup in infra/graphql/
 - `infra-shared-module` - Use a SharedModule for Cross-Cutting Services
 

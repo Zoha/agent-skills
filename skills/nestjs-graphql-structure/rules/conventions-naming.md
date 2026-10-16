@@ -54,6 +54,11 @@ Why it is wrong: the filename does not say what the file is or where it belongs.
 | Loader | `<feature>.loader.ts` | `<Feature>Loader` |
 | Event | `<feature>-<action>.event.ts` | `<Feature><Action>Event` |
 | Listener | `<feature>-<action>.listener.ts` | `<Feature><Action>Listener` |
+| Passport strategy | `<name>.strategy.ts` | `<Name>Strategy` |
+| Exception | `<name>.exception.ts` | `<Name>Exception` |
+| Schema directive | `<name>.directive.ts` | `<Name>Directive` |
+| Pagination args | `<feature>-pagination.args.ts` | `<Feature>PaginationArgs` |
+| Shared page types | `common/pagination/paginated.ts` | `Paginated<T>` / `PageInfo` |
 | Unit test | `<name>.spec.ts` | — |
 | E2E test | `<feature>.e2e-spec.ts` | — |
 
