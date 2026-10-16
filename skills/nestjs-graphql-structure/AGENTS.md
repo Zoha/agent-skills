@@ -1,6 +1,6 @@
 # NestJS GraphQL Application Structure
 
-**Version 1.2.0**
+**Version 1.3.0**
 NestJS GraphQL Structure
 October 2026
 
@@ -13,7 +13,7 @@ October 2026
 
 ## Abstract
 
-File-placement and anatomy guide for NestJS GraphQL applications, designed for AI agents and LLMs. Teaches where every file belongs in a feature-first, code-first codebase — the base structure map plus per-file rules for modules, services, resolvers, inputs, entities, repositories, loaders, events, auth, exceptions, pagination, subscriptions, providers, background jobs, scalars, and seeds — each with purpose, responsibilities, and incorrect-vs-correct examples. It also covers how modules connect to resolve GraphQL fields and relations, including module-resolution concerns such as circular dependencies, while deferring behavioral concerns to the nestjs-best-practices skill.
+File-placement and anatomy guide for NestJS GraphQL applications, designed for AI agents and LLMs. Teaches where every file belongs in a feature-first, code-first codebase — the base structure map plus per-file rules for modules, services, resolvers, inputs, entities, repositories, loaders, events, auth, exceptions, pagination, subscriptions, providers, background jobs, scalars, seeds, interfaces/tokens, uploads, and test fixtures — each with purpose, responsibilities, and incorrect-vs-correct examples. It also covers how modules connect to resolve GraphQL fields and relations, including module-resolution concerns such as circular dependencies, while deferring behavioral concerns to the nestjs-best-practices skill.
 
 ---
 
@@ -22,9 +22,10 @@ File-placement and anatomy guide for NestJS GraphQL applications, designed for A
 1. [Application Structure](#1-application-structure) — **CRITICAL**
    - 1.1 [Keep Authentication in Its Own Feature Module](#11-keep-authentication-in-its-own-feature-module)
    - 1.2 [Canonical Application Structure](#12-canonical-application-structure)
-   - 1.3 [File Placement Table](#13-file-placement-table)
-   - 1.4 [Distinguish Domain Features from App-Level Modules](#14-distinguish-domain-features-from-app-level-modules)
-   - 1.5 [Locate and Policy the Generated Schema Artifact](#15-locate-and-policy-the-generated-schema-artifact)
+   - 1.3 [Split a Feature into Sub-Modules When It Grows](#13-split-a-feature-into-sub-modules-when-it-grows)
+   - 1.4 [File Placement Table](#14-file-placement-table)
+   - 1.5 [Distinguish Domain Features from App-Level Modules](#15-distinguish-domain-features-from-app-level-modules)
+   - 1.6 [Locate and Policy the Generated Schema Artifact](#16-locate-and-policy-the-generated-schema-artifact)
 2. [Modules & Bootstrap](#2-modules-bootstrap) — **CRITICAL**
    - 2.1 [Keep main.ts and app.module.ts Thin](#21-keep-main-ts-and-app-module-ts-thin)
    - 2.2 [Export Only the Feature's Public API (Its Services)](#22-export-only-the-feature-s-public-api-its-services-)
@@ -32,8 +33,9 @@ File-placement and anatomy guide for NestJS GraphQL applications, designed for A
 3. [Services](#3-services) — **HIGH**
    - 3.1 [Keep Queue Processors and Scheduled Jobs with the Feature](#31-keep-queue-processors-and-scheduled-jobs-with-the-feature)
    - 3.2 [Keep Third-Party Clients in providers/](#32-keep-third-party-clients-in-providers-)
-   - 3.3 [Multiple Focused Services per Module](#33-multiple-focused-services-per-module)
-   - 3.4 [Keep Service Methods Small and Focused](#34-keep-service-methods-small-and-focused)
+   - 3.3 [Declare Service Contracts and Injection Tokens in interfaces/](#33-declare-service-contracts-and-injection-tokens-in-interfaces-)
+   - 3.4 [Multiple Focused Services per Module](#34-multiple-focused-services-per-module)
+   - 3.5 [Keep Service Methods Small and Focused](#35-keep-service-methods-small-and-focused)
 4. [GraphQL Resolvers](#4-graphql-resolvers) — **HIGH**
    - 4.1 [Declare Fields on the Type; Resolve Computed Ones in the Resolver](#41-declare-fields-on-the-type-resolve-computed-ones-in-the-resolver)
    - 4.2 [Split Resolvers by Role into resolvers/](#42-split-resolvers-by-role-into-resolvers-)
@@ -62,14 +64,18 @@ File-placement and anatomy guide for NestJS GraphQL applications, designed for A
    - 8.5 [Put Database Setup and Migrations in infra/database/](#85-put-database-setup-and-migrations-in-infra-database-)
    - 8.6 [Put Schema Directives in common/directives/](#86-put-schema-directives-in-common-directives-)
    - 8.7 [Put Exceptions in exceptions/](#87-put-exceptions-in-exceptions-)
-   - 8.8 [Put GraphQL Setup in infra/graphql/](#88-put-graphql-setup-in-infra-graphql-)
-   - 8.9 [Put Seed Scripts in infra/database/seeds/](#89-put-seed-scripts-in-infra-database-seeds-)
-   - 8.10 [Use a SharedModule for Cross-Cutting Services](#810-use-a-sharedmodule-for-cross-cutting-services)
+   - 8.8 [Handle Uploads Behind a Storage Provider](#88-handle-uploads-behind-a-storage-provider)
+   - 8.9 [Put GraphQL Setup in infra/graphql/](#89-put-graphql-setup-in-infra-graphql-)
+   - 8.10 [Put Seed Scripts in infra/database/seeds/](#810-put-seed-scripts-in-infra-database-seeds-)
+   - 8.11 [Use a SharedModule for Cross-Cutting Services](#811-use-a-sharedmodule-for-cross-cutting-services)
 9. [Conventions & Testing](#9-conventions-testing) — **MEDIUM**
-   - 9.1 [Use the Nest CLI Generator, Then Adjust](#91-use-the-nest-cli-generator-then-adjust)
-   - 9.2 [Keep Constants and Enums Out of Class Files](#92-keep-constants-and-enums-out-of-class-files)
-   - 9.3 [File and Class Naming Conventions](#93-file-and-class-naming-conventions)
-   - 9.4 [Test File Placement](#94-test-file-placement)
+   - 9.1 [Use Barrels and Path Aliases Deliberately](#91-use-barrels-and-path-aliases-deliberately)
+   - 9.2 [Use the Nest CLI Generator, Then Adjust](#92-use-the-nest-cli-generator-then-adjust)
+   - 9.3 [Keep Constants and Enums Out of Class Files](#93-keep-constants-and-enums-out-of-class-files)
+   - 9.4 [Enforce Module Boundaries with Lint](#94-enforce-module-boundaries-with-lint)
+   - 9.5 [File and Class Naming Conventions](#95-file-and-class-naming-conventions)
+   - 9.6 [Place Test Fixtures, Factories, and Helpers in test/](#96-place-test-fixtures-factories-and-helpers-in-test-)
+   - 9.7 [Test File Placement](#97-test-file-placement)
 
 ---
 
@@ -192,6 +198,7 @@ src/
 │   ├── filters/                   # GraphQL exception filters
 │   ├── guards/                    # shared auth/roles guards
 │   ├── interceptors/              # logging, transform
+│   ├── interfaces/                # shared ports (interface + injection token)
 │   ├── pagination/                # generic Paginated<T> factory + PageInfo
 │   ├── pipes/                     # shared validation/parse pipes
 │   ├── scalars/                   # custom GraphQL scalars
@@ -242,8 +249,10 @@ src/
     │   │   └── <feature>-<action>.listener.ts   # listener
     │   ├── processors/                          # OPTIONAL: queue processors (e.g. BullMQ @Processor)
     │   ├── jobs/                                # OPTIONAL: scheduled/cron jobs
+    │   ├── interfaces/                          # OPTIONAL: ports + injection tokens for this feature
     │   ├── exceptions/                          # OPTIONAL: feature-local exception classes
-    │   └── guards/                              # OPTIONAL: feature-local guards/decorators
+    │   ├── guards/                              # OPTIONAL: feature-local guards/decorators
+    │   └── <submodule>/                         # OPTIONAL: nested module when the feature grows (see struct-feature-decomposition)
     ├── auth/                      # app-level module: authentication (see struct-auth-feature)
     │   ├── auth.module.ts
     │   ├── resolvers/             # login / refresh / logout mutations
@@ -251,7 +260,10 @@ src/
     │   └── strategies/            # Passport strategies (jwt.strategy.ts, local.strategy.ts)
     └── health/                    # app-level module: liveness/readiness (see struct-module-kinds)
 test/
-└── <feature>.e2e-spec.ts          # e2e specs (unit specs are co-located)
+├── <feature>.e2e-spec.ts          # e2e specs (unit specs are co-located)
+├── factories/                     # test data builders (aUser(), OrderFactory)
+├── fixtures/                      # static test data
+└── helpers/                       # shared test helpers (GraphQL request, DB reset)
 ```
 
 **Consequences of the map.**
@@ -266,7 +278,79 @@ Reference: [NestJS Modules](https://docs.nestjs.com/modules) | [NestJS GraphQL R
 
 ---
 
-### 1.3 File Placement Table
+### 1.3 Split a Feature into Sub-Modules When It Grows
+
+**Impact: HIGH** — a growing feature decomposes, it does not become a mega-module
+
+**Purpose.** The base map assumes one folder per bounded context. When a feature accumulates several
+related-but-distinct concerns — a users feature with separate profile, preferences, and invitations
+areas — grow it by decomposition, not by piling more files into one module. Extract a concern into
+its own Nest module: nested under the feature while the concern is private to it, promoted to a
+sibling `modules/<name>/` once it stands on its own. Every extracted module keeps the same shape
+(module + resolvers + services + kind subfolders) and declares its own providers and exports.
+
+**Placement.**
+
+- Nested module (a concern still owned by the feature):
+  `modules/<feature>/<submodule>/<submodule>.module.ts`.
+- Promoted module (a standalone bounded context): `modules/<name>/<name>.module.ts`.
+
+Default to a sibling module when the concern is genuinely separate; nest only while it is private to
+its parent feature.
+
+**Responsibilities.**
+
+- Give each extracted concern its own `<submodule>.module.ts` with its own providers and exports.
+- Have the parent feature module import its nested modules and export only its public API.
+- Apply the same file-kind subfolders inside the extracted module.
+
+**Never.**
+
+- Grow one module with dozens of unrelated providers and resolvers.
+- Extract a concern but leave its providers registered in the parent module.
+- Duplicate a concern in both a nested and a sibling module — move it.
+
+**Incorrect (one users module holding every concern):**
+
+```text
+modules/users/
+  users.module.ts        # registers profile, preferences, invitations, ...
+  resolvers/             # 12 resolver files
+  services/              # 9 services
+  dto/                   # 30 inputs
+```
+
+Why it is wrong: every concern shares one module boundary, so the module is a grab-bag and its export
+surface, test surface, and provider list all grow without limit.
+
+**Correct (extract a nested module; promote it when it stands alone):**
+
+```typescript
+// modules/users/users.module.ts — the feature composes its own concerns
+@Module({
+  imports: [UserProfileModule, UserPreferencesModule],
+  providers: [UsersService, UsersQueryResolver],
+  exports: [UsersService],
+})
+export class UsersModule {}
+
+// modules/users/profile/user-profile.module.ts — an extracted concern, same shape
+@Module({
+  providers: [UserProfileService, UserProfileResolver, UserProfileRepository],
+  exports: [UserProfileService],
+})
+export class UserProfileModule {}
+// promote to modules/profile/ once another feature depends on it
+```
+
+Why it is right: each concern has its own module boundary, the parent composes them, and a concern
+can be promoted to a sibling module without rewriting its internals.
+
+Reference: [NestJS Modules](https://docs.nestjs.com/modules) | [NestJS Project Structure (Encore)](https://encore.dev/articles/nestjs-project-structure-best-practices)
+
+---
+
+### 1.4 File Placement Table
 
 **Impact: HIGH** — one lookup answers "where does this file go?"
 
@@ -279,6 +363,7 @@ full tree, and the linked rule gives the file's purpose and examples.
 | File kind | Location | Rule |
 |-----------|----------|------|
 | Feature module | `modules/<f>/<f>.module.ts` | `module-feature-module` |
+| Nested sub-module | `modules/<f>/<submodule>/` | `struct-feature-decomposition` |
 | App-level module (auth, health) | `modules/<name>/<name>.module.ts` | `struct-module-kinds` |
 | Auth feature module | `modules/auth/auth.module.ts` | `struct-auth-feature` |
 | Passport strategy | `modules/auth/strategies/<name>.strategy.ts` | `struct-auth-feature` |
@@ -297,6 +382,8 @@ full tree, and the linked rule gives the file's purpose and examples.
 | Pagination args | `modules/<f>/dto/<f>-pagination.args.ts` | `type-pagination` |
 | Constants / enums | `modules/<f>/constants/` | `conventions-constants-enums` |
 | Feature-local exception | `modules/<f>/exceptions/<name>.exception.ts` | `infra-exceptions` |
+| Feature port / token | `modules/<f>/interfaces/<name>.interface.ts` | `service-interfaces-tokens` |
+| Shared port / token | `common/interfaces/<name>.interface.ts` | `service-interfaces-tokens` |
 | Persistence entity / object type | `modules/<f>/entities/<f>.entity.ts` | `data-entity-mongodb` |
 | GraphQL-only model (split) | `modules/<f>/models/<f>.model.ts` | `data-models-mappers` |
 | GraphQL union / interface | `modules/<f>/models/<name>.union.ts` | `type-unions-interfaces` |
@@ -323,6 +410,9 @@ full tree, and the linked rule gives the file's purpose and examples.
 | Generated SDL | path from `autoSchemaFile` | `struct-schema-artifact` |
 | Unit test | co-located `<name>.spec.ts` | `conventions-testing` |
 | E2E test | `test/<f>.e2e-spec.ts` | `conventions-testing` |
+| Test fixture / factory / helper | `test/{fixtures,factories,helpers}/` | `conventions-test-fixtures` |
+| Path aliases | `tsconfig.json` `paths` | `conventions-barrels-aliases` |
+| Boundary lint config | repo root `eslint.config.js` | `conventions-module-boundaries` |
 
 **Never.**
 
@@ -336,7 +426,7 @@ Reference: [NestJS Modules](https://docs.nestjs.com/modules)
 
 ---
 
-### 1.4 Distinguish Domain Features from App-Level Modules
+### 1.5 Distinguish Domain Features from App-Level Modules
 
 **Impact: HIGH** — modules/ holds bounded contexts plus a few app-level modules
 
@@ -409,7 +499,7 @@ Reference: [NestJS Terminus](https://docs.nestjs.com/recipes/terminus) | [NestJS
 
 ---
 
-### 1.5 Locate and Policy the Generated Schema Artifact
+### 1.6 Locate and Policy the Generated Schema Artifact
 
 **Impact: MEDIUM** — the SDL is generated, not hand-edited
 
@@ -859,7 +949,83 @@ Reference: [NestJS Providers](https://docs.nestjs.com/providers) | [NestJS Custo
 
 ---
 
-### 3.3 Multiple Focused Services per Module
+### 3.3 Declare Service Contracts and Injection Tokens in interfaces/
+
+**Impact: MEDIUM-HIGH** — depend on a contract, provide the implementation
+
+**Purpose.** When a consumer should depend on a contract rather than a concrete class — a payment
+gateway, a mailer, a storage adapter — declare an interface (or abstract class) and its injection
+token in an `interfaces/` folder, then let the module provide the implementation. The contract and
+its token live together: feature-local in `modules/<feature>/interfaces/`, or shared in
+`common/interfaces/`. Consumers inject by token; the module chooses which implementation to bind.
+
+**Placement.**
+
+- Feature-local contract: `modules/<feature>/interfaces/<name>.interface.ts` (interface or abstract
+  class and its `Symbol` token in the same file).
+- Shared contract: `common/interfaces/<name>.interface.ts`.
+
+**Responsibilities.**
+
+- Export the interface and its token from one file.
+- Provide an implementation for the token in the owning module's `providers`.
+- Let consumers inject the token, not the concrete class.
+
+**Never.**
+
+- Inject a concrete class when a contract exists — that defeats substitution.
+- Keep a token in a different file from its interface, so the two drift.
+- Declare a contract in a feature that another feature also needs — promote it to `common/interfaces/`.
+
+**Incorrect (the consumer depends on the concrete implementation):**
+
+```typescript
+// modules/payments/services/payments.service.ts
+@Injectable()
+export class PaymentsService {
+  constructor(private readonly stripe: StripeProvider) {} // welded to one implementation
+}
+```
+
+Why it is wrong: the service cannot be pointed at a different implementation or a test double without
+editing it.
+
+**Correct (contract + token in interfaces/, implementation provided by the module):**
+
+```typescript
+// modules/payments/interfaces/payment-gateway.interface.ts
+export const PAYMENT_GATEWAY = Symbol('PAYMENT_GATEWAY');
+
+export interface PaymentGateway {
+  charge(amount: number, currency: string): Promise<{ id: string }>;
+}
+
+// modules/payments/payments.module.ts — the module chooses the implementation
+@Module({
+  providers: [
+    { provide: PAYMENT_GATEWAY, useClass: StripeProvider },
+    PaymentsService,
+  ],
+})
+export class PaymentsModule {}
+
+// modules/payments/services/payments.service.ts — depends on the contract
+@Injectable()
+export class PaymentsService {
+  constructor(@Inject(PAYMENT_GATEWAY) private readonly gateway: PaymentGateway) {}
+}
+```
+
+Why it is right: the service depends on a contract whose implementation the module supplies, so it is
+trivially substitutable for another vendor or a test double.
+
+Reference: [NestJS Custom Providers](https://docs.nestjs.com/fundamentals/custom-providers) | [NestJS Modules](https://docs.nestjs.com/modules)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `di-use-interfaces-tokens`, `di-interface-segregation`.
+
+---
+
+### 3.4 Multiple Focused Services per Module
 
 **Impact: HIGH** — split by responsibility; a module usually has several services
 
@@ -944,7 +1110,7 @@ Reference: [NestJS Providers](https://docs.nestjs.com/providers)
 
 ---
 
-### 3.4 Keep Service Methods Small and Focused
+### 3.5 Keep Service Methods Small and Focused
 
 **Impact: HIGH** — easier to read, test, and change
 
@@ -2862,7 +3028,84 @@ Reference: [NestJS Exception Filters](https://docs.nestjs.com/exception-filters)
 
 ---
 
-### 8.8 Put GraphQL Setup in infra/graphql/
+### 8.8 Handle Uploads Behind a Storage Provider
+
+**Impact: MEDIUM** — one storage abstraction; the Upload scalar is infra
+
+**Purpose.** Uploads cross feature boundaries — avatars, attachments, exports — so they do not belong
+to any one feature. Put object storage behind a single shared storage service and enable the GraphQL
+`Upload` scalar once in `infra/graphql/`. Features accept an `Upload` argument and hand the stream to
+the shared service; they never talk to the storage SDK directly.
+
+**Placement.**
+
+- Shared storage service (wraps the vendor SDK): `common/services/<name>.service.ts`, provided by
+  `common/shared.module.ts`.
+- `Upload` scalar and `graphql-upload` wiring: `infra/graphql/graphql.module.ts`.
+
+**Responsibilities.**
+
+- Wrap the storage SDK in one shared service, reading credentials from `config/`.
+- Expose upload/download through that feature-agnostic service.
+- Register the `Upload` scalar once, in the GraphQL infrastructure module.
+
+**Never.**
+
+- Let a feature import the storage SDK or hold storage credentials.
+- Register the `Upload` scalar in more than one place.
+- Stream a file to storage directly inside a resolver method body.
+
+**Incorrect (each feature wires its own storage SDK):**
+
+```typescript
+// modules/users/resolvers/users.mutation.resolver.ts
+@Mutation(() => User)
+async uploadAvatar(@Args('file', { type: () => GraphQLUpload }) file: Upload) {
+  const s3 = new S3Client({ credentials: { /* ... */ } }); // SDK + credentials in a feature
+  const { createReadStream, mimetype } = await file;
+  await s3.upload(/* ... */);
+}
+```
+
+Why it is wrong: the storage SDK, its credentials, and the upload mechanics leak into a feature and
+get duplicated by the next feature that needs storage.
+
+**Correct (one shared storage service; scalar registered in infra):**
+
+```typescript
+// common/services/storage.service.ts — the single abstraction over object storage
+@Injectable()
+export class StorageService {
+  private readonly client: S3Client;
+
+  constructor(config: ConfigService) {
+    this.client = new S3Client(/* built from typed config */);
+  }
+
+  async put(key: string, body: Buffer, contentType: string): Promise<string> {
+    // ...upload, return the public URL
+  }
+}
+
+// modules/users/resolvers/users.mutation.resolver.ts — thin, feature-agnostic storage
+@Mutation(() => User)
+async uploadAvatar(
+  @Args('file', { type: () => GraphQLUpload }) file: Upload,
+  @CurrentUser() user: AuthenticatedUser,
+): Promise<User> {
+  const url = await this.storageService.put(`avatars/${user.id}`, await streamToBuffer(file), file.mimetype);
+  return this.usersService.setAvatar(user.id, url);
+}
+```
+
+Why it is right: storage lives behind one shared service, the `Upload` scalar is registered once in
+`infra/graphql/`, and every feature uploads the same way.
+
+Reference: [NestJS GraphQL File Uploads](https://docs.nestjs.com/graphql/file-uploads) | [NestJS Modules — Shared modules](https://docs.nestjs.com/modules#shared-modules)
+
+---
+
+### 8.9 Put GraphQL Setup in infra/graphql/
 
 **Impact: MEDIUM** — one place configures the server and its context
 
@@ -2932,7 +3175,7 @@ Reference: [NestJS GraphQL Quick Start](https://docs.nestjs.com/graphql/quick-st
 
 ---
 
-### 8.9 Put Seed Scripts in infra/database/seeds/
+### 8.10 Put Seed Scripts in infra/database/seeds/
 
 **Impact: MEDIUM** — repeatable seed data has one home and one entry point
 
@@ -2988,7 +3231,7 @@ Reference: [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb) | [migra
 
 ---
 
-### 8.10 Use a SharedModule for Cross-Cutting Services
+### 8.11 Use a SharedModule for Cross-Cutting Services
 
 **Impact: MEDIUM-HIGH** — one home for shared providers; explicit by default
 
@@ -3065,7 +3308,68 @@ Reference: [NestJS Modules — Shared modules](https://docs.nestjs.com/modules#s
 
 **Section Impact: MEDIUM**
 
-### 9.1 Use the Nest CLI Generator, Then Adjust
+### 9.1 Use Barrels and Path Aliases Deliberately
+
+**Impact: MEDIUM** — shallow barrels, import by alias, no deep cross-feature imports
+
+**Purpose.** Barrels (`index.ts`) and path aliases are conveniences with a cost: deep barrels hide
+module boundaries and invite import cycles. Govern them explicitly. Use a barrel only at a module's
+public edge (or a folder of like kinds), import across features through the module's public API, and
+use a `@/` alias instead of fragile `../../..` chains.
+
+**Placement.**
+
+- Barrels: a single `index.ts` at a feature's public edge (or one per kind folder), never nested
+  chains.
+- Aliases: `tsconfig.json` `compilerOptions.paths` (for example `"@/*": ["src/*"]`,
+  `"@common/*": ["src/common/*"]`).
+
+**Responsibilities.**
+
+- Re-export only the feature's public API from its barrel.
+- Configure a small, stable set of path aliases.
+- Import another feature through its public API, not into its internals.
+
+**Never.**
+
+- Re-export a feature's internals (repositories, entities, resolvers) from its barrel.
+- Chain barrels (`a/index.ts` -> `b/index.ts` -> `c/index.ts`) so imports become cyclic and opaque.
+- Import across features with deep relative paths into another feature's folders.
+
+**Incorrect (deep relative import into another feature's internals):**
+
+```typescript
+// modules/orders/services/orders.service.ts
+import { User } from '../../users/entities/user.entity';       // reaches into users internals
+import { toUserModel } from '../../users/mappers/user.mapper';
+```
+
+Why it is wrong: orders couples to users' internals, so a refactor inside users breaks orders
+silently.
+
+**Correct (alias + the other feature's public API):**
+
+```json
+// tsconfig.json
+{ "compilerOptions": { "paths": { "@/*": ["src/*"], "@common/*": ["src/common/*"] } } }
+```
+
+```typescript
+// modules/orders/services/orders.service.ts
+import { UsersService } from '@/modules/users/users.service'; // users' public API
+import { DomainException } from '@common/exceptions/domain.exception';
+
+constructor(private readonly usersService: UsersService) {}
+```
+
+Why it is right: imports use a stable alias and go through the other feature's public API, so
+boundaries and refactors stay predictable.
+
+Reference: [TypeScript Path Mapping](https://www.typescriptlang.org/tsconfig#paths) | [NestJS Modules](https://docs.nestjs.com/modules)
+
+---
+
+### 9.2 Use the Nest CLI Generator, Then Adjust
 
 **Impact: MEDIUM** — scaffold with the generator, then place files per this skill
 
@@ -3129,7 +3433,7 @@ Reference: [NestJS CRUD Generator](https://docs.nestjs.com/recipes/crud-generato
 
 ---
 
-### 9.2 Keep Constants and Enums Out of Class Files
+### 9.3 Keep Constants and Enums Out of Class Files
 
 **Impact: MEDIUM** — one home per value; class files contain only their class
 
@@ -3210,7 +3514,75 @@ Reference: [TypeScript Enums](https://www.typescriptlang.org/docs/handbook/enums
 
 ---
 
-### 9.3 File and Class Naming Conventions
+### 9.4 Enforce Module Boundaries with Lint
+
+**Impact: MEDIUM** — the folder rules are checked, not just documented
+
+**Purpose.** Structure rules decay unless they are enforced. Add lint rules that encode the
+dependency direction this skill teaches: `common/` never imports a feature; a feature imports another
+feature only through its public API (its exported services), not its repositories, entities, or
+resolvers; and `infra/` is imported only by the composition root. A boundaries plugin makes these
+violations a CI failure instead of a review comment.
+
+**Placement.** ESLint config at the repository root (`eslint.config.js`), with an architecture plugin
+such as `eslint-plugin-boundaries`. No file lives in `src/` for this rule.
+
+**Responsibilities.**
+
+- Declare element types for `common/`, `infra/`, and each `modules/<feature>/`.
+- Allow the dependency directions this skill defines; forbid the rest.
+- Run lint in CI so a violation blocks the merge.
+
+**Never.**
+
+- Rely on convention alone for a boundary that matters (feature → feature internals).
+- Let a lint suppression silently allow a boundary violation.
+- Point a feature at another feature's repository, entity, or resolver.
+
+**Incorrect (no boundary rule; internals imported freely):**
+
+```typescript
+// modules/orders/services/orders.service.ts
+import { UsersRepository } from '../../users/repositories/users.repository'; // deep into users
+import { UserEntity } from '../../users/entities/user.entity';
+```
+
+Why it is wrong: nothing stops one feature from reaching into another's internals, so the module
+boundary exists only on paper and erodes on the next refactor.
+
+**Correct (boundaries declared and enforced in lint):**
+
+```javascript
+// eslint.config.js (eslint-plugin-boundaries)
+{
+  settings: {
+    'boundaries/elements': [
+      { type: 'common', pattern: 'src/common/**' },
+      { type: 'infra', pattern: 'src/infra/**' },
+      { type: 'feature', pattern: 'src/modules/**', capture: ['feature'] },
+    ],
+  },
+  rules: {
+    'boundaries/element-types': ['error', {
+      default: 'disallow',
+      rules: [
+        { from: 'feature', allow: ['common', 'feature'] }, // feature -> feature: public API only
+        { from: 'common', allow: ['common'] },             // common never imports a feature
+        { from: 'infra', allow: ['common'] },
+      ],
+    }],
+  },
+}
+```
+
+Why it is right: the dependency direction is machine-checked, so a misplaced import fails CI rather
+than silently eroding the structure.
+
+Reference: [eslint-plugin-boundaries](https://github.com/javierbrea/eslint-plugin-boundaries) | [NestJS Modules](https://docs.nestjs.com/modules)
+
+---
+
+### 9.5 File and Class Naming Conventions
 
 **Impact: MEDIUM** — predictable names make placement obvious
 
@@ -3265,6 +3637,8 @@ Why it is wrong: the filename does not say what the file is or where it belongs.
 | Scheduled job | `<feature>.job.ts` | `<Feature>Job` |
 | Custom scalar | `<name>.scalar.ts` | `<Name>Scalar` |
 | Union / interface type | `<name>.union.ts` / `<name>.interface.ts` | — |
+| Port / contract | `<name>.interface.ts` | `<Name>` (+ `<NAME>` token) |
+| Test factory | `test/factories/<name>.factory.ts` | `<Name>Factory` |
 | Passport strategy | `<name>.strategy.ts` | `<Name>Strategy` |
 | Exception | `<name>.exception.ts` | `<Name>Exception` |
 | Schema directive | `<name>.directive.ts` | `<Name>Directive` |
@@ -3280,7 +3654,69 @@ Reference: [NestJS Modules](https://docs.nestjs.com/modules)
 
 ---
 
-### 9.4 Test File Placement
+### 9.6 Place Test Fixtures, Factories, and Helpers in test/
+
+**Impact: MEDIUM** — shared test data has one home, separate from the specs
+
+**Purpose.** Unit specs are co-located with their subject (see `conventions-testing`). The data those
+specs share — seed objects, builders, fake providers, GraphQL request helpers — is not a spec, so it
+does not sit inline in one spec or in a stray `helpers.ts`. It lives in `test/` (or a co-located
+`__support__/` used by a single feature), so e2e and unit tests share one definition. Specs stay
+about behavior; factories stay about shape.
+
+**Placement.**
+
+- Shared across the repository: `test/factories/`, `test/fixtures/`, `test/helpers/`.
+- Single feature only: beside the specs, for example `modules/<feature>/services/__support__/`.
+
+**Responsibilities.**
+
+- Give builders and fixtures one home; name them for the entity (`UserFactory`, `aUser()`).
+- Keep e2e helpers (an authenticated GraphQL client, a database reset) in `test/helpers/`.
+- Drive GraphQL e2e tests by POSTing to `/graphql` against the real `AppModule`.
+
+**Never.**
+
+- Inline a shared fixture in one spec that other specs copy.
+- Put a factory or fixture in `src/` — it is test-only.
+- Hit a real external service from a helper (see `nestjs-best-practices` -> `test-mock-external-services`).
+
+**Incorrect (shared test data copy-pasted into each spec):**
+
+```typescript
+// test/users.e2e-spec.ts and test/orders.e2e-spec.ts
+const user = { id: '1', email: 'a@b.com', roles: ['user'] }; // copy 1
+const user = { id: '1', email: 'a@b.com', roles: ['user'] }; // copy 2, drifts
+```
+
+Why it is wrong: the same fixture is duplicated per spec and drifts as the shape changes.
+
+**Correct (one factory in test/, reused; e2e drives GraphQL):**
+
+```typescript
+// test/factories/user.factory.ts
+export function aUser(overrides: Partial<AuthenticatedUser> = {}): AuthenticatedUser {
+  return { id: '1', email: 'a@b.com', roles: ['user'], ...overrides };
+}
+
+// test/helpers/graphql.ts — one e2e request helper
+export const gql = (app: INestApplication, query: string, variables?: object) =>
+  request(app.getHttpServer()).post('/graphql').send({ query, variables });
+
+// test/users.e2e-spec.ts
+const res = await gql(app, `query { user(id: "1") { id email } }`).expect(200);
+```
+
+Why it is right: the fixture has one home and one shape, the e2e helper is shared, and the specs stay
+about behavior.
+
+Reference: [NestJS Testing](https://docs.nestjs.com/fundamentals/testing) | [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `test-use-testing-module`, `test-e2e-supertest`.
+
+---
+
+### 9.7 Test File Placement
 
 **Impact: MEDIUM** — tests live next to what they test
 

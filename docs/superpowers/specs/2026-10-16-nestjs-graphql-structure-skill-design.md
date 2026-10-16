@@ -306,8 +306,8 @@ adding a new file to the map together with its rule.
 
 ## 14. Implementation note (2026-10-16)
 
-Implemented as v1.2.0 (30 → 42 rules). Twelve rules were added beyond the initial deliverable,
-across two tiers of real-project structure gaps.
+Implemented as v1.3.0 (30 → 48 rules). Eighteen rules were added beyond the initial deliverable,
+across three tiers of real-project structure gaps.
 
 Tier A (v1.1.0): `struct-auth-feature`, `struct-module-kinds`, `infra-exceptions`,
 `infra-common-types`, `infra-directives`, `type-pagination`.
@@ -315,13 +315,17 @@ Tier A (v1.1.0): `struct-auth-feature`, `struct-module-kinds`, `infra-exceptions
 Tier B (v1.2.0): `resolver-subscriptions`, `type-unions-interfaces`, `service-external-providers`,
 `service-background-jobs`, `infra-custom-scalars`, `infra-seeds`.
 
+Tier C (v1.3.0): `struct-feature-decomposition`, `service-interfaces-tokens`,
+`conventions-barrels-aliases`, `conventions-module-boundaries`, `infra-file-uploads`,
+`conventions-test-fixtures`.
+
 - **Pagination policy.** Cursor/Relay connections are the default (`type-pagination`); offset
   (`page`/`limit`) is allowed only for small, bounded lists. `type-args` now cross-references
   `type-pagination` for this reason.
 - **DataLoader scope.** This supersedes the §7 tree comment. DataLoaders are **request-scoped
   providers** injected where used (see `infra-graphql` and `relations-dataloader`), not built into
   the GraphQL context object.
-- **Base map additions.** `common/{constants,directives,exceptions,pagination,types}/`, app-level
-  modules (`auth/`, `health/`), feature `exceptions/`, and the Tier B folders (`providers/`,
-  `processors/`, `jobs/`, `infra/pubsub/`, `infra/database/seeds/`) — all reflected in
-  `struct-canonical-layout`.
+- **Base map additions.** `common/{constants,directives,exceptions,interfaces,pagination,types}/`,
+  app-level modules (`auth/`, `health/`), the feature folders `interfaces/`, `exceptions/`, and the
+  Tier B folders (`providers/`, `processors/`, `jobs/`, `infra/pubsub/`, `infra/database/seeds/`),
+  plus `test/{fixtures,factories,helpers}/` — all reflected in `struct-canonical-layout`.

@@ -18,6 +18,7 @@ full tree, and the linked rule gives the file's purpose and examples.
 | File kind | Location | Rule |
 |-----------|----------|------|
 | Feature module | `modules/<f>/<f>.module.ts` | `module-feature-module` |
+| Nested sub-module | `modules/<f>/<submodule>/` | `struct-feature-decomposition` |
 | App-level module (auth, health) | `modules/<name>/<name>.module.ts` | `struct-module-kinds` |
 | Auth feature module | `modules/auth/auth.module.ts` | `struct-auth-feature` |
 | Passport strategy | `modules/auth/strategies/<name>.strategy.ts` | `struct-auth-feature` |
@@ -36,6 +37,8 @@ full tree, and the linked rule gives the file's purpose and examples.
 | Pagination args | `modules/<f>/dto/<f>-pagination.args.ts` | `type-pagination` |
 | Constants / enums | `modules/<f>/constants/` | `conventions-constants-enums` |
 | Feature-local exception | `modules/<f>/exceptions/<name>.exception.ts` | `infra-exceptions` |
+| Feature port / token | `modules/<f>/interfaces/<name>.interface.ts` | `service-interfaces-tokens` |
+| Shared port / token | `common/interfaces/<name>.interface.ts` | `service-interfaces-tokens` |
 | Persistence entity / object type | `modules/<f>/entities/<f>.entity.ts` | `data-entity-mongodb` |
 | GraphQL-only model (split) | `modules/<f>/models/<f>.model.ts` | `data-models-mappers` |
 | GraphQL union / interface | `modules/<f>/models/<name>.union.ts` | `type-unions-interfaces` |
@@ -62,6 +65,9 @@ full tree, and the linked rule gives the file's purpose and examples.
 | Generated SDL | path from `autoSchemaFile` | `struct-schema-artifact` |
 | Unit test | co-located `<name>.spec.ts` | `conventions-testing` |
 | E2E test | `test/<f>.e2e-spec.ts` | `conventions-testing` |
+| Test fixture / factory / helper | `test/{fixtures,factories,helpers}/` | `conventions-test-fixtures` |
+| Path aliases | `tsconfig.json` `paths` | `conventions-barrels-aliases` |
+| Boundary lint config | repo root `eslint.config.js` | `conventions-module-boundaries` |
 
 **Never.**
 

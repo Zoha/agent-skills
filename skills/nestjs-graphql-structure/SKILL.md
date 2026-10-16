@@ -4,7 +4,7 @@ description: Application structure and file-placement guide for NestJS GraphQL (
 license: MIT
 metadata:
   author: Zoha
-  version: "1.2.0"
+  version: "1.3.0"
 ---
 
 # NestJS GraphQL Structure
@@ -48,6 +48,7 @@ Reference these guidelines when:
 
 - `struct-auth-feature` - Keep Authentication in Its Own Feature Module
 - `struct-canonical-layout` - Canonical Application Structure
+- `struct-feature-decomposition` - Split a Feature into Sub-Modules When It Grows
 - `struct-file-placement-table` - File Placement Table
 - `struct-module-kinds` - Distinguish Domain Features from App-Level Modules
 - `struct-schema-artifact` - Locate and Policy the Generated Schema Artifact
@@ -62,6 +63,7 @@ Reference these guidelines when:
 
 - `service-background-jobs` - Keep Queue Processors and Scheduled Jobs with the Feature
 - `service-external-providers` - Keep Third-Party Clients in providers/
+- `service-interfaces-tokens` - Declare Service Contracts and Injection Tokens in interfaces/
 - `service-single-responsibility` - Multiple Focused Services per Module
 - `service-small-focused-methods` - Keep Service Methods Small and Focused
 
@@ -102,15 +104,19 @@ Reference these guidelines when:
 - `infra-database` - Put Database Setup and Migrations in infra/database/
 - `infra-directives` - Put Schema Directives in common/directives/
 - `infra-exceptions` - Put Exceptions in exceptions/
+- `infra-file-uploads` - Handle Uploads Behind a Storage Provider
 - `infra-graphql` - Put GraphQL Setup in infra/graphql/
 - `infra-seeds` - Put Seed Scripts in infra/database/seeds/
 - `infra-shared-module` - Use a SharedModule for Cross-Cutting Services
 
 ### 9. Conventions & Testing (MEDIUM)
 
+- `conventions-barrels-aliases` - Use Barrels and Path Aliases Deliberately
 - `conventions-cli-generator` - Use the Nest CLI Generator, Then Adjust
 - `conventions-constants-enums` - Keep Constants and Enums Out of Class Files
+- `conventions-module-boundaries` - Enforce Module Boundaries with Lint
 - `conventions-naming` - File and Class Naming Conventions
+- `conventions-test-fixtures` - Place Test Fixtures, Factories, and Helpers in test/
 - `conventions-testing` - Test File Placement
 <!-- GENERATED:END:rules -->
 

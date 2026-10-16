@@ -60,6 +60,8 @@ Why it is wrong: the filename does not say what the file is or where it belongs.
 | Scheduled job | `<feature>.job.ts` | `<Feature>Job` |
 | Custom scalar | `<name>.scalar.ts` | `<Name>Scalar` |
 | Union / interface type | `<name>.union.ts` / `<name>.interface.ts` | — |
+| Port / contract | `<name>.interface.ts` | `<Name>` (+ `<NAME>` token) |
+| Test factory | `test/factories/<name>.factory.ts` | `<Name>Factory` |
 | Passport strategy | `<name>.strategy.ts` | `<Name>Strategy` |
 | Exception | `<name>.exception.ts` | `<Name>Exception` |
 | Schema directive | `<name>.directive.ts` | `<Name>Directive` |

@@ -36,6 +36,7 @@ src/
 │   ├── filters/                   # GraphQL exception filters
 │   ├── guards/                    # shared auth/roles guards
 │   ├── interceptors/              # logging, transform
+│   ├── interfaces/                # shared ports (interface + injection token)
 │   ├── pagination/                # generic Paginated<T> factory + PageInfo
 │   ├── pipes/                     # shared validation/parse pipes
 │   ├── scalars/                   # custom GraphQL scalars
@@ -86,8 +87,10 @@ src/
     │   │   └── <feature>-<action>.listener.ts   # listener
     │   ├── processors/                          # OPTIONAL: queue processors (e.g. BullMQ @Processor)
     │   ├── jobs/                                # OPTIONAL: scheduled/cron jobs
+    │   ├── interfaces/                          # OPTIONAL: ports + injection tokens for this feature
     │   ├── exceptions/                          # OPTIONAL: feature-local exception classes
-    │   └── guards/                              # OPTIONAL: feature-local guards/decorators
+    │   ├── guards/                              # OPTIONAL: feature-local guards/decorators
+    │   └── <submodule>/                         # OPTIONAL: nested module when the feature grows (see struct-feature-decomposition)
     ├── auth/                      # app-level module: authentication (see struct-auth-feature)
     │   ├── auth.module.ts
     │   ├── resolvers/             # login / refresh / logout mutations
@@ -95,7 +98,10 @@ src/
     │   └── strategies/            # Passport strategies (jwt.strategy.ts, local.strategy.ts)
     └── health/                    # app-level module: liveness/readiness (see struct-module-kinds)
 test/
-└── <feature>.e2e-spec.ts          # e2e specs (unit specs are co-located)
+├── <feature>.e2e-spec.ts          # e2e specs (unit specs are co-located)
+├── factories/                     # test data builders (aUser(), OrderFactory)
+├── fixtures/                      # static test data
+└── helpers/                       # shared test helpers (GraphQL request, DB reset)
 ```
 
 **Consequences of the map.**
