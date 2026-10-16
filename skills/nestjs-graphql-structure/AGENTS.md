@@ -1,6 +1,6 @@
 # NestJS GraphQL Application Structure
 
-**Version 1.3.0**
+**Version 1.3.1**
 NestJS GraphQL Structure
 October 2026
 
@@ -13,7 +13,7 @@ October 2026
 
 ## Abstract
 
-File-placement and anatomy guide for NestJS GraphQL applications, designed for AI agents and LLMs. Teaches where every file belongs in a feature-first, code-first codebase — the base structure map plus per-file rules for modules, services, resolvers, inputs, entities, repositories, loaders, events, auth, exceptions, pagination, subscriptions, providers, background jobs, scalars, seeds, interfaces/tokens, uploads, and test fixtures — each with purpose, responsibilities, and incorrect-vs-correct examples. It also covers how modules connect to resolve GraphQL fields and relations, including module-resolution concerns such as circular dependencies, while deferring behavioral concerns to the nestjs-best-practices skill.
+File-placement and anatomy guide for NestJS GraphQL applications, designed for AI agents and LLMs. Teaches where every file belongs in a feature-first, code-first codebase — the base structure map plus per-file rules for modules, services, resolvers, inputs, entities, repositories, loaders, events, auth, exceptions, pagination, subscriptions, providers, background jobs, scalars, seeds, interfaces/tokens, and test fixtures — each with purpose, responsibilities, and incorrect-vs-correct examples. It also covers how modules connect to resolve GraphQL fields and relations, including module-resolution concerns such as circular dependencies, while deferring behavioral concerns to the nestjs-best-practices skill.
 
 ---
 
@@ -64,10 +64,9 @@ File-placement and anatomy guide for NestJS GraphQL applications, designed for A
    - 8.5 [Put Database Setup and Migrations in infra/database/](#85-put-database-setup-and-migrations-in-infra-database-)
    - 8.6 [Put Schema Directives in common/directives/](#86-put-schema-directives-in-common-directives-)
    - 8.7 [Put Exceptions in exceptions/](#87-put-exceptions-in-exceptions-)
-   - 8.8 [Handle Uploads Behind a Storage Provider](#88-handle-uploads-behind-a-storage-provider)
-   - 8.9 [Put GraphQL Setup in infra/graphql/](#89-put-graphql-setup-in-infra-graphql-)
-   - 8.10 [Put Seed Scripts in infra/database/seeds/](#810-put-seed-scripts-in-infra-database-seeds-)
-   - 8.11 [Use a SharedModule for Cross-Cutting Services](#811-use-a-sharedmodule-for-cross-cutting-services)
+   - 8.8 [Put GraphQL Setup in infra/graphql/](#88-put-graphql-setup-in-infra-graphql-)
+   - 8.9 [Put Seed Scripts in infra/database/seeds/](#89-put-seed-scripts-in-infra-database-seeds-)
+   - 8.10 [Use a SharedModule for Cross-Cutting Services](#810-use-a-sharedmodule-for-cross-cutting-services)
 9. [Conventions & Testing](#9-conventions-testing) — **MEDIUM**
    - 9.1 [Use Barrels and Path Aliases Deliberately](#91-use-barrels-and-path-aliases-deliberately)
    - 9.2 [Use the Nest CLI Generator, Then Adjust](#92-use-the-nest-cli-generator-then-adjust)
@@ -3028,84 +3027,7 @@ Reference: [NestJS Exception Filters](https://docs.nestjs.com/exception-filters)
 
 ---
 
-### 8.8 Handle Uploads Behind a Storage Provider
-
-**Impact: MEDIUM** — one storage abstraction; the Upload scalar is infra
-
-**Purpose.** Uploads cross feature boundaries — avatars, attachments, exports — so they do not belong
-to any one feature. Put object storage behind a single shared storage service and enable the GraphQL
-`Upload` scalar once in `infra/graphql/`. Features accept an `Upload` argument and hand the stream to
-the shared service; they never talk to the storage SDK directly.
-
-**Placement.**
-
-- Shared storage service (wraps the vendor SDK): `common/services/<name>.service.ts`, provided by
-  `common/shared.module.ts`.
-- `Upload` scalar and `graphql-upload` wiring: `infra/graphql/graphql.module.ts`.
-
-**Responsibilities.**
-
-- Wrap the storage SDK in one shared service, reading credentials from `config/`.
-- Expose upload/download through that feature-agnostic service.
-- Register the `Upload` scalar once, in the GraphQL infrastructure module.
-
-**Never.**
-
-- Let a feature import the storage SDK or hold storage credentials.
-- Register the `Upload` scalar in more than one place.
-- Stream a file to storage directly inside a resolver method body.
-
-**Incorrect (each feature wires its own storage SDK):**
-
-```typescript
-// modules/users/resolvers/users.mutation.resolver.ts
-@Mutation(() => User)
-async uploadAvatar(@Args('file', { type: () => GraphQLUpload }) file: Upload) {
-  const s3 = new S3Client({ credentials: { /* ... */ } }); // SDK + credentials in a feature
-  const { createReadStream, mimetype } = await file;
-  await s3.upload(/* ... */);
-}
-```
-
-Why it is wrong: the storage SDK, its credentials, and the upload mechanics leak into a feature and
-get duplicated by the next feature that needs storage.
-
-**Correct (one shared storage service; scalar registered in infra):**
-
-```typescript
-// common/services/storage.service.ts — the single abstraction over object storage
-@Injectable()
-export class StorageService {
-  private readonly client: S3Client;
-
-  constructor(config: ConfigService) {
-    this.client = new S3Client(/* built from typed config */);
-  }
-
-  async put(key: string, body: Buffer, contentType: string): Promise<string> {
-    // ...upload, return the public URL
-  }
-}
-
-// modules/users/resolvers/users.mutation.resolver.ts — thin, feature-agnostic storage
-@Mutation(() => User)
-async uploadAvatar(
-  @Args('file', { type: () => GraphQLUpload }) file: Upload,
-  @CurrentUser() user: AuthenticatedUser,
-): Promise<User> {
-  const url = await this.storageService.put(`avatars/${user.id}`, await streamToBuffer(file), file.mimetype);
-  return this.usersService.setAvatar(user.id, url);
-}
-```
-
-Why it is right: storage lives behind one shared service, the `Upload` scalar is registered once in
-`infra/graphql/`, and every feature uploads the same way.
-
-Reference: [NestJS GraphQL File Uploads](https://docs.nestjs.com/graphql/file-uploads) | [NestJS Modules — Shared modules](https://docs.nestjs.com/modules#shared-modules)
-
----
-
-### 8.9 Put GraphQL Setup in infra/graphql/
+### 8.8 Put GraphQL Setup in infra/graphql/
 
 **Impact: MEDIUM** — one place configures the server and its context
 
@@ -3175,7 +3097,7 @@ Reference: [NestJS GraphQL Quick Start](https://docs.nestjs.com/graphql/quick-st
 
 ---
 
-### 8.10 Put Seed Scripts in infra/database/seeds/
+### 8.9 Put Seed Scripts in infra/database/seeds/
 
 **Impact: MEDIUM** — repeatable seed data has one home and one entry point
 
@@ -3231,7 +3153,7 @@ Reference: [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb) | [migra
 
 ---
 
-### 8.11 Use a SharedModule for Cross-Cutting Services
+### 8.10 Use a SharedModule for Cross-Cutting Services
 
 **Impact: MEDIUM-HIGH** — one home for shared providers; explicit by default
 

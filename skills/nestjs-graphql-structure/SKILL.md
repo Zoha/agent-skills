@@ -4,7 +4,7 @@ description: Application structure and file-placement guide for NestJS GraphQL (
 license: MIT
 metadata:
   author: Zoha
-  version: "1.3.0"
+  version: "1.3.1"
 ---
 
 # NestJS GraphQL Structure
@@ -104,7 +104,6 @@ Reference these guidelines when:
 - `infra-database` - Put Database Setup and Migrations in infra/database/
 - `infra-directives` - Put Schema Directives in common/directives/
 - `infra-exceptions` - Put Exceptions in exceptions/
-- `infra-file-uploads` - Handle Uploads Behind a Storage Provider
 - `infra-graphql` - Put GraphQL Setup in infra/graphql/
 - `infra-seeds` - Put Seed Scripts in infra/database/seeds/
 - `infra-shared-module` - Use a SharedModule for Cross-Cutting Services

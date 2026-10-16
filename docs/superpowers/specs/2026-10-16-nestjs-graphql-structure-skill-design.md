@@ -306,7 +306,7 @@ adding a new file to the map together with its rule.
 
 ## 14. Implementation note (2026-10-16)
 
-Implemented as v1.3.0 (30 → 48 rules). Eighteen rules were added beyond the initial deliverable,
+Implemented as v1.3.1 (30 → 47 rules). Seventeen rules were added beyond the initial deliverable,
 across three tiers of real-project structure gaps.
 
 Tier A (v1.1.0): `struct-auth-feature`, `struct-module-kinds`, `infra-exceptions`,
@@ -316,8 +316,7 @@ Tier B (v1.2.0): `resolver-subscriptions`, `type-unions-interfaces`, `service-ex
 `service-background-jobs`, `infra-custom-scalars`, `infra-seeds`.
 
 Tier C (v1.3.0): `struct-feature-decomposition`, `service-interfaces-tokens`,
-`conventions-barrels-aliases`, `conventions-module-boundaries`, `infra-file-uploads`,
-`conventions-test-fixtures`.
+`conventions-barrels-aliases`, `conventions-module-boundaries`, `conventions-test-fixtures`.
 
 - **Pagination policy.** Cursor/Relay connections are the default (`type-pagination`); offset
   (`page`/`limit`) is allowed only for small, bounded lists. `type-args` now cross-references
