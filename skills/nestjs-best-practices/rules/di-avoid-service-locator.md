@@ -17,13 +17,13 @@ Avoid using `ModuleRef.get()` or global containers to resolve dependencies at ru
 export class OrdersService {
   constructor(private moduleRef: ModuleRef) {}
 
-  async createOrder(dto: CreateOrderDto): Promise<Order> {
+  async createOrder(input: CreateOrderInput): Promise<Order> {
     // Dependencies are hidden - not visible in constructor
     const usersService = this.moduleRef.get(UsersService);
     const inventoryService = this.moduleRef.get(InventoryService);
     const paymentService = this.moduleRef.get(PaymentService);
 
-    const user = await usersService.findOne(dto.userId);
+    const user = await usersService.findOne(input.userId);
     // ... rest of logic
   }
 }
@@ -58,9 +58,9 @@ export class OrdersService {
     private paymentService: PaymentService,
   ) {}
 
-  async createOrder(dto: CreateOrderDto): Promise<Order> {
-    const user = await this.usersService.findOne(dto.userId);
-    const inventory = await this.inventoryService.check(dto.items);
+  async createOrder(input: CreateOrderInput): Promise<Order> {
+    const user = await this.usersService.findOne(input.userId);
+    const inventory = await this.inventoryService.check(input.items);
     // Dependencies are clear and testable
   }
 }

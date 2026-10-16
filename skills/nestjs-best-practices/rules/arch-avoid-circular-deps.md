@@ -60,8 +60,8 @@ export class OrdersModule {}
 export class UsersService {
   constructor(private eventEmitter: EventEmitter2) {}
 
-  async createUser(data: CreateUserDto) {
-    const user = await this.userRepo.save(data);
+  async createUser(input: CreateUserInput) {
+    const user = await this.userRepo.save(input);
     this.eventEmitter.emit('user.created', user);
     return user;
   }

@@ -85,6 +85,7 @@ export abstract class Event {
   kind: EventKind;
 
   @Field()
+  @Prop({ type: Date, required: true })
   time: Date;
 }
 
@@ -93,6 +94,7 @@ export abstract class Event {
 @Schema()
 export class ClickedLinkEvent extends Event {
   @Field()
+  @Prop({ type: String, required: true })
   url: string;
 }
 
@@ -106,6 +108,10 @@ events(): Promise<EventDocument[]> {
 Why it is right: `resolveType` reads the stored discriminator key and returns the concrete type, so
 any resolver that returns `Event` publishes the right subtype automatically, and the mapping lives
 in one registry.
+
+In the merged case the base class carries BOTH `@Schema({...})` and `@InterfaceType(...)` — storage
+and the GraphQL type on one class — and a subtype that is not published polymorphically is a plain
+`@ObjectType()`/`@Schema()` entity (see `data-discriminators`).
 
 **Union variant (same registry, no interface needed):**
 

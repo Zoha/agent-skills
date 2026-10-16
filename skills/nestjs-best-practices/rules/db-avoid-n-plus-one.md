@@ -13,13 +13,13 @@ N+1 queries occur when a list of parents is fetched, then one extra query runs f
 
 ```typescript
 // A field resolver that queries once per parent
-// modules/users/resolvers/user.resolver.ts
+// modules/posts/resolvers/user-posts.resolver.ts — the data owner (PostsModule) owns User.posts
 @Resolver(() => User)
-export class UserResolver {
+export class UserPostsResolver {
   @ResolveField(() => [Post])
   posts(@Parent() user: User): Promise<Post[]> {
     // Runs once per user => N queries
-    return this.postsRepository.findByUserId(user._id.toString());
+    return this.postsService.findByUserId(user._id.toString());
   }
 }
 
@@ -37,12 +37,12 @@ async users(): Promise<User[]> {
 // Use DataLoader for GraphQL to batch and cache per-parent loads
 import DataLoader from 'dataloader';
 
-// modules/users/loaders/user-posts.loader.ts — one instance per request
+// modules/posts/loaders/posts.loader.ts — one instance per request, in the data-owner module
 @Injectable({ scope: Scope.REQUEST })
-export class UserPostsLoader {
+export class PostsLoader {
   constructor(private readonly postsService: PostsService) {}
 
-  readonly batchPosts = new DataLoader<string, Post[]>(async (userIds) => {
+  private readonly byUserId = new DataLoader<string, Post[]>(async (userIds) => {
     // One query for every user's posts
     const posts = await this.postsService.findByUserIds([...userIds]);
 
@@ -57,20 +57,30 @@ export class UserPostsLoader {
     // Return in the same order as the input keys (DataLoader contract)
     return userIds.map((id) => postsMap.get(id) || []);
   });
+
+  loadByUserId(id: string): Promise<Post[]> {
+    return this.byUserId.load(id);
+  }
 }
 
-// In the field resolver — the loader batches every call in the tick into one query
-@ResolveField()
-async posts(@Parent() user: User): Promise<Post[]> {
-  return this.userPostsLoader.batchPosts.load(user._id.toString());
+// modules/posts/resolvers/user-posts.resolver.ts — the loader batches every call in the tick
+// into one query; the data owner (PostsModule) owns the field (see relations-owning-module)
+@Resolver(() => User)
+export class UserPostsResolver {
+  constructor(private readonly postsLoader: PostsLoader) {}
+
+  @ResolveField(() => [Post])
+  posts(@Parent() user: User): Promise<Post[]> {
+    return this.postsLoader.loadByUserId(user._id.toString());
+  }
 }
 
-// For a computed aggregate, compute it in the database, not in a loop
+// For a computed aggregate, compute it in the database, in the data-owner module, not in a loop
 @Injectable()
-export class UsersService {
-  async getUsersWithPostCounts(): Promise<UserWithPostCount[]> {
-    return this.usersRepository.countPostsByUser();
-    // e.g. a Mongo aggregation: { $project: { postCount: { $size: '$postIds' } } }
+export class PostsService {
+  countByUserIds(userIds: string[]): Promise<Map<string, number>> {
+    return this.postsRepository.countByUserIds(userIds);
+    // e.g. a Mongo aggregation: { $group: { _id: '$userId', count: { $sum: 1 } } }
   }
 }
 
@@ -80,6 +90,6 @@ MongooseModule.forRoot(uri, {
 });
 ```
 
-The loader's lifetime and placement are owned by `relations-dataloader` in `nestjs-graphql-structure`; this rule owns making the batch function itself do one query.
+The loader's lifetime and placement are owned by `relations-dataloader` in `nestjs-graphql-structure` (file `loaders/<feature>.loader.ts`, class `<Feature>Loader`, in the module that owns the data); this rule owns making the batch function itself do one query. A relation field whose data lives in another module is declared and resolved in that module — see `relations-owning-module`.
 
 Reference: [graphql/dataloader](https://github.com/graphql/dataloader)

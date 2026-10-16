@@ -13,7 +13,7 @@ Where every file belongs in a NestJS GraphQL (code-first) application, and how e
 
 It is deliberately separate from the `nestjs-best-practices` skill. That skill covers framework behavior (dependency-injection depth, security, performance, error handling, microservices, DevOps); this one covers structure and module composition. Where they overlap (feature modules, circular dependencies), this skill looks at it through a placement lens and cross-references the other skill for behavioral depth.
 
-This skill covers **both** structure rules (where a file lives) **and module-resolution rules** (how modules connect at runtime — e.g. circular-dependency resolution). Module-resolution rules live in Sections 2 and 7.
+This skill covers **both** structure rules (where a file lives) **and module-resolution rules** (how modules connect at runtime — e.g. circular-dependency resolution). Module-resolution rules live in Sections 2 and 3.
 
 ## When to Apply
 
@@ -35,11 +35,11 @@ Reference these guidelines when:
 |----------|----------|--------|--------|
 | 1 | Application Structure | CRITICAL | `struct-` |
 | 2 | Modules & Bootstrap | CRITICAL | `module-` |
-| 3 | Services | HIGH | `service-` |
-| 4 | GraphQL Resolvers | HIGH | `resolver-` |
-| 5 | GraphQL Types & Inputs | HIGH | `type-` |
-| 6 | Data Access | MEDIUM-HIGH | `data-` |
-| 7 | Relations & Cross-Module | CRITICAL | `relations-` |
+| 3 | Relations & Cross-Module | CRITICAL | `relations-` |
+| 4 | Services | HIGH | `service-` |
+| 5 | GraphQL Resolvers | HIGH | `resolver-` |
+| 6 | GraphQL Types & Inputs | HIGH | `type-` |
+| 7 | Data Access | MEDIUM-HIGH | `data-` |
 | 8 | Config, Common & Infra | MEDIUM | `infra-` |
 | 9 | Conventions & Testing | MEDIUM | `conventions-` |
 <!-- GENERATED:END:sections -->
@@ -62,7 +62,15 @@ Reference these guidelines when:
 - `module-export-policy` - Export Only the Feature's Public API (Its Services)
 - `module-feature-module` - The Feature Module File
 
-### 3. Services (HIGH)
+### 3. Relations & Cross-Module (CRITICAL)
+
+- `relations-avoid-circular` - Resolve Circular Module Dependencies
+- `relations-dataloader` - Batch Relations with a Per-Request DataLoader
+- `relations-events` - Decouple Modules with Events
+- `relations-field-resolvers` - Resolve Relations with @ResolveField
+- `relations-owning-module` - Put a Relation Field in the Module That Owns Its Data
+
+### 4. Services (HIGH)
 
 - `service-background-jobs` - Keep Queue Processors and Scheduled Jobs with the Feature
 - `service-external-providers` - Keep Third-Party Clients in providers/
@@ -70,14 +78,14 @@ Reference these guidelines when:
 - `service-single-responsibility` - Multiple Focused Services per Module
 - `service-small-focused-methods` - Keep Service Methods Small and Focused
 
-### 4. GraphQL Resolvers (HIGH)
+### 5. GraphQL Resolvers (HIGH)
 
 - `resolver-computed-fields` - Declare Fields on the Type; Resolve Computed Ones in the Resolver
 - `resolver-organization` - Split Resolvers by Role into resolvers/
 - `resolver-per-type` - One Resolver File per Type That Has Field Resolvers
 - `resolver-subscriptions` - Put Subscription Resolvers in resolvers/ with PubSub in infra/
 
-### 5. GraphQL Types & Inputs (HIGH)
+### 6. GraphQL Types & Inputs (HIGH)
 
 - `type-args` - Define @Args Classes in dto/
 - `type-inputs` - Define GraphQL Inputs in dto/
@@ -85,7 +93,7 @@ Reference these guidelines when:
 - `type-polymorphic-discriminators` - Publish Discriminated Documents as an Interface or Union
 - `type-unions-interfaces` - Place Union and Interface Types with the Module's Types
 
-### 6. Data Access (MEDIUM-HIGH)
+### 7. Data Access (MEDIUM-HIGH)
 
 - `data-derived-fields` - Compute Derived Fields; Do Not Store Them
 - `data-discriminators` - Model Polymorphic Subtypes with Discriminators
@@ -94,14 +102,6 @@ Reference these guidelines when:
 - `data-models-mappers` - Split models/ and mappers/ When API Differs From Storage
 - `data-mongoose-schema` - Mongoose Schema Best Practices for Shared Types
 - `data-repository` - Keep Data Access in repositories/
-
-### 7. Relations & Cross-Module (CRITICAL)
-
-- `relations-avoid-circular` - Resolve Circular Module Dependencies
-- `relations-dataloader` - Batch Relations with a Per-Request DataLoader
-- `relations-events` - Decouple Modules with Events
-- `relations-field-resolvers` - Resolve Relations with @ResolveField
-- `relations-owning-module` - Put a Relation Field in the Module That Owns Its Data
 
 ### 8. Config, Common & Infra (MEDIUM)
 

@@ -13,18 +13,24 @@ tags: mongodb, derived-fields, denormalization, virtuals, compute
 from other fields, and whole sub-objects already stored elsewhere. Storing a derived value creates a
 second source of truth, so every write path must remember to keep the copy in sync and the copies
 drift. Keep the source on the document and derive the value where it is read — a resolver
-(`@ResolveField`), a mapper, a Mongoose virtual, or an aggregation. Persist a derived value only as
-a deliberate materialised cache you own the recomputation of.
+(`@ResolveField`) or an aggregation for a field exposed on the `@ObjectType`, or a Mongoose virtual.
+A field exposed on the `@ObjectType` is declared type-only and produced by exactly one
+`@ResolveField` (or an aggregation); a mapper converts the stored fields and must **never** populate
+a field that has a resolver — a derived value a mapper produces is only for internal, non-`@Field`
+use. Persist a derived value only as a deliberate materialised cache you own the recomputation of.
 
-**Placement.** Source fields live on the entity (`entities/`). The derived value is produced in a
-resolver (`resolvers/<type>.resolver.ts`, see `resolver-computed-fields`), a mapper (`mappers/`, see
-`data-models-mappers`), or a Mongoose virtual on the schema.
+**Placement.** Source fields live on the entity (`entities/`). An exposed derived field is produced
+in a resolver (`resolvers/<type>.resolver.ts`, see `resolver-computed-fields`) or an aggregation, or
+as a Mongoose virtual on the schema; a mapper (`mappers/`, see `data-models-mappers`) converts the
+stored fields only and never populates a field that has a resolver.
 
 **Responsibilities.**
 
 - Store the minimal source data; derive everything else at read time.
 - Resolve a derived field with `@ResolveField` (declared type-only on the `@ObjectType`) or as a
   virtual — never as an extra `@Prop`.
+- Never let a mapper populate a field that has a `@ResolveField` — a value a mapper produces is only
+  for internal, non-`@Field` use (see `data-models-mappers`).
 - Embed a sub-document only when the parent owns it; **reference** data owned elsewhere instead of
   copying it.
 - If a value is materialised for performance, treat it as a cache: recompute it on every write (or
@@ -127,4 +133,4 @@ Computed Values pattern; it is a conscious trade, not the default.
 
 Reference: [MongoDB Data Modeling Best Practices](https://www.mongodb.com/docs/manual/data-modeling/best-practices/) | [MongoDB Computed Values Pattern](https://www.mongodb.com/docs/manual/data-modeling/design-patterns/computed-values/)
 
-**Behavioral depth.** See `nestjs-best-practices` -> `use-types-serialization`.
+**Behavioral depth.** See `nestjs-best-practices` -> `db-avoid-n-plus-one` (batch or aggregate derived values rather than issuing a query per parent).

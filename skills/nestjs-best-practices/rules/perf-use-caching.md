@@ -83,30 +83,48 @@ export class ProductsService {
   }
 
   // Invalidate cache on changes
-  async updateProduct(id: string, dto: UpdateProductDto): Promise<Product> {
-    const product = await this.productsRepo.save({ id, ...dto });
+  async updateProduct(id: string, input: UpdateProductInput): Promise<Product> {
+    const product = await this.productsRepo.save({ id, ...input });
     await this.cache.del('products:popular'); // Invalidate
     return product;
   }
 }
 
-// Decorator-based caching with auto-interceptor (interceptors live in common/interceptors/)
+// Decorator-based caching for GraphQL. Define GraphQLCacheInterceptor once in
+// common/interceptors/ (see use-interceptors) — the GraphQL-aware version derives its
+// key from the field and its args, so findOne(id: 'a') and findOne(id: 'b') never
+// share an entry (unlike a static @CacheKey).
+
+// Apply it per resolver; @SetMetadata('cacheTTL', ...) sets the TTL
 @Resolver(() => Category)
-@UseInterceptors(CacheInterceptor)
+@UseInterceptors(GraphQLCacheInterceptor)
 export class CategoriesQueryResolver {
   constructor(private readonly categoriesService: CategoriesService) {}
 
   @Query(() => [Category])
-  @CacheTTL(30 * 60 * 1000) // 30 minutes - categories rarely change
+  @SetMetadata('cacheTTL', 30 * 60 * 1000) // 30 minutes - categories rarely change
   findAll(): Promise<Category[]> {
     return this.categoriesService.findAll();
   }
 
   @Query(() => Category)
-  @CacheTTL(60 * 1000) // 1 minute
-  @CacheKey('category')
+  @SetMetadata('cacheTTL', 60 * 1000) // 1 minute - keyed per id
   findOne(@Args('id', ParseObjectIdPipe) id: string): Promise<Category> {
     return this.categoriesService.findOne(id);
+  }
+}
+
+// Nest's built-in CacheInterceptor is for plain HTTP surfaces only, where one
+// static @CacheKey is acceptable. Never put it on a GraphQL resolver: the static
+// key ignores the resolver's arguments and every caller shares a single entry.
+@Controller('categories')
+@UseInterceptors(CacheInterceptor)
+export class CategoriesController {
+  @Get()
+  @CacheTTL(30 * 60 * 1000)
+  @CacheKey('categories:all')
+  findAll(): Promise<Category[]> {
+    return this.categoriesService.findAll();
   }
 }
 

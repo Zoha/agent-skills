@@ -35,6 +35,9 @@ produced depends on the field:
 - Populate a field on the object *and* resolve it with `@ResolveField` — two sources of truth; the
   resolver silently wins and the stored value is ignored.
 - Assign a computed property in a mapper or service as well as resolving it.
+- Assume "one `@ResolveField` per field" means "in the type's own module": when the computed field's
+  source data belongs to another module, the single resolver lives in that data-owner module (see
+  `relations-owning-module`).
 
 **Incorrect (computed field has no declaration, or two sources of truth):**
 

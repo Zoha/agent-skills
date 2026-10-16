@@ -7,7 +7,7 @@ tags: graphql, validation, input-type, args-type, pipes
 
 ## Validate All Input with Input Types and Pipes
 
-Always validate incoming data using class-validator decorators on GraphQL inputs and the global ValidationPipe. Never trust user input. Validate all mutation inputs, query arguments, and field arguments before processing. In GraphQL, use `@InputType()` for inputs and `@ArgsType()` for grouped arguments — never one in place of the other — instead of `@Body()` DTOs.
+Always validate incoming data using class-validator decorators on GraphQL inputs, the global ValidationPipe, and per-argument pipes. Never trust user input. Validate all mutation inputs, query arguments, and field arguments before processing. In GraphQL, use `@InputType()` for inputs and `@ArgsType()` for grouped arguments (filters, paging, sorting — more than about two, or a logical group) — never one in place of the other, and never an HTTP `@Body()` DTO. A lone scalar argument may stay raw, but it must still be validated: `@Args('id', ParseUUIDPipe) id: string`.
 
 **Incorrect (trust raw input without validation):**
 
@@ -110,7 +110,7 @@ export class CreateUserInput {
   password: string;
 }
 
-// dto/find-users.args.ts — query arguments are an @ArgsType(), never an @InputType()
+// dto/find-users.args.ts — grouped arguments (search, paging) are an @ArgsType(), never an @InputType()
 @ArgsType()
 export class FindUsersArgs {
   @Field({ nullable: true })
@@ -135,14 +135,6 @@ export class FindUsersArgs {
   offset: number = 0;
 }
 
-// dto/find-user.args.ts — a single-argument group is still an @ArgsType()
-@ArgsType()
-export class FindUserArgs {
-  @Field()
-  @IsUUID('4')
-  id: string;
-}
-
 // modules/users/resolvers/users.mutation.resolver.ts
 @Resolver(() => User)
 export class UsersMutationResolver {
@@ -163,9 +155,9 @@ export class UsersQueryResolver {
   }
 
   @Query(() => User)
-  user(@Args() args: FindUserArgs): Promise<User> {
-    // args.id is a valid UUID
-    return this.usersService.findById(args.id);
+  user(@Args('id', ParseUUIDPipe) id: string): Promise<User> {
+    // a lone scalar argument stays raw but is validated by the pipe
+    return this.usersService.findById(id);
   }
 }
 ```

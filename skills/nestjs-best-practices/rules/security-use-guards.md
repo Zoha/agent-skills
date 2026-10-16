@@ -115,4 +115,6 @@ export class AdminResolver {
 }
 ```
 
+Registering an app-wide guard with `APP_GUARD` in `AppModule` is the one documented exception to "AppModule lists modules, not providers": enhancer registrations (`APP_GUARD`, `APP_PIPE`, `APP_FILTER`, `APP_INTERCEPTOR`) must live in the composition root, while everything a feature owns stays in its feature module (see `nestjs-graphql-structure` -> `module-bootstrap` and `module-feature-module`).
+
 Reference: [NestJS Guards](https://docs.nestjs.com/guards)

@@ -24,6 +24,11 @@ interface.
 - Export only the providers other modules need.
 - Register feature-local listeners, guards, and other providers.
 
+`AppModule` composes features by listing their **modules**, not their individual providers. The one
+documented exception is app-wide enhancer registrations the framework requires as providers —
+`APP_GUARD`, `APP_PIPE`, `APP_FILTER`, and `APP_INTERCEPTOR` (see `nestjs-best-practices` ->
+`security-use-guards`).
+
 **Never.**
 
 - Register feature providers in `AppModule` directly.

@@ -22,10 +22,15 @@ them in `mappers/`.
 - `modules/<feature>/models/<entity>.model.ts` — the GraphQL `@ObjectType`.
 - `modules/<feature>/mappers/<entity>.mapper.ts` — entity → model.
 
+`models/` is not exclusive to the split case: it holds GraphQL-only `@ObjectType`s and is also where
+GraphQL-only types such as pagination connection types live (see `type-pagination`) — even when the
+entity itself stays merged with its `@ObjectType`.
+
 **Responsibilities.**
 
 - Model: exactly the fields the API exposes.
-- Mapper: a pure conversion from entity to model, handling computed fields and the id field.
+- Mapper: a pure conversion from entity to model of the *stored* fields (plus the id); computed
+  fields are resolved, not mapped.
 
 **Never.**
 
@@ -73,16 +78,15 @@ export class UserModel {
   avatarUrl?: string; // computed from avatarKey
 
   @Field(() => Int)
-  postCount: number;
+  postCount!: number; // computed — resolved by @ResolveField, never mapped
 }
 
 // mappers/user.mapper.ts
-export function toUserModel(doc: UserDocument, postCount: number): UserModel {
+export function toUserModel(doc: UserDocument): UserModel {
   return {
     _id: doc._id.toString(),
     email: doc.email,
     avatarUrl: doc.avatarKey ? cdnUrl(doc.avatarKey) : null,
-    postCount,
   };
 }
 ```

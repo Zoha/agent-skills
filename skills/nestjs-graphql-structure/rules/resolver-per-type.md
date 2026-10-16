@@ -28,7 +28,9 @@ owns the type and `<type>` is the kebab name of the type being resolved — for 
   schema (see `resolver-computed-fields`).
 - Declare `@Resolver(() => TheType)` and one `@ResolveField` per resolved field.
 - Make the method name equal the GraphQL field name.
-- Hold **every** field resolver for that type.
+- Hold **every** field resolver whose data this module owns for that type.
+- A field backed by another module's data is resolved in that module, not here; ownership, not the
+  filename, decides where the resolver lives (see `relations-owning-module`).
 
 **Never.**
 

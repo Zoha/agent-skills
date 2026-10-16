@@ -23,8 +23,8 @@ export class OrdersService {
     private loyaltyService: LoyaltyService,
   ) {}
 
-  async createOrder(dto: CreateOrderDto): Promise<Order> {
-    const order = await this.repo.save(dto);
+  async createOrder(input: CreateOrderInput): Promise<Order> {
+    const order = await this.repo.save(input);
 
     // Tight coupling - OrdersService knows about all consumers
     await this.inventoryService.reserve(order.items);
@@ -63,8 +63,8 @@ export class OrdersService {
     private repo: Repository<Order>,
   ) {}
 
-  async createOrder(dto: CreateOrderDto): Promise<Order> {
-    const order = await this.repo.save(dto);
+  async createOrder(input: CreateOrderInput): Promise<Order> {
+    const order = await this.repo.save(input);
 
     // Emit event - no knowledge of consumers
     this.eventEmitter.emit(

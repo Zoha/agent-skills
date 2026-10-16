@@ -74,8 +74,8 @@ export class OrdersService {
     @Inject(PAYMENT_GATEWAY) private payment: PaymentGateway,
   ) {}
 
-  async createOrder(dto: CreateOrderDto) {
-    await this.payment.charge(dto.amount);
+  async createOrder(input: CreateOrderInput) {
+    await this.payment.charge(input.amount);
   }
 }
 

@@ -2,6 +2,8 @@
   "title": "NestJS Best Practices",
   "version": "1.3.0",
   "organization": "NestJS Best Practices",
+  "author": "Kadajett",
+  "license": "MIT",
   "date": "October 2026",
   "abstract": "Comprehensive best practices and architecture guide for NestJS applications, designed for AI agents and LLMs. Contains 40 rules across 10 categories, prioritized by impact from critical (architecture, dependency injection) to incremental (DevOps patterns). Each rule includes detailed explanations, real-world examples comparing incorrect vs. correct implementations, and specific impact metrics to guide automated refactoring and code generation.",
   "references": [

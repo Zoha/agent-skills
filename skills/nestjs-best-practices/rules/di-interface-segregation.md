@@ -21,7 +21,7 @@ interface NotificationService {
   logNotification(type: string, payload: any): Promise<void>;
   getDeliveryStatus(id: string): Promise<DeliveryStatus>;
   retryFailed(id: string): Promise<void>;
-  scheduleNotification(dto: ScheduleDto): Promise<string>;
+  scheduleNotification(input: ScheduleNotificationInput): Promise<string>;
 }
 
 // Consumer only needs email, but must mock everything for tests
@@ -74,7 +74,7 @@ interface NotificationLogger {
 }
 
 interface NotificationScheduler {
-  scheduleNotification(dto: ScheduleDto): Promise<string>;
+  scheduleNotification(input: ScheduleNotificationInput): Promise<string>;
 }
 
 // Implementation can implement multiple interfaces

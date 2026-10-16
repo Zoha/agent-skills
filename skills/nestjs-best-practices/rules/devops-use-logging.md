@@ -15,12 +15,12 @@ Use NestJS Logger with structured JSON output in production. Include contextual 
 // Use console.log in production
 @Injectable()
 export class UsersService {
-  async createUser(dto: CreateUserDto): Promise<User> {
-    console.log('Creating user:', dto);
+  async createUser(input: CreateUserInput): Promise<User> {
+    console.log('Creating user:', input);
     // Not structured, no levels, lost in production logs
 
     try {
-      const user = await this.repo.save(dto);
+      const user = await this.repo.save(input);
       console.log('User created:', user.id);
       return user;
     } catch (error) {
@@ -41,83 +41,114 @@ logger.log('User ' + userId + ' created at ' + new Date());
 **Correct (use structured logging with context):**
 
 ```typescript
-// Configure logger in main.ts
+// Configure the application logger in main.ts
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
-    logger:
-      process.env.NODE_ENV === 'production'
-        ? ['error', 'warn', 'log']
-        : ['error', 'warn', 'log', 'debug', 'verbose'],
+    bufferLogs: true,
   });
+
+  // Install the JSON logger so every log line is structured JSON.
+  // JsonLogger is registered as a provider (common/logger/logger.module.ts).
+  app.useLogger(app.get(JsonLogger));
+
+  await app.listen(3000);
 }
 
-// Use NestJS Logger with context
+// Custom logger for JSON output — implements every LoggerService method
+@Injectable()
+export class JsonLogger implements LoggerService {
+  log(message: any, ...optionalParams: any[]): void {
+    this.write('info', message, optionalParams);
+  }
+
+  error(message: any, ...optionalParams: any[]): void {
+    this.write('error', message, optionalParams);
+  }
+
+  warn(message: any, ...optionalParams: any[]): void {
+    this.write('warn', message, optionalParams);
+  }
+
+  debug(message: any, ...optionalParams: any[]): void {
+    this.write('debug', message, optionalParams);
+  }
+
+  verbose(message: any, ...optionalParams: any[]): void {
+    this.write('verbose', message, optionalParams);
+  }
+
+  fatal(message: any, ...optionalParams: any[]): void {
+    this.write('fatal', message, optionalParams);
+  }
+
+  private write(level: string, message: any, optionalParams: any[]): void {
+    // Object params become structured fields; the context string comes last
+    const fields = Object.assign(
+      {},
+      ...optionalParams.filter((p) => p !== null && typeof p === 'object'),
+    );
+    const strings = optionalParams.filter((p) => typeof p === 'string');
+    const context = strings[strings.length - 1];
+
+    const line = JSON.stringify({
+      level,
+      timestamp: new Date().toISOString(),
+      context,
+      message,
+      ...fields,
+    });
+
+    if (level === 'error' || level === 'fatal') {
+      console.error(line);
+    } else if (level === 'warn') {
+      console.warn(line);
+    } else {
+      console.log(line);
+    }
+  }
+}
+
+// Structured output: inject the JSON logger and pass fields as objects.
+// The object params are merged into the JSON line.
 @Injectable()
 export class UsersService {
-  private readonly logger = new Logger(UsersService.name);
+  constructor(
+    private readonly logger: JsonLogger,
+    private readonly repo: UsersRepository,
+  ) {}
 
-  async createUser(dto: CreateUserDto): Promise<User> {
-    this.logger.log('Creating user', { email: dto.email });
+  async createUser(input: CreateUserInput): Promise<User> {
+    this.logger.log('Creating user', UsersService.name, { email: input.email });
 
     try {
-      const user = await this.repo.save(dto);
-      this.logger.log('User created', { userId: user.id });
+      const user = await this.repo.save(input);
+      this.logger.log('User created', UsersService.name, { userId: user.id });
       return user;
     } catch (error) {
-      this.logger.error('Failed to create user', error.stack, {
-        email: dto.email,
-      });
+      this.logger.error(
+        'Failed to create user',
+        error.stack,
+        UsersService.name,
+        { email: input.email },
+      );
       throw error;
     }
   }
 }
 
-// Custom logger for JSON output
+// The built-in Logger is fine for plain messages only. Its second argument is a
+// string context and it does not emit structured fields — use JsonLogger (or
+// Pino, below) whenever you need key/value data in the log line.
 @Injectable()
-export class JsonLogger implements LoggerService {
-  log(message: string, context?: object): void {
-    console.log(
-      JSON.stringify({
-        level: 'info',
-        timestamp: new Date().toISOString(),
-        message,
-        ...context,
-      }),
-    );
+export class HealthService {
+  private readonly logger = new Logger(HealthService.name);
+
+  ping(): void {
+    this.logger.log('Health check passed');
   }
 
-  error(message: string, trace?: string, context?: object): void {
-    console.error(
-      JSON.stringify({
-        level: 'error',
-        timestamp: new Date().toISOString(),
-        message,
-        trace,
-        ...context,
-      }),
-    );
-  }
-
-  warn(message: string, context?: object): void {
-    console.warn(
-      JSON.stringify({
-        level: 'warn',
-        timestamp: new Date().toISOString(),
-        message,
-        ...context,
-      }),
-    );
-  }
-
-  debug(message: string, context?: object): void {
-    console.debug(
-      JSON.stringify({
-        level: 'debug',
-        timestamp: new Date().toISOString(),
-        message,
-        ...context,
-      }),
-    );
+  warnSlow(): void {
+    this.logger.warn('Database responded slowly');
   }
 }
 

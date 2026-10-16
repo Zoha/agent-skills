@@ -82,15 +82,17 @@ export class UsersService {
     return this.usersRepo.findActiveWithMinOrders(1);
   }
 
-  async create(dto: CreateUserDto): Promise<User> {
-    const existing = await this.usersRepo.findByEmail(dto.email);
+  async create(input: CreateUserInput): Promise<User> {
+    const existing = await this.usersRepo.findByEmail(input.email);
     if (existing) {
-      throw new ConflictException('Email already registered');
+      // Domain exception, mapped to a GraphQL error by the global filter
+      // (see error-use-exception-filters).
+      throw new EmailAlreadyRegisteredException(input.email);
     }
 
     const user = new User();
-    user.email = dto.email;
-    user.name = dto.name;
+    user.email = input.email;
+    user.name = input.name;
     return this.usersRepo.save(user);
   }
 }

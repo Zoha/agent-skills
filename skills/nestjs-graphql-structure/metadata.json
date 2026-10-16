@@ -2,6 +2,8 @@
   "title": "NestJS GraphQL Application Structure",
   "version": "1.4.0",
   "organization": "NestJS GraphQL Structure",
+  "author": "Zoha",
+  "license": "MIT",
   "date": "October 2026",
   "abstract": "File-placement and anatomy guide for NestJS GraphQL applications, designed for AI agents and LLMs. Teaches where every file belongs in a feature-first, code-first codebase — the base structure map plus per-file rules for modules, services, resolvers (query, mutation, subscription, and field), inputs and args, pagination, Mongoose entities and schema best practices for shared code-first types, model injection confined to repositories, models/mappers, repositories, Mongoose discriminators for polymorphic documents, deriving fields instead of storing duplicated data, providers, loaders, events, background jobs, auth, exceptions, custom scalars, config, common building blocks, GraphQL and database infrastructure, seeds, interfaces/tokens, unions/interfaces and publishing discriminated types, and conventions (naming, barrels/aliases, lint boundaries, test placement, and fixtures) — each with purpose, responsibilities, and incorrect-vs-correct examples. It also covers how modules connect to resolve GraphQL fields and relations, including module-resolution concerns such as circular dependencies, while deferring behavioral concerns to the nestjs-best-practices skill.",
   "references": [

@@ -89,7 +89,9 @@ export class TransferService {
         where: { id: fromId },
       });
       if (source.balance < 0) {
-        throw new BadRequestException('Insufficient funds');
+        // Throwing rolls the transaction back; the domain exception is mapped to a
+        // GraphQL error by the global filter (see error-use-exception-filters).
+        throw new InsufficientFundsException(fromId);
       }
 
       // Credit destination account
@@ -127,12 +129,12 @@ export class UsersRepository {
   ) {}
 
   async createWithProfile(
-    userData: CreateUserDto,
-    profileData: CreateProfileDto,
+    userInput: CreateUserInput,
+    profileInput: CreateProfileInput,
   ): Promise<User> {
     return this.dataSource.transaction(async (manager) => {
-      const user = await manager.save(User, userData);
-      await manager.save(Profile, { ...profileData, userId: user.id });
+      const user = await manager.save(User, userInput);
+      await manager.save(Profile, { ...profileInput, userId: user.id });
       return user;
     });
   }

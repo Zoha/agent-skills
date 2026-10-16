@@ -1,6 +1,6 @@
 ---
 name: nestjs-best-practices
-description: NestJS best practices and architecture patterns for building production-ready GraphQL applications. This skill should be used when writing, reviewing, or refactoring NestJS GraphQL code to ensure proper patterns for modules, dependency injection, security, and performance.
+description: Use when writing, reviewing, or refactoring NestJS GraphQL code — modules, dependency injection, security, performance, error handling, testing, and DevOps patterns for production-ready GraphQL applications.
 license: MIT
 metadata:
   author: Kadajett
@@ -64,7 +64,7 @@ Reference these guidelines when:
 ### 3. Error Handling (HIGH)
 
 - `error-handle-async-errors` - Handle Async Errors Properly
-- `error-throw-graphql-errors` - Throw Domain Errors from Services
+- `error-throw-domain-errors` - Throw Domain Errors from Services
 - `error-use-exception-filters` - Use Exception Filters for Error Handling
 
 ### 4. Security (HIGH)

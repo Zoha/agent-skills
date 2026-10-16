@@ -7,113 +7,72 @@ tags: security, xss, sanitization, html
 
 ## Sanitize Output to Prevent XSS
 
-While NestJS APIs typically return JSON (which browsers don't execute), XSS risks exist when rendering HTML, storing user content, or when frontend frameworks improperly handle API responses. Sanitize user-generated content before storage and use proper Content-Type headers.
+Sanitize user-generated content at the API boundary before you store it. GraphQL responses are JSON, so the GraphQL transport itself is safe — browsers do not execute JSON. The risk is what happens later: the same content is usually rendered by a client or an SSR/REST surface, and reflecting raw input is a classic injection vector. Because the transport is JSON, the fix is to sanitize/encode on store and on render — not to patch the GraphQL layer.
 
-**Incorrect (storing raw HTML without sanitization):**
+**Incorrect (persisting raw, unsanitized content):**
 
 ```typescript
-// Store raw HTML from users
-@Injectable()
-export class CommentsService {
-  async create(dto: CreateCommentDto): Promise<Comment> {
-    // User can inject: <script>steal(document.cookie)</script>
-    return this.repo.save({
-      content: dto.content, // Raw, unsanitized
-      authorId: dto.authorId,
-    });
-  }
+// Raw content from the client is persisted unchanged
+@InputType()
+export class CreateCommentInput {
+  @Field()
+  content: string; // may contain <script>steal(document.cookie)</script>
+
+  @Field()
+  authorId: string;
 }
 
-// Return HTML without sanitization
-@Controller('pages')
-export class PagesController {
-  @Get(':slug')
-  @Header('Content-Type', 'text/html')
-  async getPage(@Param('slug') slug: string): Promise<string> {
-    const page = await this.pagesService.findBySlug(slug);
-    // If page.content contains user input, XSS is possible
-    return `<html><body>${page.content}</body></html>`;
+// modules/comments/resolvers/comments.mutation.resolver.ts
+@Resolver(() => Comment)
+export class CommentsMutationResolver {
+  @Mutation(() => Comment)
+  createComment(@Args('input') input: CreateCommentInput): Promise<Comment> {
+    // The unsanitized value is stored, so every renderer must now defend itself
+    return this.commentsService.create(input);
   }
-}
-
-// Reflect user input in errors
-@Get(':id')
-async findOne(@Param('id') id: string): Promise<User> {
-  const user = await this.repo.findOne({ where: { id } });
-  if (!user) {
-    // XSS if id contains malicious content and error is rendered
-    throw new NotFoundException(`User ${id} not found`);
-  }
-  return user;
 }
 ```
 
-**Correct (sanitize content and use proper headers):**
+**Correct (sanitize content on the input, persist the sanitized value):**
 
 ```typescript
-// Sanitize HTML content before storage
+// Sanitize via a @Transform on the input, before the value reaches the service
+import { Transform } from 'class-transformer';
 import * as sanitizeHtml from 'sanitize-html';
 
-@Injectable()
-export class CommentsService {
-  private readonly sanitizeOptions: sanitizeHtml.IOptions = {
-    allowedTags: ['b', 'i', 'em', 'strong', 'a', 'p', 'br'],
-    allowedAttributes: {
-      a: ['href', 'title'],
-    },
-    allowedSchemes: ['http', 'https', 'mailto'],
-  };
+const ALLOWED_COMMENT_TAGS = ['p', 'br', 'b', 'i', 'em', 'strong', 'a'];
 
-  async create(dto: CreateCommentDto): Promise<Comment> {
-    return this.repo.save({
-      content: sanitizeHtml(dto.content, this.sanitizeOptions),
-      authorId: dto.authorId,
-    });
-  }
-}
-
-// Use validation pipe to strip HTML
-import { Transform } from 'class-transformer';
-
-export class CreatePostDto {
-  @IsString()
-  @MaxLength(1000)
-  @Transform(({ value }) => sanitizeHtml(value, { allowedTags: [] }))
-  title: string;
-
-  @IsString()
+@InputType()
+export class CreateCommentInput {
+  @Field()
   @Transform(({ value }) =>
     sanitizeHtml(value, {
-      allowedTags: ['p', 'br', 'b', 'i', 'a'],
-      allowedAttributes: { a: ['href'] },
+      allowedTags: ALLOWED_COMMENT_TAGS,
+      allowedAttributes: { a: ['href', 'title'] },
+      allowedSchemes: ['http', 'https', 'mailto'],
     }),
   )
   content: string;
+
+  @Field()
+  authorId: string;
 }
 
-// Set proper Content-Type headers
-@Controller('api')
-export class ApiController {
-  @Get('data')
-  @Header('Content-Type', 'application/json')
-  async getData(): Promise<DataResponse> {
-    // JSON response - browser won't execute scripts
-    return this.service.getData();
+// The sanitized value is what the resolver receives and what gets persisted
+@Resolver(() => Comment)
+export class CommentsMutationResolver {
+  @Mutation(() => Comment)
+  createComment(@Args('input') input: CreateCommentInput): Promise<Comment> {
+    return this.commentsService.create(input);
   }
 }
+```
 
-// Sanitize error messages
-@Get(':id')
-async findOne(@Param('id', ParseUUIDPipe) id: string): Promise<User> {
-  const user = await this.repo.findOne({ where: { id } });
-  if (!user) {
-    // UUID validation ensures safe format
-    throw new NotFoundException('User not found');
-  }
-  return user;
-}
+The `@Transform` runs inside the input's transform pipeline, so the resolver and service receive an already-sanitized value and the sanitized value is what is stored — a renderer can still encode on output, but the database never holds raw markup. For values that do not arrive through an input class (a scalar field argument, an uploaded blob), reuse the same allowlist through a small sanitizing pipe instead, so the policy lives in one place (see `use-pipes`). Strip tags entirely (`allowedTags: []`) for fields that should never contain markup, such as a title.
 
-// Use Helmet for CSP headers
+**Note: HTML surfaces only.** A Content-Security-Policy is defence in depth only when the same app also serves an HTML surface (an SSR page, or a REST/HTTP endpoint that returns HTML); it is irrelevant to a pure GraphQL JSON API. When such a surface exists, add it in `main.ts` so a missed sanitization cannot execute inline script:
+
+```typescript
 import helmet from 'helmet';
 
 async function bootstrap() {

@@ -42,6 +42,8 @@ describe('Users API', () => {
 // test/users.e2e-spec.ts
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { getConnectionToken } from '@nestjs/mongoose';
+import { Connection } from 'mongoose';
 import * as request from 'supertest';
 import { AppModule } from '../src/app.module';
 
@@ -184,7 +186,7 @@ describe('Orders (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    connection = moduleFixture.get(getConnectionToken());
+    connection = moduleFixture.get<Connection>(getConnectionToken());
     await app.init();
   });
 

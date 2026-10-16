@@ -66,19 +66,21 @@ export class UserModel {
   postCount!: number; // computed — declared type-only, never populated
 }
 
-// modules/users/mappers/user.mapper.ts — one conversion, testable in isolation
+// modules/users/mappers/user.mapper.ts — one conversion, testable in isolation.
+// Maps stored fields only; a computed field is never assigned here.
 export function toUserModel(doc: UserDocument): UserModel {
   return {
     _id: doc._id.toString(),
     email: doc.email,
     avatarUrl: doc.avatarKey ? cdnUrl(doc.avatarKey) : null,
-    postCount: 0, // resolved by @ResolveField, not the mapper
   };
 }
 
-// modules/users/resolvers/user.resolver.ts — the computed field's single source of truth
+// modules/posts/resolvers/user-posts.resolver.ts — the data owner owns the field
+// (see nestjs-graphql-structure -> relations-owning-module). This is the computed
+// field's single source of truth, and it is never assigned in the mapper.
 @Resolver(() => UserModel)
-export class UserResolver {
+export class UserPostsResolver {
   constructor(private readonly postsService: PostsService) {}
 
   @ResolveField(() => Int)

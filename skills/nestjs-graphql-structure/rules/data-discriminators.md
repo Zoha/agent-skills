@@ -33,7 +33,7 @@ feature module's `MongooseModule.forFeature`.
 **Never.**
 
 - Use separate collections when the shapes share a base and are queried together — that repeats the
-  common fields and loses the shared query (see `data-derived-fields`).
+  common fields and loses the shared query (see `type-polymorphic-discriminators`).
 - Let a client set the discriminator key directly; the model that creates the document owns it.
 - Call `pre()`/`post()` hooks **after** defining a discriminator — declare hooks on the schema
   before it is used as a discriminator.
@@ -53,29 +53,21 @@ shared validation has to be copied into each schema.
 **Correct (base + subtypes + registration; each subtype is injectable):**
 
 ```typescript
-// entities/event.entity.ts — the shared base
-@ObjectType()
+// entities/event.entity.ts — the shared base (persistence only)
 @Schema({ discriminatorKey: 'kind', timestamps: true, collection: 'events' })
 export class Event {
-  @Field(() => ID)
-  _id: Types.ObjectId;
-
-  @Field(() => EventKind)
   @Prop({ type: String, required: true, enum: EventKind })
   kind: EventKind;
 
-  @Field()
   @Prop({ type: Date, required: true })
   time: Date;
 }
 
 export const EventSchema = SchemaFactory.createForClass(Event);
 
-// entities/clicked-link-event.entity.ts — a subtype
-@ObjectType()
+// entities/clicked-link-event.entity.ts — a subtype (persistence only)
 @Schema()
 export class ClickedLinkEvent extends Event {
-  @Field()
   @Prop({ type: String, required: true })
   url: string;
 }
@@ -125,7 +117,9 @@ Why it is right: one collection holds every shape, the shared base is written on
 its own injectable model used only in the repository, and the base model reads all events in one
 query.
 
-When you expose these to GraphQL, make the base the polymorphic type so the concrete type is chosen
-from the discriminator key automatically — see `type-polymorphic-discriminators`.
+When the feature publishes these polymorphically, the base class additionally carries
+`@InterfaceType({ resolveType })` and each subtype `@ObjectType({ implements: () => [Base] })`, so the
+base model is the polymorphic GraphQL type and the concrete type is chosen from the stored
+discriminator key automatically — see `type-polymorphic-discriminators`.
 
 Reference: [NestJS MongoDB — Discriminators](https://docs.nestjs.com/techniques/mongodb) | [Mongoose Discriminators](https://mongoosejs.com/docs/discriminators.html)

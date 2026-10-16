@@ -101,34 +101,25 @@ export class HealthResolver {
   }
 }
 
-// Custom throttle per user type
+// Key the throttle per authenticated user instead of per IP
 @Injectable()
 export class CustomThrottlerGuard extends ThrottlerGuard {
   protected async getTracker(req: Request): Promise<string> {
     return req.user?.id || req.ip;
   }
-
-  protected async getLimit(context: ExecutionContext): Promise<number> {
-    const request = GqlExecutionContext.create(context).getContext().req;
-
-    if (request.user) {
-      return request.user.isPremium ? 1000 : 200;
-    }
-
-    return 50; // Anonymous users
-  }
 }
+// Per-route and per-user limits come from the named throttlers configured above plus
+// @Throttle(...) on the resolver — ThrottlerGuard looks them up, so there is no
+// per-limit getLimit() override (that was the v4 API, removed in v5).
 
 // Query complexity limiting (GraphQL-native approach)
-// Use graphql-query-complexity or similar to limit query depth and cost
-import { complexityEstimator } from 'graphql-query-complexity';
-
-const schema = buildSchema({
-  typeDefs,
-  validationRules: [
-    complexityEstimator({ maximumComplexity: 1000 }),
-  ],
-});
+// A per-field rate limit does not stop one deeply nested, expensive query. Cap that
+// separately with a query-complexity plugin/validation rule: the
+// `graphql-query-complexity` package exposes a `createComplexityRule` factory that
+// walks the parsed query, assigns each field a cost, and rejects the query before it
+// executes when the total exceeds your maximum. On Apollo Server v4, register that
+// rule as a plugin — the older `buildSchema({ validationRules: [...] })` option was
+// removed in Apollo Server v3.
 
 // Rate limiting by query complexity
 @Injectable()

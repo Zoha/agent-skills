@@ -80,17 +80,17 @@ export class UsersService {
     return user;
   }
 
-  async create(dto: CreateUserInput): Promise<User> {
-    const existing = await this.usersRepository.findByEmail(dto.email);
+  async create(input: CreateUserInput): Promise<User> {
+    const existing = await this.usersRepository.findByEmail(input.email);
     if (existing) {
-      throw new EmailAlreadyRegisteredException(dto.email);
+      throw new EmailAlreadyRegisteredException(input.email);
     }
-    return this.usersRepository.create(dto);
+    return this.usersRepository.create(input);
   }
 
-  async update(id: string, dto: UpdateUserInput): Promise<User> {
+  async update(id: string, input: UpdateUserInput): Promise<User> {
     const user = await this.findById(id); // Throws if not found
-    return this.usersRepository.update(id, { ...user, ...dto });
+    return this.usersRepository.update(id, { ...user, ...input });
   }
 }
 
@@ -106,6 +106,8 @@ export class UsersQueryResolver {
   }
 }
 ```
+
+**Scope.** This rule governs **services**: they throw typed domain exceptions. Pipes, guards, and middleware sit on the transport edge and may use Nest's built-in HTTP exceptions (`BadRequestException`, `UnauthorizedException`, and the like); the same global filter maps those to a consistent GraphQL error, so they do not need a feature-local `DomainException`.
 
 The mapping from domain exception to GraphQL error happens once, in an exception filter (see `error-use-exception-filters`), so error codes and `extensions` are consistent across the whole API.
 

@@ -61,15 +61,17 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   imports: [
     UsersModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
+    // namespaced, validated config — the `auth` namespace is registered in config/
+    // (see devops-use-config-module)
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('JWT_SECRET'),
+        secret: config.get<string>('auth.jwtSecret'),
         signOptions: {
           expiresIn: '15m', // Short-lived access tokens
-          issuer: config.get<string>('JWT_ISSUER'),
-          audience: config.get<string>('JWT_AUDIENCE'),
+          issuer: config.get<string>('auth.jwtIssuer'),
+          audience: config.get<string>('auth.jwtAudience'),
         },
       }),
     }),
@@ -82,6 +84,11 @@ export class AuthModule {}
 // modules/auth/services/auth.service.ts — minimal JWT payload
 @Injectable()
 export class AuthService {
+  constructor(
+    private readonly jwtService: JwtService,
+    private readonly refreshTokens: RefreshTokensRepository,
+  ) {}
+
   async login(user: User): Promise<TokenResponse> {
     const payload: JwtPayload = {
       sub: user.id,
@@ -100,7 +107,7 @@ export class AuthService {
     const token = randomBytes(32).toString('hex');
     const hashedToken = await bcrypt.hash(token, 10);
 
-    await this.refreshTokenRepo.save({
+    await this.refreshTokens.save({
       userId,
       token: hashedToken,
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
@@ -139,21 +146,24 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
-      secretOrKey: config.get<string>('JWT_SECRET'),
+      secretOrKey: config.get<string>('auth.jwtSecret'),
       ignoreExpiration: false,
-      issuer: config.get<string>('JWT_ISSUER'),
-      audience: config.get<string>('JWT_AUDIENCE'),
+      issuer: config.get<string>('auth.jwtIssuer'),
+      audience: config.get<string>('auth.jwtAudience'),
     });
   }
 
   async validate(payload: JwtPayload): Promise<User> {
     const user = await this.usersService.findById(payload.sub);
 
+    // user.isActive and user.passwordChangedAt are User entity fields
+    // (see nestjs-graphql-structure -> data-entity-mongodb)
     if (!user || !user.isActive) {
       throw new UnauthorizedException('User not found or inactive');
     }
 
-    if (user.passwordChangedAt) {
+    // Only check when the entity tracks it and the token carries an issued-at
+    if (user.passwordChangedAt && payload.iat) {
       const tokenIssuedAt = new Date(payload.iat * 1000);
       if (tokenIssuedAt < user.passwordChangedAt) {
         throw new UnauthorizedException('Token invalidated by password change');

@@ -37,35 +37,29 @@ export class ProcessingService {
 **Correct (enable shutdown hooks and handle cleanup):**
 
 ```typescript
-// Enable shutdown hooks in main.ts
+// Enable shutdown hooks in main.ts — Nest subscribes to SIGTERM/SIGINT, runs
+// onModuleDestroy / onApplicationShutdown on every provider, then closes the HTTP
+// server. Do not attach your own signal handlers that call app.close() again.
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // Enable shutdown hooks
+  // Nest handles SIGTERM and SIGINT and drains the app through the lifecycle hooks
   app.enableShutdownHooks();
 
-  // Optional: Add timeout for forced shutdown
-  const server = await app.listen(3000);
-  server.setTimeout(30000); // 30 second timeout
+  await app.listen(3000);
 
-  // Handle graceful shutdown
-  const signals = ['SIGTERM', 'SIGINT'];
+  // Optional: a forced-exit watchdog. This listener only starts a timer and never
+  // calls app.close() — Nest's shutdown hooks do the closing. If the process is
+  // still alive after the deadline, exit hard.
+  const signals: NodeJS.Signals[] = ['SIGTERM', 'SIGINT'];
   signals.forEach((signal) => {
-    process.on(signal, async () => {
-      console.log(`Received ${signal}, starting graceful shutdown...`);
+    process.on(signal, () => {
+      console.log(`Received ${signal}, waiting for graceful shutdown...`);
 
-      // Stop accepting new connections
-      server.close(async () => {
-        console.log('HTTP server closed');
-        await app.close();
-        process.exit(0);
-      });
-
-      // Force exit after timeout
       setTimeout(() => {
-        console.error('Forced shutdown after timeout');
+        console.error('Graceful shutdown timed out, forcing exit');
         process.exit(1);
-      }, 30000);
+      }, 30000).unref();
     });
   });
 }

@@ -112,7 +112,6 @@ export class GraphQLCacheInterceptor implements NestInterceptor {
   ) {}
 
   async intercept(context: ExecutionContext, next: CallHandler): Promise<Observable<any>> {
-    const info = GqlExecutionContext.create(context).getInfo();
     const cacheKey = this.generateKey(context);
     const ttl = this.reflector.get<number>('cacheTTL', context.getHandler()) || 300;
 

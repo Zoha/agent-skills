@@ -22,14 +22,14 @@ export class UserAndOrderService {
     private payment: PaymentService,
   ) {}
 
-  async createUser(dto: CreateUserDto) {
-    const user = await this.userRepo.save(dto);
+  async createUser(input: CreateUserInput) {
+    const user = await this.userRepo.save(input);
     await this.mailer.sendWelcome(user);
     return user;
   }
 
-  async createOrder(userId: string, dto: CreateOrderDto) {
-    const order = await this.orderRepo.save({ userId, ...dto });
+  async createOrder(userId: string, input: CreateOrderInput) {
+    const order = await this.orderRepo.save({ userId, ...input });
     await this.payment.charge(order);
     await this.mailer.sendOrderConfirmation(order);
     return order;
@@ -53,8 +53,8 @@ export class UserAndOrderService {
 export class UsersService {
   constructor(private userRepo: UserRepository) {}
 
-  async create(dto: CreateUserDto): Promise<User> {
-    return this.userRepo.save(dto);
+  async create(input: CreateUserInput): Promise<User> {
+    return this.userRepo.save(input);
   }
 
   async findById(id: string): Promise<User> {
@@ -66,8 +66,8 @@ export class UsersService {
 export class OrdersService {
   constructor(private orderRepo: OrderRepository) {}
 
-  async create(userId: string, dto: CreateOrderDto): Promise<Order> {
-    return this.orderRepo.save({ userId, ...dto });
+  async create(userId: string, input: CreateOrderInput): Promise<Order> {
+    return this.orderRepo.save({ userId, ...input });
   }
 
   async findByUser(userId: string): Promise<Order[]> {

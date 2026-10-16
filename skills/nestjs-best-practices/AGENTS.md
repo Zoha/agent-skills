@@ -133,8 +133,8 @@ export class OrdersModule {}
 export class UsersService {
   constructor(private eventEmitter: EventEmitter2) {}
 
-  async createUser(data: CreateUserDto) {
-    const user = await this.userRepo.save(data);
+  async createUser(input: CreateUserInput) {
+    const user = await this.userRepo.save(input);
     this.eventEmitter.emit('user.created', user);
     return user;
   }
@@ -367,7 +367,7 @@ Reference: [NestJS Modules](https://docs.nestjs.com/modules#shared-modules)
 
 **Impact: MEDIUM** — Schema evolution allows you to evolve your GraphQL API without breaking existing clients
 
-Use GraphQL's `@deprecated` directive and additive changes when making breaking changes to your schema. Add new fields and types instead of modifying existing ones. This allows old clients to continue working while new clients use updated fields. For major overhauls, use schema federation.
+Use GraphQL's `@deprecated` directive and additive changes when making breaking changes to your schema. Add new fields to existing types instead of mutating or replacing them — old clients keep working while new clients use the new fields. To split one schema across services, use schema federation; federation is a decomposition tool, not a way to version types.
 
 The generated SDL is never hand-edited — evolve the `@ObjectType()` classes and let the schema regenerate.
 
@@ -414,39 +414,14 @@ export class User {
   lastName: string;
 }
 
-// For breaking changes: add a new type instead of mutating the old one
-@ObjectType()
-export class UserV2 {
-  @Field()
-  id: string;
-
-  @Field()
-  firstName: string;
-
-  @Field()
-  lastName: string;
-
-  @Field()
-  email: string;
-
-  @Field()
-  createdAt: Date;
-}
-
-// Entry-point resolvers return both during transition
-// modules/users/resolvers/users.query.resolver.ts
-@Resolver(() => User)
-export class UsersQueryResolver {
-  @Query(() => [User])
-  async users(): Promise<User[]> {
-    return this.usersService.findAll();
-  }
-
-  @Query(() => [UserV2])
-  async usersV2(): Promise<UserV2[]> {
-    return this.usersService.findAllV2();
-  }
-}
+// For breaking changes, evolve the existing type in place — never add a parallel one.
+// 1. Add the new fields (additive, safe: old clients simply ignore them).
+// 2. @deprecated the old field with a deprecationReason (see fullName above).
+// 3. Remove the old field only after every client has migrated. Check schema usage
+//    metrics, then delete the @Field and the resolver code behind it.
+//
+// Do NOT add a UserV2 type and a usersV2 query. It fragments the schema, doubles the
+// runtime code paths, and old clients still break when UserV2 becomes the only type.
 
 // Deprecation with replacement strategy
 @ObjectType()
@@ -461,20 +436,31 @@ export class User {
   emailAddress: string; // New field
 }
 
-// Schema federation for major changes
-// Use @nestjs/graphql federation to split schema across services
+// Schema federation splits one schema across services — it is not a way to version
+// types. The owning service defines the entity and its @key; other services extend it
+// and mark the fields they do not own as @external.
+
+// users service — owns the User entity
 @Directive('@key(fields: "id")')
 @ObjectType()
 export class User {
-  @Field()
+  @Field(() => ID)
   id: string;
 
   @Field()
   name: string;
+}
 
-  // External field resolved by another service
+// orders service — extends the same entity; id is resolved by the users service
+@Directive('@key(fields: "id")')
+@ObjectType()
+export class User {
+  @Field(() => ID)
+  @Directive('@external')
+  id: string;
+
+  // This service contributes orders to the shared User entity
   @Field(() => [Order], { nullable: true })
-  @requires('id')
   orders?: Order[];
 }
 
@@ -544,14 +530,14 @@ export class UserAndOrderService {
     private payment: PaymentService,
   ) {}
 
-  async createUser(dto: CreateUserDto) {
-    const user = await this.userRepo.save(dto);
+  async createUser(input: CreateUserInput) {
+    const user = await this.userRepo.save(input);
     await this.mailer.sendWelcome(user);
     return user;
   }
 
-  async createOrder(userId: string, dto: CreateOrderDto) {
-    const order = await this.orderRepo.save({ userId, ...dto });
+  async createOrder(userId: string, input: CreateOrderInput) {
+    const order = await this.orderRepo.save({ userId, ...input });
     await this.payment.charge(order);
     await this.mailer.sendOrderConfirmation(order);
     return order;
@@ -575,8 +561,8 @@ export class UserAndOrderService {
 export class UsersService {
   constructor(private userRepo: UserRepository) {}
 
-  async create(dto: CreateUserDto): Promise<User> {
-    return this.userRepo.save(dto);
+  async create(input: CreateUserInput): Promise<User> {
+    return this.userRepo.save(input);
   }
 
   async findById(id: string): Promise<User> {
@@ -588,8 +574,8 @@ export class UsersService {
 export class OrdersService {
   constructor(private orderRepo: OrderRepository) {}
 
-  async create(userId: string, dto: CreateOrderDto): Promise<Order> {
-    return this.orderRepo.save({ userId, ...dto });
+  async create(userId: string, input: CreateOrderInput): Promise<Order> {
+    return this.orderRepo.save({ userId, ...input });
   }
 
   async findByUser(userId: string): Promise<Order[]> {
@@ -652,8 +638,8 @@ export class OrdersService {
     private loyaltyService: LoyaltyService,
   ) {}
 
-  async createOrder(dto: CreateOrderDto): Promise<Order> {
-    const order = await this.repo.save(dto);
+  async createOrder(input: CreateOrderInput): Promise<Order> {
+    const order = await this.repo.save(input);
 
     // Tight coupling - OrdersService knows about all consumers
     await this.inventoryService.reserve(order.items);
@@ -692,8 +678,8 @@ export class OrdersService {
     private repo: Repository<Order>,
   ) {}
 
-  async createOrder(dto: CreateOrderDto): Promise<Order> {
-    const order = await this.repo.save(dto);
+  async createOrder(input: CreateOrderInput): Promise<Order> {
+    const order = await this.repo.save(input);
 
     // Emit event - no knowledge of consumers
     this.eventEmitter.emit(
@@ -817,15 +803,17 @@ export class UsersService {
     return this.usersRepo.findActiveWithMinOrders(1);
   }
 
-  async create(dto: CreateUserDto): Promise<User> {
-    const existing = await this.usersRepo.findByEmail(dto.email);
+  async create(input: CreateUserInput): Promise<User> {
+    const existing = await this.usersRepo.findByEmail(input.email);
     if (existing) {
-      throw new ConflictException('Email already registered');
+      // Domain exception, mapped to a GraphQL error by the global filter
+      // (see error-use-exception-filters).
+      throw new EmailAlreadyRegisteredException(input.email);
     }
 
     const user = new User();
-    user.email = dto.email;
-    user.name = dto.name;
+    user.email = input.email;
+    user.name = input.name;
     return this.usersRepo.save(user);
   }
 }
@@ -853,13 +841,13 @@ Avoid using `ModuleRef.get()` or global containers to resolve dependencies at ru
 export class OrdersService {
   constructor(private moduleRef: ModuleRef) {}
 
-  async createOrder(dto: CreateOrderDto): Promise<Order> {
+  async createOrder(input: CreateOrderInput): Promise<Order> {
     // Dependencies are hidden - not visible in constructor
     const usersService = this.moduleRef.get(UsersService);
     const inventoryService = this.moduleRef.get(InventoryService);
     const paymentService = this.moduleRef.get(PaymentService);
 
-    const user = await usersService.findOne(dto.userId);
+    const user = await usersService.findOne(input.userId);
     // ... rest of logic
   }
 }
@@ -894,9 +882,9 @@ export class OrdersService {
     private paymentService: PaymentService,
   ) {}
 
-  async createOrder(dto: CreateOrderDto): Promise<Order> {
-    const user = await this.usersService.findOne(dto.userId);
-    const inventory = await this.inventoryService.check(dto.items);
+  async createOrder(input: CreateOrderInput): Promise<Order> {
+    const user = await this.usersService.findOne(input.userId);
+    const inventory = await this.inventoryService.check(input.items);
     // Dependencies are clear and testable
   }
 }
@@ -959,7 +947,7 @@ interface NotificationService {
   logNotification(type: string, payload: any): Promise<void>;
   getDeliveryStatus(id: string): Promise<DeliveryStatus>;
   retryFailed(id: string): Promise<void>;
-  scheduleNotification(dto: ScheduleDto): Promise<string>;
+  scheduleNotification(input: ScheduleNotificationInput): Promise<string>;
 }
 
 // Consumer only needs email, but must mock everything for tests
@@ -1012,7 +1000,7 @@ interface NotificationLogger {
 }
 
 interface NotificationScheduler {
-  scheduleNotification(dto: ScheduleDto): Promise<string>;
+  scheduleNotification(input: ScheduleNotificationInput): Promise<string>;
 }
 
 // Implementation can implement multiple interfaces
@@ -1570,8 +1558,8 @@ export class OrdersService {
     @Inject(PAYMENT_GATEWAY) private payment: PaymentGateway,
   ) {}
 
-  async createOrder(dto: CreateOrderDto) {
-    await this.payment.charge(dto.amount);
+  async createOrder(input: CreateOrderInput) {
+    await this.payment.charge(input.amount);
   }
 }
 
@@ -1614,8 +1602,8 @@ NestJS automatically catches errors from async route handlers, but errors from b
 // Fire-and-forget without error handling
 @Injectable()
 export class UsersService {
-  async createUser(dto: CreateUserDto): Promise<User> {
-    const user = await this.repo.save(dto);
+  async createUser(input: CreateUserInput): Promise<User> {
+    const user = await this.repo.save(input);
 
     // Fire and forget - if this fails, error is unhandled!
     this.emailService.sendWelcome(user.email);
@@ -1656,8 +1644,8 @@ async dailyCleanup(): Promise<void> {
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
 
-  async createUser(dto: CreateUserDto): Promise<User> {
-    const user = await this.repo.save(dto);
+  async createUser(input: CreateUserInput): Promise<User> {
+    const user = await this.repo.save(input);
 
     // Explicitly catch and log errors
     this.emailService.sendWelcome(user.email).catch((error) => {
@@ -1802,17 +1790,17 @@ export class UsersService {
     return user;
   }
 
-  async create(dto: CreateUserInput): Promise<User> {
-    const existing = await this.usersRepository.findByEmail(dto.email);
+  async create(input: CreateUserInput): Promise<User> {
+    const existing = await this.usersRepository.findByEmail(input.email);
     if (existing) {
-      throw new EmailAlreadyRegisteredException(dto.email);
+      throw new EmailAlreadyRegisteredException(input.email);
     }
-    return this.usersRepository.create(dto);
+    return this.usersRepository.create(input);
   }
 
-  async update(id: string, dto: UpdateUserInput): Promise<User> {
+  async update(id: string, input: UpdateUserInput): Promise<User> {
     const user = await this.findById(id); // Throws if not found
-    return this.usersRepository.update(id, { ...user, ...dto });
+    return this.usersRepository.update(id, { ...user, ...input });
   }
 }
 
@@ -1828,6 +1816,8 @@ export class UsersQueryResolver {
   }
 }
 ```
+
+**Scope.** This rule governs **services**: they throw typed domain exceptions. Pipes, guards, and middleware sit on the transport edge and may use Nest's built-in HTTP exceptions (`BadRequestException`, `UnauthorizedException`, and the like); the same global filter maps those to a consistent GraphQL error, so they do not need a feature-local `DomainException`.
 
 The mapping from domain exception to GraphQL error happens once, in an exception filter (see `error-use-exception-filters`), so error codes and `extensions` are consistent across the whole API.
 
@@ -1888,7 +1878,7 @@ export class DomainExceptionFilter implements ExceptionFilter {
 // common/filters/all-exceptions.filter.ts — global filter for unhandled errors
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
-  constructor(private readonly logger: Logger) {}
+  constructor(private readonly logger = new Logger('AllExceptionsFilter')) {}
 
   catch(exception: unknown, host: ArgumentsHost) {
     const message =
@@ -1912,7 +1902,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
 // Register globally in main.ts — bootstrap wires the global concerns
 app.useGlobalFilters(
-  new AllExceptionsFilter(app.get(Logger)),
+  new AllExceptionsFilter(),
   new DomainExceptionFilter(),
 );
 ```
@@ -1983,15 +1973,17 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   imports: [
     UsersModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
+    // namespaced, validated config — the `auth` namespace is registered in config/
+    // (see devops-use-config-module)
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('JWT_SECRET'),
+        secret: config.get<string>('auth.jwtSecret'),
         signOptions: {
           expiresIn: '15m', // Short-lived access tokens
-          issuer: config.get<string>('JWT_ISSUER'),
-          audience: config.get<string>('JWT_AUDIENCE'),
+          issuer: config.get<string>('auth.jwtIssuer'),
+          audience: config.get<string>('auth.jwtAudience'),
         },
       }),
     }),
@@ -2004,6 +1996,11 @@ export class AuthModule {}
 // modules/auth/services/auth.service.ts — minimal JWT payload
 @Injectable()
 export class AuthService {
+  constructor(
+    private readonly jwtService: JwtService,
+    private readonly refreshTokens: RefreshTokensRepository,
+  ) {}
+
   async login(user: User): Promise<TokenResponse> {
     const payload: JwtPayload = {
       sub: user.id,
@@ -2022,7 +2019,7 @@ export class AuthService {
     const token = randomBytes(32).toString('hex');
     const hashedToken = await bcrypt.hash(token, 10);
 
-    await this.refreshTokenRepo.save({
+    await this.refreshTokens.save({
       userId,
       token: hashedToken,
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
@@ -2061,21 +2058,24 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
-      secretOrKey: config.get<string>('JWT_SECRET'),
+      secretOrKey: config.get<string>('auth.jwtSecret'),
       ignoreExpiration: false,
-      issuer: config.get<string>('JWT_ISSUER'),
-      audience: config.get<string>('JWT_AUDIENCE'),
+      issuer: config.get<string>('auth.jwtIssuer'),
+      audience: config.get<string>('auth.jwtAudience'),
     });
   }
 
   async validate(payload: JwtPayload): Promise<User> {
     const user = await this.usersService.findById(payload.sub);
 
+    // user.isActive and user.passwordChangedAt are User entity fields
+    // (see nestjs-graphql-structure -> data-entity-mongodb)
     if (!user || !user.isActive) {
       throw new UnauthorizedException('User not found or inactive');
     }
 
-    if (user.passwordChangedAt) {
+    // Only check when the entity tracks it and the token carries an issued-at
+    if (user.passwordChangedAt && payload.iat) {
       const tokenIssuedAt = new Date(payload.iat * 1000);
       if (tokenIssuedAt < user.passwordChangedAt) {
         throw new UnauthorizedException('Token invalidated by password change');
@@ -2213,34 +2213,25 @@ export class HealthResolver {
   }
 }
 
-// Custom throttle per user type
+// Key the throttle per authenticated user instead of per IP
 @Injectable()
 export class CustomThrottlerGuard extends ThrottlerGuard {
   protected async getTracker(req: Request): Promise<string> {
     return req.user?.id || req.ip;
   }
-
-  protected async getLimit(context: ExecutionContext): Promise<number> {
-    const request = GqlExecutionContext.create(context).getContext().req;
-
-    if (request.user) {
-      return request.user.isPremium ? 1000 : 200;
-    }
-
-    return 50; // Anonymous users
-  }
 }
+// Per-route and per-user limits come from the named throttlers configured above plus
+// @Throttle(...) on the resolver — ThrottlerGuard looks them up, so there is no
+// per-limit getLimit() override (that was the v4 API, removed in v5).
 
 // Query complexity limiting (GraphQL-native approach)
-// Use graphql-query-complexity or similar to limit query depth and cost
-import { complexityEstimator } from 'graphql-query-complexity';
-
-const schema = buildSchema({
-  typeDefs,
-  validationRules: [
-    complexityEstimator({ maximumComplexity: 1000 }),
-  ],
-});
+// A per-field rate limit does not stop one deeply nested, expensive query. Cap that
+// separately with a query-complexity plugin/validation rule: the
+// `graphql-query-complexity` package exposes a `createComplexityRule` factory that
+// walks the parsed query, assigns each field a cost, and rejects the query before it
+// executes when the total exceeds your maximum. On Apollo Server v4, register that
+// rule as a plugin — the older `buildSchema({ validationRules: [...] })` option was
+// removed in Apollo Server v3.
 
 // Rate limiting by query complexity
 @Injectable()
@@ -2273,113 +2264,72 @@ Reference: [NestJS Throttler](https://docs.nestjs.com/security/rate-limiting) | 
 
 **Impact: HIGH** — XSS vulnerabilities can compromise user sessions and data
 
-While NestJS APIs typically return JSON (which browsers don't execute), XSS risks exist when rendering HTML, storing user content, or when frontend frameworks improperly handle API responses. Sanitize user-generated content before storage and use proper Content-Type headers.
+Sanitize user-generated content at the API boundary before you store it. GraphQL responses are JSON, so the GraphQL transport itself is safe — browsers do not execute JSON. The risk is what happens later: the same content is usually rendered by a client or an SSR/REST surface, and reflecting raw input is a classic injection vector. Because the transport is JSON, the fix is to sanitize/encode on store and on render — not to patch the GraphQL layer.
 
-**Incorrect (storing raw HTML without sanitization):**
+**Incorrect (persisting raw, unsanitized content):**
 
 ```typescript
-// Store raw HTML from users
-@Injectable()
-export class CommentsService {
-  async create(dto: CreateCommentDto): Promise<Comment> {
-    // User can inject: <script>steal(document.cookie)</script>
-    return this.repo.save({
-      content: dto.content, // Raw, unsanitized
-      authorId: dto.authorId,
-    });
-  }
+// Raw content from the client is persisted unchanged
+@InputType()
+export class CreateCommentInput {
+  @Field()
+  content: string; // may contain <script>steal(document.cookie)</script>
+
+  @Field()
+  authorId: string;
 }
 
-// Return HTML without sanitization
-@Controller('pages')
-export class PagesController {
-  @Get(':slug')
-  @Header('Content-Type', 'text/html')
-  async getPage(@Param('slug') slug: string): Promise<string> {
-    const page = await this.pagesService.findBySlug(slug);
-    // If page.content contains user input, XSS is possible
-    return `<html><body>${page.content}</body></html>`;
+// modules/comments/resolvers/comments.mutation.resolver.ts
+@Resolver(() => Comment)
+export class CommentsMutationResolver {
+  @Mutation(() => Comment)
+  createComment(@Args('input') input: CreateCommentInput): Promise<Comment> {
+    // The unsanitized value is stored, so every renderer must now defend itself
+    return this.commentsService.create(input);
   }
-}
-
-// Reflect user input in errors
-@Get(':id')
-async findOne(@Param('id') id: string): Promise<User> {
-  const user = await this.repo.findOne({ where: { id } });
-  if (!user) {
-    // XSS if id contains malicious content and error is rendered
-    throw new NotFoundException(`User ${id} not found`);
-  }
-  return user;
 }
 ```
 
-**Correct (sanitize content and use proper headers):**
+**Correct (sanitize content on the input, persist the sanitized value):**
 
 ```typescript
-// Sanitize HTML content before storage
+// Sanitize via a @Transform on the input, before the value reaches the service
+import { Transform } from 'class-transformer';
 import * as sanitizeHtml from 'sanitize-html';
 
-@Injectable()
-export class CommentsService {
-  private readonly sanitizeOptions: sanitizeHtml.IOptions = {
-    allowedTags: ['b', 'i', 'em', 'strong', 'a', 'p', 'br'],
-    allowedAttributes: {
-      a: ['href', 'title'],
-    },
-    allowedSchemes: ['http', 'https', 'mailto'],
-  };
+const ALLOWED_COMMENT_TAGS = ['p', 'br', 'b', 'i', 'em', 'strong', 'a'];
 
-  async create(dto: CreateCommentDto): Promise<Comment> {
-    return this.repo.save({
-      content: sanitizeHtml(dto.content, this.sanitizeOptions),
-      authorId: dto.authorId,
-    });
-  }
-}
-
-// Use validation pipe to strip HTML
-import { Transform } from 'class-transformer';
-
-export class CreatePostDto {
-  @IsString()
-  @MaxLength(1000)
-  @Transform(({ value }) => sanitizeHtml(value, { allowedTags: [] }))
-  title: string;
-
-  @IsString()
+@InputType()
+export class CreateCommentInput {
+  @Field()
   @Transform(({ value }) =>
     sanitizeHtml(value, {
-      allowedTags: ['p', 'br', 'b', 'i', 'a'],
-      allowedAttributes: { a: ['href'] },
+      allowedTags: ALLOWED_COMMENT_TAGS,
+      allowedAttributes: { a: ['href', 'title'] },
+      allowedSchemes: ['http', 'https', 'mailto'],
     }),
   )
   content: string;
+
+  @Field()
+  authorId: string;
 }
 
-// Set proper Content-Type headers
-@Controller('api')
-export class ApiController {
-  @Get('data')
-  @Header('Content-Type', 'application/json')
-  async getData(): Promise<DataResponse> {
-    // JSON response - browser won't execute scripts
-    return this.service.getData();
+// The sanitized value is what the resolver receives and what gets persisted
+@Resolver(() => Comment)
+export class CommentsMutationResolver {
+  @Mutation(() => Comment)
+  createComment(@Args('input') input: CreateCommentInput): Promise<Comment> {
+    return this.commentsService.create(input);
   }
 }
+```
 
-// Sanitize error messages
-@Get(':id')
-async findOne(@Param('id', ParseUUIDPipe) id: string): Promise<User> {
-  const user = await this.repo.findOne({ where: { id } });
-  if (!user) {
-    // UUID validation ensures safe format
-    throw new NotFoundException('User not found');
-  }
-  return user;
-}
+The `@Transform` runs inside the input's transform pipeline, so the resolver and service receive an already-sanitized value and the sanitized value is what is stored — a renderer can still encode on output, but the database never holds raw markup. For values that do not arrive through an input class (a scalar field argument, an uploaded blob), reuse the same allowlist through a small sanitizing pipe instead, so the policy lives in one place (see `use-pipes`). Strip tags entirely (`allowedTags: []`) for fields that should never contain markup, such as a title.
 
-// Use Helmet for CSP headers
+**Note: HTML surfaces only.** A Content-Security-Policy is defence in depth only when the same app also serves an HTML surface (an SSR page, or a REST/HTTP endpoint that returns HTML); it is irrelevant to a pure GraphQL JSON API. When such a surface exists, add it in `main.ts` so a missed sanitization cannot execute inline script:
+
+```typescript
 import helmet from 'helmet';
 
 async function bootstrap() {
@@ -2518,6 +2468,8 @@ export class AdminResolver {
 }
 ```
 
+Registering an app-wide guard with `APP_GUARD` in `AppModule` is the one documented exception to "AppModule lists modules, not providers": enhancer registrations (`APP_GUARD`, `APP_PIPE`, `APP_FILTER`, `APP_INTERCEPTOR`) must live in the composition root, while everything a feature owns stays in its feature module (see `nestjs-graphql-structure` -> `module-bootstrap` and `module-feature-module`).
+
 Reference: [NestJS Guards](https://docs.nestjs.com/guards)
 
 ---
@@ -2526,7 +2478,7 @@ Reference: [NestJS Guards](https://docs.nestjs.com/guards)
 
 **Impact: HIGH** — First line of defense against attacks
 
-Always validate incoming data using class-validator decorators on GraphQL inputs and the global ValidationPipe. Never trust user input. Validate all mutation inputs, query arguments, and field arguments before processing. In GraphQL, use `@InputType()` for inputs and `@ArgsType()` for grouped arguments — never one in place of the other — instead of `@Body()` DTOs.
+Always validate incoming data using class-validator decorators on GraphQL inputs, the global ValidationPipe, and per-argument pipes. Never trust user input. Validate all mutation inputs, query arguments, and field arguments before processing. In GraphQL, use `@InputType()` for inputs and `@ArgsType()` for grouped arguments (filters, paging, sorting — more than about two, or a logical group) — never one in place of the other, and never an HTTP `@Body()` DTO. A lone scalar argument may stay raw, but it must still be validated: `@Args('id', ParseUUIDPipe) id: string`.
 
 **Incorrect (trust raw input without validation):**
 
@@ -2629,7 +2581,7 @@ export class CreateUserInput {
   password: string;
 }
 
-// dto/find-users.args.ts — query arguments are an @ArgsType(), never an @InputType()
+// dto/find-users.args.ts — grouped arguments (search, paging) are an @ArgsType(), never an @InputType()
 @ArgsType()
 export class FindUsersArgs {
   @Field({ nullable: true })
@@ -2654,14 +2606,6 @@ export class FindUsersArgs {
   offset: number = 0;
 }
 
-// dto/find-user.args.ts — a single-argument group is still an @ArgsType()
-@ArgsType()
-export class FindUserArgs {
-  @Field()
-  @IsUUID('4')
-  id: string;
-}
-
 // modules/users/resolvers/users.mutation.resolver.ts
 @Resolver(() => User)
 export class UsersMutationResolver {
@@ -2682,9 +2626,9 @@ export class UsersQueryResolver {
   }
 
   @Query(() => User)
-  user(@Args() args: FindUserArgs): Promise<User> {
-    // args.id is a valid UUID
-    return this.usersService.findById(args.id);
+  user(@Args('id', ParseUUIDPipe) id: string): Promise<User> {
+    // a lone scalar argument stays raw but is validated by the pipe
+    return this.usersService.findById(id);
   }
 }
 ```
@@ -3101,30 +3045,48 @@ export class ProductsService {
   }
 
   // Invalidate cache on changes
-  async updateProduct(id: string, dto: UpdateProductDto): Promise<Product> {
-    const product = await this.productsRepo.save({ id, ...dto });
+  async updateProduct(id: string, input: UpdateProductInput): Promise<Product> {
+    const product = await this.productsRepo.save({ id, ...input });
     await this.cache.del('products:popular'); // Invalidate
     return product;
   }
 }
 
-// Decorator-based caching with auto-interceptor (interceptors live in common/interceptors/)
+// Decorator-based caching for GraphQL. Define GraphQLCacheInterceptor once in
+// common/interceptors/ (see use-interceptors) — the GraphQL-aware version derives its
+// key from the field and its args, so findOne(id: 'a') and findOne(id: 'b') never
+// share an entry (unlike a static @CacheKey).
+
+// Apply it per resolver; @SetMetadata('cacheTTL', ...) sets the TTL
 @Resolver(() => Category)
-@UseInterceptors(CacheInterceptor)
+@UseInterceptors(GraphQLCacheInterceptor)
 export class CategoriesQueryResolver {
   constructor(private readonly categoriesService: CategoriesService) {}
 
   @Query(() => [Category])
-  @CacheTTL(30 * 60 * 1000) // 30 minutes - categories rarely change
+  @SetMetadata('cacheTTL', 30 * 60 * 1000) // 30 minutes - categories rarely change
   findAll(): Promise<Category[]> {
     return this.categoriesService.findAll();
   }
 
   @Query(() => Category)
-  @CacheTTL(60 * 1000) // 1 minute
-  @CacheKey('category')
+  @SetMetadata('cacheTTL', 60 * 1000) // 1 minute - keyed per id
   findOne(@Args('id', ParseObjectIdPipe) id: string): Promise<Category> {
     return this.categoriesService.findOne(id);
+  }
+}
+
+// Nest's built-in CacheInterceptor is for plain HTTP surfaces only, where one
+// static @CacheKey is acceptable. Never put it on a GraphQL resolver: the static
+// key ignores the resolver's arguments and every caller shares a single entry.
+@Controller('categories')
+@UseInterceptors(CacheInterceptor)
+export class CategoriesController {
+  @Get()
+  @CacheTTL(30 * 60 * 1000)
+  @CacheKey('categories:all')
+  findAll(): Promise<Category[]> {
+    return this.categoriesService.findAll();
   }
 }
 
@@ -3192,6 +3154,8 @@ describe('Users API', () => {
 // test/users.e2e-spec.ts
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { getConnectionToken } from '@nestjs/mongoose';
+import { Connection } from 'mongoose';
 import * as request from 'supertest';
 import { AppModule } from '../src/app.module';
 
@@ -3334,7 +3298,7 @@ describe('Orders (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    connection = moduleFixture.get(getConnectionToken());
+    connection = moduleFixture.get<Connection>(getConnectionToken());
     await app.init();
   });
 
@@ -3616,7 +3580,7 @@ describe('UsersService', () => {
 
       await expect(
         service.create({ name: 'Test', email: 'test@test.com' }),
-      ).rejects.toThrow(ConflictException);
+      ).rejects.toThrow(EmailAlreadyRegisteredException);
     });
   });
 
@@ -3630,10 +3594,10 @@ describe('UsersService', () => {
       expect(result).toEqual(user);
     });
 
-    it('should throw NotFoundException when not found', async () => {
+    it('should throw UserNotFoundException when not found', async () => {
       repo.findOne.mockResolvedValue(null);
 
-      await expect(service.findById('999')).rejects.toThrow(NotFoundException);
+      await expect(service.findById('999')).rejects.toThrow(UserNotFoundException);
     });
   });
 });
@@ -3701,13 +3665,13 @@ N+1 queries occur when a list of parents is fetched, then one extra query runs f
 
 ```typescript
 // A field resolver that queries once per parent
-// modules/users/resolvers/user.resolver.ts
+// modules/posts/resolvers/user-posts.resolver.ts — the data owner (PostsModule) owns User.posts
 @Resolver(() => User)
-export class UserResolver {
+export class UserPostsResolver {
   @ResolveField(() => [Post])
   posts(@Parent() user: User): Promise<Post[]> {
     // Runs once per user => N queries
-    return this.postsRepository.findByUserId(user._id.toString());
+    return this.postsService.findByUserId(user._id.toString());
   }
 }
 
@@ -3725,12 +3689,12 @@ async users(): Promise<User[]> {
 // Use DataLoader for GraphQL to batch and cache per-parent loads
 import DataLoader from 'dataloader';
 
-// modules/users/loaders/user-posts.loader.ts — one instance per request
+// modules/posts/loaders/posts.loader.ts — one instance per request, in the data-owner module
 @Injectable({ scope: Scope.REQUEST })
-export class UserPostsLoader {
+export class PostsLoader {
   constructor(private readonly postsService: PostsService) {}
 
-  readonly batchPosts = new DataLoader<string, Post[]>(async (userIds) => {
+  private readonly byUserId = new DataLoader<string, Post[]>(async (userIds) => {
     // One query for every user's posts
     const posts = await this.postsService.findByUserIds([...userIds]);
 
@@ -3745,20 +3709,30 @@ export class UserPostsLoader {
     // Return in the same order as the input keys (DataLoader contract)
     return userIds.map((id) => postsMap.get(id) || []);
   });
+
+  loadByUserId(id: string): Promise<Post[]> {
+    return this.byUserId.load(id);
+  }
 }
 
-// In the field resolver — the loader batches every call in the tick into one query
-@ResolveField()
-async posts(@Parent() user: User): Promise<Post[]> {
-  return this.userPostsLoader.batchPosts.load(user._id.toString());
+// modules/posts/resolvers/user-posts.resolver.ts — the loader batches every call in the tick
+// into one query; the data owner (PostsModule) owns the field (see relations-owning-module)
+@Resolver(() => User)
+export class UserPostsResolver {
+  constructor(private readonly postsLoader: PostsLoader) {}
+
+  @ResolveField(() => [Post])
+  posts(@Parent() user: User): Promise<Post[]> {
+    return this.postsLoader.loadByUserId(user._id.toString());
+  }
 }
 
-// For a computed aggregate, compute it in the database, not in a loop
+// For a computed aggregate, compute it in the database, in the data-owner module, not in a loop
 @Injectable()
-export class UsersService {
-  async getUsersWithPostCounts(): Promise<UserWithPostCount[]> {
-    return this.usersRepository.countPostsByUser();
-    // e.g. a Mongo aggregation: { $project: { postCount: { $size: '$postIds' } } }
+export class PostsService {
+  countByUserIds(userIds: string[]): Promise<Map<string, number>> {
+    return this.postsRepository.countByUserIds(userIds);
+    // e.g. a Mongo aggregation: { $group: { _id: '$userId', count: { $sum: 1 } } }
   }
 }
 
@@ -3768,7 +3742,7 @@ MongooseModule.forRoot(uri, {
 });
 ```
 
-The loader's lifetime and placement are owned by `relations-dataloader` in `nestjs-graphql-structure`; this rule owns making the batch function itself do one query.
+The loader's lifetime and placement are owned by `relations-dataloader` in `nestjs-graphql-structure` (file `loaders/<feature>.loader.ts`, class `<Feature>Loader`, in the module that owns the data); this rule owns making the batch function itself do one query. A relation field whose data lives in another module is declared and resolved in that module — see `relations-owning-module`.
 
 Reference: [graphql/dataloader](https://github.com/graphql/dataloader)
 
@@ -3993,7 +3967,9 @@ export class TransferService {
         where: { id: fromId },
       });
       if (source.balance < 0) {
-        throw new BadRequestException('Insufficient funds');
+        // Throwing rolls the transaction back; the domain exception is mapped to a
+        // GraphQL error by the global filter (see error-use-exception-filters).
+        throw new InsufficientFundsException(fromId);
       }
 
       // Credit destination account
@@ -4031,12 +4007,12 @@ export class UsersRepository {
   ) {}
 
   async createWithProfile(
-    userData: CreateUserDto,
-    profileData: CreateProfileDto,
+    userInput: CreateUserInput,
+    profileInput: CreateProfileInput,
   ): Promise<User> {
     return this.dataSource.transaction(async (manager) => {
-      const user = await manager.save(User, userData);
-      await manager.save(Profile, { ...profileData, userId: user.id });
+      const user = await manager.save(User, userInput);
+      await manager.save(Profile, { ...profileInput, userId: user.id });
       return user;
     });
   }
@@ -4160,7 +4136,6 @@ export class GraphQLCacheInterceptor implements NestInterceptor {
   ) {}
 
   async intercept(context: ExecutionContext, next: CallHandler): Promise<Observable<any>> {
-    const info = GqlExecutionContext.create(context).getInfo();
     const cacheKey = this.generateKey(context);
     const ttl = this.reflector.get<number>('cacheTTL', context.getHandler()) || 300;
 
@@ -4208,7 +4183,7 @@ Reference: [NestJS Interceptors](https://docs.nestjs.com/interceptors) | [GraphQ
 
 **Impact: MEDIUM** — Pipes ensure clean, validated data reaches your resolvers
 
-Use built-in pipes like `ParseIntPipe`, `ParseUUIDPipe`, and `DefaultValuePipe` for common transformations. Create custom pipes for business-specific transformations. Pipes separate validation/transformation logic from resolvers. Pipes work identically in GraphQL resolvers via `@UsePipes()` decorator. When several arguments form a group (pagination, filters, sorting), put them on an `@ArgsType()` class and let the `ValidationPipe` transform it — do not scatter raw `@Args()` scalars.
+Use built-in pipes like `ParseIntPipe`, `ParseUUIDPipe`, and `DefaultValuePipe` for common transformations. Create custom pipes for business-specific transformations. Pipes separate validation/transformation logic from resolvers. Pipes work identically in GraphQL resolvers via `@UsePipes()` decorator. When several arguments form a group (pagination, filters, sorting), put them on an `@ArgsType()` class and let the `ValidationPipe` transform it — do not scatter raw `@Args()` scalars. A lone scalar argument validated by a pipe (`@Args('id', ParseUUIDPipe) id: string`) stays as-is; `@ArgsType()` is for grouped arguments.
 
 **Incorrect (manual type parsing in resolvers):**
 
@@ -4443,19 +4418,21 @@ export class UserModel {
   postCount!: number; // computed — declared type-only, never populated
 }
 
-// modules/users/mappers/user.mapper.ts — one conversion, testable in isolation
+// modules/users/mappers/user.mapper.ts — one conversion, testable in isolation.
+// Maps stored fields only; a computed field is never assigned here.
 export function toUserModel(doc: UserDocument): UserModel {
   return {
     _id: doc._id.toString(),
     email: doc.email,
     avatarUrl: doc.avatarKey ? cdnUrl(doc.avatarKey) : null,
-    postCount: 0, // resolved by @ResolveField, not the mapper
   };
 }
 
-// modules/users/resolvers/user.resolver.ts — the computed field's single source of truth
+// modules/posts/resolvers/user-posts.resolver.ts — the data owner owns the field
+// (see nestjs-graphql-structure -> relations-owning-module). This is the computed
+// field's single source of truth, and it is never assigned in the mapper.
 @Resolver(() => UserModel)
-export class UserResolver {
+export class UserPostsResolver {
   constructor(private readonly postsService: PostsService) {}
 
   @ResolveField(() => Int)
@@ -4865,35 +4842,29 @@ export class ProcessingService {
 **Correct (enable shutdown hooks and handle cleanup):**
 
 ```typescript
-// Enable shutdown hooks in main.ts
+// Enable shutdown hooks in main.ts — Nest subscribes to SIGTERM/SIGINT, runs
+// onModuleDestroy / onApplicationShutdown on every provider, then closes the HTTP
+// server. Do not attach your own signal handlers that call app.close() again.
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // Enable shutdown hooks
+  // Nest handles SIGTERM and SIGINT and drains the app through the lifecycle hooks
   app.enableShutdownHooks();
 
-  // Optional: Add timeout for forced shutdown
-  const server = await app.listen(3000);
-  server.setTimeout(30000); // 30 second timeout
+  await app.listen(3000);
 
-  // Handle graceful shutdown
-  const signals = ['SIGTERM', 'SIGINT'];
+  // Optional: a forced-exit watchdog. This listener only starts a timer and never
+  // calls app.close() — Nest's shutdown hooks do the closing. If the process is
+  // still alive after the deadline, exit hard.
+  const signals: NodeJS.Signals[] = ['SIGTERM', 'SIGINT'];
   signals.forEach((signal) => {
-    process.on(signal, async () => {
-      console.log(`Received ${signal}, starting graceful shutdown...`);
+    process.on(signal, () => {
+      console.log(`Received ${signal}, waiting for graceful shutdown...`);
 
-      // Stop accepting new connections
-      server.close(async () => {
-        console.log('HTTP server closed');
-        await app.close();
-        process.exit(0);
-      });
-
-      // Force exit after timeout
       setTimeout(() => {
-        console.error('Forced shutdown after timeout');
+        console.error('Graceful shutdown timed out, forcing exit');
         process.exit(1);
-      }, 30000);
+      }, 30000).unref();
     });
   });
 }
@@ -5395,12 +5366,12 @@ Use NestJS Logger with structured JSON output in production. Include contextual 
 // Use console.log in production
 @Injectable()
 export class UsersService {
-  async createUser(dto: CreateUserDto): Promise<User> {
-    console.log('Creating user:', dto);
+  async createUser(input: CreateUserInput): Promise<User> {
+    console.log('Creating user:', input);
     // Not structured, no levels, lost in production logs
 
     try {
-      const user = await this.repo.save(dto);
+      const user = await this.repo.save(input);
       console.log('User created:', user.id);
       return user;
     } catch (error) {
@@ -5421,83 +5392,114 @@ logger.log('User ' + userId + ' created at ' + new Date());
 **Correct (use structured logging with context):**
 
 ```typescript
-// Configure logger in main.ts
+// Configure the application logger in main.ts
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
-    logger:
-      process.env.NODE_ENV === 'production'
-        ? ['error', 'warn', 'log']
-        : ['error', 'warn', 'log', 'debug', 'verbose'],
+    bufferLogs: true,
   });
+
+  // Install the JSON logger so every log line is structured JSON.
+  // JsonLogger is registered as a provider (common/logger/logger.module.ts).
+  app.useLogger(app.get(JsonLogger));
+
+  await app.listen(3000);
 }
 
-// Use NestJS Logger with context
+// Custom logger for JSON output — implements every LoggerService method
+@Injectable()
+export class JsonLogger implements LoggerService {
+  log(message: any, ...optionalParams: any[]): void {
+    this.write('info', message, optionalParams);
+  }
+
+  error(message: any, ...optionalParams: any[]): void {
+    this.write('error', message, optionalParams);
+  }
+
+  warn(message: any, ...optionalParams: any[]): void {
+    this.write('warn', message, optionalParams);
+  }
+
+  debug(message: any, ...optionalParams: any[]): void {
+    this.write('debug', message, optionalParams);
+  }
+
+  verbose(message: any, ...optionalParams: any[]): void {
+    this.write('verbose', message, optionalParams);
+  }
+
+  fatal(message: any, ...optionalParams: any[]): void {
+    this.write('fatal', message, optionalParams);
+  }
+
+  private write(level: string, message: any, optionalParams: any[]): void {
+    // Object params become structured fields; the context string comes last
+    const fields = Object.assign(
+      {},
+      ...optionalParams.filter((p) => p !== null && typeof p === 'object'),
+    );
+    const strings = optionalParams.filter((p) => typeof p === 'string');
+    const context = strings[strings.length - 1];
+
+    const line = JSON.stringify({
+      level,
+      timestamp: new Date().toISOString(),
+      context,
+      message,
+      ...fields,
+    });
+
+    if (level === 'error' || level === 'fatal') {
+      console.error(line);
+    } else if (level === 'warn') {
+      console.warn(line);
+    } else {
+      console.log(line);
+    }
+  }
+}
+
+// Structured output: inject the JSON logger and pass fields as objects.
+// The object params are merged into the JSON line.
 @Injectable()
 export class UsersService {
-  private readonly logger = new Logger(UsersService.name);
+  constructor(
+    private readonly logger: JsonLogger,
+    private readonly repo: UsersRepository,
+  ) {}
 
-  async createUser(dto: CreateUserDto): Promise<User> {
-    this.logger.log('Creating user', { email: dto.email });
+  async createUser(input: CreateUserInput): Promise<User> {
+    this.logger.log('Creating user', UsersService.name, { email: input.email });
 
     try {
-      const user = await this.repo.save(dto);
-      this.logger.log('User created', { userId: user.id });
+      const user = await this.repo.save(input);
+      this.logger.log('User created', UsersService.name, { userId: user.id });
       return user;
     } catch (error) {
-      this.logger.error('Failed to create user', error.stack, {
-        email: dto.email,
-      });
+      this.logger.error(
+        'Failed to create user',
+        error.stack,
+        UsersService.name,
+        { email: input.email },
+      );
       throw error;
     }
   }
 }
 
-// Custom logger for JSON output
+// The built-in Logger is fine for plain messages only. Its second argument is a
+// string context and it does not emit structured fields — use JsonLogger (or
+// Pino, below) whenever you need key/value data in the log line.
 @Injectable()
-export class JsonLogger implements LoggerService {
-  log(message: string, context?: object): void {
-    console.log(
-      JSON.stringify({
-        level: 'info',
-        timestamp: new Date().toISOString(),
-        message,
-        ...context,
-      }),
-    );
+export class HealthService {
+  private readonly logger = new Logger(HealthService.name);
+
+  ping(): void {
+    this.logger.log('Health check passed');
   }
 
-  error(message: string, trace?: string, context?: object): void {
-    console.error(
-      JSON.stringify({
-        level: 'error',
-        timestamp: new Date().toISOString(),
-        message,
-        trace,
-        ...context,
-      }),
-    );
-  }
-
-  warn(message: string, context?: object): void {
-    console.warn(
-      JSON.stringify({
-        level: 'warn',
-        timestamp: new Date().toISOString(),
-        message,
-        ...context,
-      }),
-    );
-  }
-
-  debug(message: string, context?: object): void {
-    console.debug(
-      JSON.stringify({
-        level: 'debug',
-        timestamp: new Date().toISOString(),
-        message,
-        ...context,
-      }),
-    );
+  warnSlow(): void {
+    this.logger.warn('Database responded slowly');
   }
 }
 

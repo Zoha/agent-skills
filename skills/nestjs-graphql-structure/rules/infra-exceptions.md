@@ -75,4 +75,4 @@ feature, and a shared base lives in `common/` so a central filter can map it.
 
 Reference: [NestJS Exception Filters](https://docs.nestjs.com/exception-filters)
 
-**Behavioral depth.** See `nestjs-best-practices` -> `error-throw-graphql-errors`, `error-use-exception-filters`.
+**Behavioral depth.** See `nestjs-best-practices` -> `error-throw-domain-errors`, `error-use-exception-filters`.

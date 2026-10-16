@@ -7,7 +7,7 @@ tags: graphql, pipes, validation, transformation
 
 ## Use Pipes for Input Transformation
 
-Use built-in pipes like `ParseIntPipe`, `ParseUUIDPipe`, and `DefaultValuePipe` for common transformations. Create custom pipes for business-specific transformations. Pipes separate validation/transformation logic from resolvers. Pipes work identically in GraphQL resolvers via `@UsePipes()` decorator. When several arguments form a group (pagination, filters, sorting), put them on an `@ArgsType()` class and let the `ValidationPipe` transform it — do not scatter raw `@Args()` scalars.
+Use built-in pipes like `ParseIntPipe`, `ParseUUIDPipe`, and `DefaultValuePipe` for common transformations. Create custom pipes for business-specific transformations. Pipes separate validation/transformation logic from resolvers. Pipes work identically in GraphQL resolvers via `@UsePipes()` decorator. When several arguments form a group (pagination, filters, sorting), put them on an `@ArgsType()` class and let the `ValidationPipe` transform it — do not scatter raw `@Args()` scalars. A lone scalar argument validated by a pipe (`@Args('id', ParseUUIDPipe) id: string`) stays as-is; `@ArgsType()` is for grouped arguments.
 
 **Incorrect (manual type parsing in resolvers):**
 

@@ -21,6 +21,10 @@ modules and infrastructure modules. Neither contains business logic or feature w
   listen.
 - `app.module.ts`: import config, infrastructure, and feature modules.
 
+`AppModule` lists **modules**, not individual providers. The one documented exception is app-wide
+enhancer registrations that the framework requires as providers — `APP_GUARD`, `APP_PIPE`,
+`APP_FILTER`, and `APP_INTERCEPTOR` (see `nestjs-best-practices` -> `security-use-guards`).
+
 **Never.**
 
 - Register a feature's providers in `AppModule`.

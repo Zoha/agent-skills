@@ -56,7 +56,7 @@ export class DomainExceptionFilter implements ExceptionFilter {
 // common/filters/all-exceptions.filter.ts — global filter for unhandled errors
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
-  constructor(private readonly logger: Logger) {}
+  constructor(private readonly logger = new Logger('AllExceptionsFilter')) {}
 
   catch(exception: unknown, host: ArgumentsHost) {
     const message =
@@ -80,7 +80,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
 // Register globally in main.ts — bootstrap wires the global concerns
 app.useGlobalFilters(
-  new AllExceptionsFilter(app.get(Logger)),
+  new AllExceptionsFilter(),
   new DomainExceptionFilter(),
 );
 ```

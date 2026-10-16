@@ -15,8 +15,8 @@ NestJS automatically catches errors from async route handlers, but errors from b
 // Fire-and-forget without error handling
 @Injectable()
 export class UsersService {
-  async createUser(dto: CreateUserDto): Promise<User> {
-    const user = await this.repo.save(dto);
+  async createUser(input: CreateUserInput): Promise<User> {
+    const user = await this.repo.save(input);
 
     // Fire and forget - if this fails, error is unhandled!
     this.emailService.sendWelcome(user.email);
@@ -57,8 +57,8 @@ async dailyCleanup(): Promise<void> {
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
 
-  async createUser(dto: CreateUserDto): Promise<User> {
-    const user = await this.repo.save(dto);
+  async createUser(input: CreateUserInput): Promise<User> {
+    const user = await this.repo.save(input);
 
     // Explicitly catch and log errors
     this.emailService.sendWelcome(user.email).catch((error) => {

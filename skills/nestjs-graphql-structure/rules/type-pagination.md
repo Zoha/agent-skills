@@ -13,8 +13,10 @@ tags: graphql, pagination, cursor, relay
 pagination ("connections"): a `first`/`after` args type plus an edge/node/`pageInfo` result type.
 Define the shared building blocks once in `common/pagination/` — a generic `Paginated<T>` factory
 and a `PageInfo` type — and reuse them for every list; keep a feature's own args and filter types
-in its `dto/`. For a small, bounded, non-growing admin list offset (`page`/`limit`) is acceptable;
-pick one per query and do not mix the two.
+in its `dto/`. `PageInfo` follows the Relay Cursor Connections spec: nullable `startCursor`/`endCursor`
+and required `hasPreviousPage`/`hasNextPage`. A `totalCount` field is an **optional, non-Relay
+extension** — include it only when it can be computed cheaply. For a small, bounded, non-growing
+admin list offset (`page`/`limit`) is acceptable; pick one per query and do not mix the two.
 
 **Placement.**
 
@@ -28,6 +30,7 @@ pick one per query and do not mix the two.
 - Define the generic `Paginated<T>` connection factory once, in `common/pagination/`.
 - Give each list query an `@ArgsType()` with `first`/`after` (and filters) in the feature's `dto/`.
 - Return a `Paginated<T>` from the query and build it from the service result.
+- Include `totalCount` only when it is cheap to compute — it is an optional, non-Relay extension.
 
 **Never.**
 
@@ -53,7 +56,13 @@ Why it is wrong: the list is unbounded and the client has no cursor or page to m
 @ObjectType('PageInfo')
 export class PageInfo {
   @Field(() => String, { nullable: true })
+  startCursor?: string;
+
+  @Field(() => String, { nullable: true })
   endCursor?: string;
+
+  @Field()
+  hasPreviousPage: boolean;
 
   @Field()
   hasNextPage: boolean;
@@ -77,8 +86,9 @@ export function Paginated<T>(classRef: Type<T>) {
     @Field(() => PageInfo)
     pageInfo: PageInfo;
 
-    @Field(() => Int)
-    totalCount: number;
+    // OPTIONAL, non-Relay extension: include only when totalCount is cheap to compute.
+    @Field(() => Int, { nullable: true })
+    totalCount?: number;
   }
 
   return PaginatedType;
