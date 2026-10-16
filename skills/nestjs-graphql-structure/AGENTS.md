@@ -1,6 +1,6 @@
 # NestJS GraphQL Application Structure
 
-**Version 1.3.1**
+**Version 1.4.0**
 NestJS GraphQL Structure
 October 2026
 
@@ -13,7 +13,7 @@ October 2026
 
 ## Abstract
 
-File-placement and anatomy guide for NestJS GraphQL applications, designed for AI agents and LLMs. Teaches where every file belongs in a feature-first, code-first codebase — the base structure map plus per-file rules for modules, services, resolvers (query, mutation, subscription, and field), inputs and args, pagination, entities, models/mappers, repositories, providers, loaders, events, background jobs, auth, exceptions, custom scalars, config, common building blocks, GraphQL and database infrastructure, seeds, interfaces/tokens, unions/interfaces, and conventions (naming, barrels/aliases, lint boundaries, test placement, and fixtures) — each with purpose, responsibilities, and incorrect-vs-correct examples. It also covers how modules connect to resolve GraphQL fields and relations, including module-resolution concerns such as circular dependencies, while deferring behavioral concerns to the nestjs-best-practices skill.
+File-placement and anatomy guide for NestJS GraphQL applications, designed for AI agents and LLMs. Teaches where every file belongs in a feature-first, code-first codebase — the base structure map plus per-file rules for modules, services, resolvers (query, mutation, subscription, and field), inputs and args, pagination, Mongoose entities and schema best practices for shared code-first types, model injection confined to repositories, models/mappers, repositories, Mongoose discriminators for polymorphic documents, deriving fields instead of storing duplicated data, providers, loaders, events, background jobs, auth, exceptions, custom scalars, config, common building blocks, GraphQL and database infrastructure, seeds, interfaces/tokens, unions/interfaces and publishing discriminated types, and conventions (naming, barrels/aliases, lint boundaries, test placement, and fixtures) — each with purpose, responsibilities, and incorrect-vs-correct examples. It also covers how modules connect to resolve GraphQL fields and relations, including module-resolution concerns such as circular dependencies, while deferring behavioral concerns to the nestjs-best-practices skill.
 
 ---
 
@@ -45,11 +45,16 @@ File-placement and anatomy guide for NestJS GraphQL applications, designed for A
    - 5.1 [Define @Args Classes in dto/](#51-define-args-classes-in-dto-)
    - 5.2 [Define GraphQL Inputs in dto/](#52-define-graphql-inputs-in-dto-)
    - 5.3 [Paginate List Queries with a Shared Page Type](#53-paginate-list-queries-with-a-shared-page-type)
-   - 5.4 [Place Union and Interface Types with the Module's Types](#54-place-union-and-interface-types-with-the-module-s-types)
+   - 5.4 [Publish Discriminated Documents as an Interface or Union](#54-publish-discriminated-documents-as-an-interface-or-union)
+   - 5.5 [Place Union and Interface Types with the Module's Types](#55-place-union-and-interface-types-with-the-module-s-types)
 6. [Data Access](#6-data-access) — **MEDIUM-HIGH**
-   - 6.1 [Place MongoDB Entities in entities/](#61-place-mongodb-entities-in-entities-)
-   - 6.2 [Split models/ and mappers/ When API Differs From Storage](#62-split-models-and-mappers-when-api-differs-from-storage)
-   - 6.3 [Keep Data Access in repositories/](#63-keep-data-access-in-repositories-)
+   - 6.1 [Compute Derived Fields; Do Not Store Them](#61-compute-derived-fields-do-not-store-them)
+   - 6.2 [Model Polymorphic Subtypes with Discriminators](#62-model-polymorphic-subtypes-with-discriminators)
+   - 6.3 [Place MongoDB Entities in entities/](#63-place-mongodb-entities-in-entities-)
+   - 6.4 [Inject a Model Only in the Repository](#64-inject-a-model-only-in-the-repository)
+   - 6.5 [Split models/ and mappers/ When API Differs From Storage](#65-split-models-and-mappers-when-api-differs-from-storage)
+   - 6.6 [Mongoose Schema Best Practices for Shared Types](#66-mongoose-schema-best-practices-for-shared-types)
+   - 6.7 [Keep Data Access in repositories/](#67-keep-data-access-in-repositories-)
 7. [Relations & Cross-Module](#7-relations-cross-module) — **CRITICAL**
    - 7.1 [Resolve Circular Module Dependencies](#71-resolve-circular-module-dependencies)
    - 7.2 [Batch Relations with a Per-Request DataLoader](#72-batch-relations-with-a-per-request-dataloader)
@@ -1831,7 +1836,129 @@ Reference: [GraphQL Pagination](https://graphql.org/learn/pagination/) | [Relay 
 
 ---
 
-### 5.4 Place Union and Interface Types with the Module's Types
+### 5.4 Publish Discriminated Documents as an Interface or Union
+
+**Impact: HIGH** — resolveType maps the discriminator key to the concrete type
+
+**Purpose.** A collection that stores several document shapes (Mongoose discriminators, see
+`data-discriminators`) is polymorphic in the database and should be polymorphic in the schema: one
+abstract GraphQL type — an `@InterfaceType` or a `createUnionType` — whose concrete type is chosen
+**automatically** from the document's discriminator key. Implement `resolveType` once, reading the
+key (`__t` or your `discriminatorKey`), and map it to the concrete `@ObjectType`. Every resolver
+that returns the abstract type then publishes the correct subtype with no per-resolver branching.
+
+**Placement.** The abstract type in `modules/<feature>/models/<name>.interface.ts` or
+`<name>.union.ts` (see `type-unions-interfaces`); the concrete `@ObjectType`s in `entities/`
+(merged case) or `models/`; a single registry mapping each discriminator value to its type.
+
+**Responsibilities.**
+
+- Declare the base as the abstract type and the subtypes as `@ObjectType`s — an interface requires
+  `@ObjectType({ implements: () => [Base] })` on each concrete type.
+- Implement exactly one `resolveType` that reads the discriminator key and returns the concrete
+  class (or its name).
+- Keep the discriminator value -> type mapping in one shared registry, used by both the interface
+  and any union over the same types.
+- Expose the discriminator key as a GraphQL enum field so clients can branch without inline
+  fragments when that is cheaper.
+
+**Never.**
+
+- Guess the type from field presence (`if (value.name) …`) when a discriminator key exists.
+- Re-implement `resolveType` in more than one place, or inline in a resolver.
+- Return plain object literals that lose the class identity the default `resolveType` relies on.
+
+**Incorrect (shape heuristics, repeated per resolver):**
+
+```typescript
+// modules/events/resolvers/events.query.resolver.ts
+const EventResult = createUnionType({
+  name: 'EventResult',
+  types: () => [ClickedLinkEvent, SignUpEvent] as const,
+  resolveType: (value) => (value.url ? ClickedLinkEvent : SignUpEvent), // heuristic, duplicated
+});
+
+@Query(() => [EventResult])
+events() { /* ... */ }
+```
+
+Why it is wrong: the type is decided by guessing at field presence rather than the discriminator
+key the database already stored, so an ambiguous document resolves to the wrong type — and the same
+guess gets repeated wherever events are returned.
+
+**Correct (one interface, one registry, key-driven resolveType):**
+
+```typescript
+// constants/event-kind.ts — the discriminator values, shared by storage and schema
+export enum EventKind {
+  ClickedLink = 'ClickedLink',
+  SignUp = 'signup',
+}
+registerEnumType(EventKind, { name: 'EventKind' });
+
+// models/event-types.ts — the one registry: discriminator value -> concrete ObjectType
+export const EVENT_TYPES = {
+  [EventKind.ClickedLink]: ClickedLinkEvent,
+  [EventKind.SignUp]: SignUpEvent,
+} as const;
+
+// entities/event.entity.ts — the base is the GraphQL interface AND the Mongoose base schema
+@InterfaceType({
+  resolveType: (event: EventDocument) => EVENT_TYPES[event.kind],
+})
+@Schema({ discriminatorKey: 'kind', collection: 'events' })
+export abstract class Event {
+  @Field(() => ID)
+  _id: Types.ObjectId;
+
+  @Field(() => EventKind)
+  @Prop({ type: String, required: true, enum: EventKind })
+  kind: EventKind;
+
+  @Field()
+  time: Date;
+}
+
+// entities/clicked-link-event.entity.ts — a concrete type implements the interface
+@ObjectType({ implements: () => [Event] })
+@Schema()
+export class ClickedLinkEvent extends Event {
+  @Field()
+  url: string;
+}
+
+// Any resolver returning the base type needs no branching:
+@Query(() => [Event])
+events(): Promise<EventDocument[]> {
+  return this.eventsService.findAll();
+}
+```
+
+Why it is right: `resolveType` reads the stored discriminator key and returns the concrete type, so
+any resolver that returns `Event` publishes the right subtype automatically, and the mapping lives
+in one registry.
+
+**Union variant (same registry, no interface needed):**
+
+```typescript
+// models/event-result.union.ts
+export const EventResult = createUnionType({
+  name: 'EventResult',
+  types: () => [ClickedLinkEvent, SignUpEvent] as const,
+  resolveType: (event: EventDocument) => EVENT_TYPES[event.kind], // the same one registry
+});
+```
+
+Use an interface when the types share fields clients query in common; use a union when they do not.
+Either way the concrete type comes from the discriminator key, not from a guess.
+
+Reference: [NestJS GraphQL Interfaces](https://docs.nestjs.com/graphql/interfaces) | [NestJS GraphQL Unions and Enums](https://docs.nestjs.com/graphql/unions-and-enums) | [Mongoose Discriminators](https://mongoosejs.com/docs/discriminators.html)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `arch-schema-evolution`.
+
+---
+
+### 5.5 Place Union and Interface Types with the Module's Types
 
 **Impact: MEDIUM-HIGH** — polymorphic types have one home and one resolveType
 
@@ -1906,7 +2033,260 @@ Reference: [NestJS GraphQL Unions and Enums](https://docs.nestjs.com/graphql/uni
 
 **Section Impact: MEDIUM-HIGH**
 
-### 6.1 Place MongoDB Entities in entities/
+### 6.1 Compute Derived Fields; Do Not Store Them
+
+**Impact: MEDIUM-HIGH** — no duplicated or derivable data in the database
+
+**Purpose.** Do not persist what can be derived: totals, counts, a "full name", a status computed
+from other fields, and whole sub-objects already stored elsewhere. Storing a derived value creates a
+second source of truth, so every write path must remember to keep the copy in sync and the copies
+drift. Keep the source on the document and derive the value where it is read — a resolver
+(`@ResolveField`), a mapper, a Mongoose virtual, or an aggregation. Persist a derived value only as
+a deliberate materialised cache you own the recomputation of.
+
+**Placement.** Source fields live on the entity (`entities/`). The derived value is produced in a
+resolver (`resolvers/<type>.resolver.ts`, see `resolver-computed-fields`), a mapper (`mappers/`, see
+`data-models-mappers`), or a Mongoose virtual on the schema.
+
+**Responsibilities.**
+
+- Store the minimal source data; derive everything else at read time.
+- Resolve a derived field with `@ResolveField` (declared type-only on the `@ObjectType`) or as a
+  virtual — never as an extra `@Prop`.
+- Embed a sub-document only when the parent owns it; **reference** data owned elsewhere instead of
+  copying it.
+- If a value is materialised for performance, treat it as a cache: recompute it on every write (or
+  a periodic job) and document that it is not the source of truth.
+
+**Never.**
+
+- Store a total, count, full name, or status that can be computed from other fields on the same
+  document.
+- Copy a related sub-object (an author's name or avatar) into every document that references it when
+  a `ref` and one owner give the same data.
+- Keep two fields that must always agree (a `name` and a denormalised `displayName`) with no single
+  writer.
+- `populate()` eagerly on every read to reconstruct what you duplicated.
+
+**Incorrect (counts, totals, and a copied name stored as if they were truth):**
+
+```typescript
+@Schema()
+@ObjectType()
+export class Order {
+  @Field(() => [OrderItem])
+  @Prop({ type: [OrderItemSchema] })
+  items: OrderItem[];
+
+  @Field(() => Int)
+  @Prop()
+  itemCount: number;   // always equals items.length -> a second source of truth
+
+  @Field(() => Float)
+  @Prop()
+  total: number;       // recomputed by hand on every write; drifts
+}
+
+@Schema()
+export class Comment {
+  @Prop({ type: Types.ObjectId, ref: User.name })
+  authorId: Types.ObjectId;
+
+  @Prop()
+  authorName: string;  // duplicate of User.name; stale the moment the user renames
+}
+```
+
+Why it is wrong: `itemCount` and `total` must be recomputed on every mutation and silently drift,
+and `authorName` is a copy that goes stale on rename — both duplicate a source of truth.
+
+**Correct (one stored source; derive on read; reference what you do not own):**
+
+```typescript
+// entities/order.entity.ts — the only stored source
+@Schema()
+export class Order {
+  @Prop({ type: [OrderItemSchema] })
+  items: OrderItem[];
+}
+
+// models/order.model.ts — derived fields are declared, never stored
+@ObjectType()
+export class OrderModel {
+  @Field(() => [OrderItem]) items: OrderItem[];
+
+  @Field(() => Int)
+  itemCount!: number;   // computed
+
+  @Field(() => Float)
+  total!: number;       // computed
+}
+
+// resolvers/order.resolver.ts — resolved on demand
+@Resolver(() => OrderModel)
+export class OrderResolver {
+  @ResolveField(() => Int)
+  itemCount(@Parent() order: OrderModel): number {
+    return order.items.length;
+  }
+
+  @ResolveField(() => Float)
+  total(@Parent() order: OrderModel): number {
+    return order.items.reduce((sum, item) => sum + item.qty * item.unitPrice, 0);
+  }
+}
+
+// entities/comment.entity.ts — reference the owner instead of copying it
+@Schema()
+export class Comment {
+  @Prop({ type: Types.ObjectId, ref: User.name })
+  authorId: Types.ObjectId;
+  // authorName is resolved from the referenced user, not stored here
+}
+```
+
+Why it is right: each value has exactly one stored source, derived fields are computed on read, and
+the comment references the user instead of copying a name that can change.
+
+**Deliberate exception — the materialised cache.** When a derived value is read far more often than
+written and computing it is expensive (a large aggregate), persist it as a computed value and
+recompute it on every write or a periodic job — and record that it is a cache. That is MongoDB's
+Computed Values pattern; it is a conscious trade, not the default.
+
+Reference: [MongoDB Data Modeling Best Practices](https://www.mongodb.com/docs/manual/data-modeling/best-practices/) | [MongoDB Computed Values Pattern](https://www.mongodb.com/docs/manual/data-modeling/design-patterns/computed-values/)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `use-types-serialization`.
+
+---
+
+### 6.2 Model Polymorphic Subtypes with Discriminators
+
+**Impact: MEDIUM-HIGH** — one collection, many shapes, one base model
+
+**Purpose.** When several document shapes share a base and belong together — different user roles,
+different event kinds — store them in one collection with Mongoose **discriminators**: a base
+schema plus a discriminator schema per subtype, differentiated by the discriminator key (default
+`__t`, overridable with `discriminatorKey`). Register them through NestJS so each subtype is its
+own injectable model, all backed by the base collection. The GraphQL side of the same feature is
+`type-polymorphic-discriminators`.
+
+**Placement.** Base and subtype entities in `modules/<feature>/entities/`; registration in the
+feature module's `MongooseModule.forFeature`.
+
+**Responsibilities.**
+
+- Give the base schema a `discriminatorKey` (`@Schema({ discriminatorKey: 'kind' })`) and declare
+  the key field with the `enum` of subtype names.
+- Declare each subtype as a class that extends the base entity, adding only its extra fields.
+- Register each subtype under `discriminators: [{ name, schema, value? }]`; `value` defaults to the
+  model name, so set it explicitly when the stored key should differ.
+- Inject a subtype's model with `@InjectModel(Subtype.name)` **in the repository** (see
+  `data-model-injection`).
+- Query the base model to read every subtype, or a discriminator model to read one.
+
+**Never.**
+
+- Use separate collections when the shapes share a base and are queried together — that repeats the
+  common fields and loses the shared query (see `data-derived-fields`).
+- Let a client set the discriminator key directly; the model that creates the document owns it.
+- Call `pre()`/`post()` hooks **after** defining a discriminator — declare hooks on the schema
+  before it is used as a discriminator.
+
+**Incorrect (separate schemas that repeat the shared fields, queried apart):**
+
+```typescript
+// three unrelated collections; common fields duplicated, no shared query
+@Schema() export class ClickedLinkEvent { @Prop() time: Date; @Prop() url: string; }
+@Schema() export class SignUpEvent { @Prop() time: Date; @Prop() user: string; }
+// no base model, no discriminator key, no way to read "all events" in one query
+```
+
+Why it is wrong: the shared `time` field is repeated, the two shapes cannot be queried together, and
+shared validation has to be copied into each schema.
+
+**Correct (base + subtypes + registration; each subtype is injectable):**
+
+```typescript
+// entities/event.entity.ts — the shared base
+@ObjectType()
+@Schema({ discriminatorKey: 'kind', timestamps: true, collection: 'events' })
+export class Event {
+  @Field(() => ID)
+  _id: Types.ObjectId;
+
+  @Field(() => EventKind)
+  @Prop({ type: String, required: true, enum: EventKind })
+  kind: EventKind;
+
+  @Field()
+  @Prop({ type: Date, required: true })
+  time: Date;
+}
+
+export const EventSchema = SchemaFactory.createForClass(Event);
+
+// entities/clicked-link-event.entity.ts — a subtype
+@ObjectType()
+@Schema()
+export class ClickedLinkEvent extends Event {
+  @Field()
+  @Prop({ type: String, required: true })
+  url: string;
+}
+
+export const ClickedLinkEventSchema = SchemaFactory.createForClass(ClickedLinkEvent);
+
+// events.module.ts — register the base plus its discriminators
+@Module({
+  imports: [
+    MongooseModule.forFeature([
+      {
+        name: Event.name,
+        schema: EventSchema,
+        discriminators: [
+          { name: ClickedLinkEvent.name, schema: ClickedLinkEventSchema },
+          { name: SignUpEvent.name, schema: SignUpEventSchema, value: 'signup' },
+        ],
+      },
+    ]),
+  ],
+  providers: [EventsRepository, EventsService, EventsQueryResolver],
+})
+export class EventsModule {}
+```
+
+```typescript
+// repositories/events.repository.ts — subtype models are injected here, nowhere else
+@Injectable()
+export class EventsRepository {
+  constructor(
+    @InjectModel(Event.name) private readonly eventModel: Model<EventDocument>,
+    @InjectModel(ClickedLinkEvent.name)
+    private readonly clickedModel: Model<ClickedLinkEventDocument>,
+  ) {}
+
+  findAll(): Promise<EventDocument[]> {
+    return this.eventModel.find().exec();     // every subtype, from the base model
+  }
+
+  findClicked(): Promise<ClickedLinkEventDocument[]> {
+    return this.clickedModel.find().exec();   // one subtype
+  }
+}
+```
+
+Why it is right: one collection holds every shape, the shared base is written once, each subtype has
+its own injectable model used only in the repository, and the base model reads all events in one
+query.
+
+When you expose these to GraphQL, make the base the polymorphic type so the concrete type is chosen
+from the discriminator key automatically — see `type-polymorphic-discriminators`.
+
+Reference: [NestJS MongoDB — Discriminators](https://docs.nestjs.com/techniques/mongodb) | [Mongoose Discriminators](https://mongoosejs.com/docs/discriminators.html)
+
+---
+
+### 6.3 Place MongoDB Entities in entities/
 
 **Impact: MEDIUM-HIGH** — one class per stored document, exposed only where safe
 
@@ -1995,7 +2375,104 @@ Reference: [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb) | [NestJ
 
 ---
 
-### 6.2 Split models/ and mappers/ When API Differs From Storage
+### 6.4 Inject a Model Only in the Repository
+
+**Impact: HIGH** — the model token stops at the data layer
+
+**Purpose.** A NestJS Mongoose model (`Model<Doc>`) is obtained with `@InjectModel(...)`. That
+injection marks the boundary of the data layer: **only the repository receives the model**.
+Resolvers depend on services; services depend on repositories; repositories depend on the model.
+Nothing above the repository knows a Mongoose model exists, so the ORM never leaks into business
+logic, GraphQL types, or tests. This is the injection-side counterpart to `data-repository`.
+
+**Placement.** `@InjectModel` is written once per entity, in
+`modules/<feature>/repositories/<feature>.repository.ts`. The module makes the model available by
+importing `MongooseModule.forFeature([{ name: X.name, schema: XSchema }])`.
+
+**Responsibilities.**
+
+- Inject the model exactly once per entity, in the repository constructor, as `private readonly`.
+- Express every read and write as a repository method with a domain signature.
+- Keep the model instance private to the repository — never return it or accept it as a parameter.
+- Have services inject the repository, and resolvers inject the service.
+
+**Never.**
+
+- Inject a model into a **service**, **resolver**, **loader**, or **provider** — inject the
+  repository instead.
+- Let `Model<...>`, a query builder, or an aggregation type appear in a service or resolver
+  signature.
+- Register the model in `AppModule` or export it from the module — the repository encapsulates it.
+
+**Incorrect (the service injects the model and builds the query):**
+
+```typescript
+// services/users.service.ts — reaches straight through to Mongoose
+@Injectable()
+export class UsersService {
+  constructor(@InjectModel(User.name) private readonly userModel: Model<UserDocument>) {}
+
+  async findActive(): Promise<UserDocument[]> {
+    return this.userModel.find({ isActive: true }).exec(); // ORM detail in business code
+  }
+}
+```
+
+Why it is wrong: the model token escapes the data layer, so business code owns query detail, the
+service is welded to Mongoose, and the query cannot be stubbed without a real model.
+
+**Correct (model -> repository -> service -> resolver, one direction):**
+
+```typescript
+// repositories/users.repository.ts — the only place the model exists
+@Injectable()
+export class UsersRepository {
+  constructor(@InjectModel(User.name) private readonly userModel: Model<UserDocument>) {}
+
+  findActive(): Promise<UserDocument[]> {
+    return this.userModel.find({ isActive: true }).exec();
+  }
+}
+
+// services/users.service.ts — depends on the repository, not the model
+@Injectable()
+export class UsersService {
+  constructor(private readonly usersRepository: UsersRepository) {}
+
+  findActive(): Promise<UserDocument[]> {
+    return this.usersRepository.findActive();
+  }
+}
+
+// resolvers/users.query.resolver.ts — depends on the service
+@Query(() => [User])
+findActiveUsers(): Promise<UserDocument[]> {
+  return this.usersService.findActive();
+}
+
+// users.module.ts — the model provider and the repository live together
+@Module({
+  imports: [MongooseModule.forFeature([{ name: User.name, schema: UserSchema }])],
+  providers: [UsersRepository, UsersService, UsersQueryResolver],
+  exports: [UsersService],
+})
+export class UsersModule {}
+```
+
+Why it is right: the model is injected in exactly one place, the dependency chain flows
+model -> repository -> service -> resolver, and any layer above the repository can be tested with a
+stubbed repository.
+
+Discriminator subtypes follow the same rule — inject each subtype's model in the repository; see
+`data-discriminators`.
+
+Reference: [NestJS MongoDB — Model injection](https://docs.nestjs.com/techniques/mongodb#model-injection) | [NestJS Custom Providers](https://docs.nestjs.com/fundamentals/custom-providers)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `arch-use-repository-pattern`.
+
+---
+
+### 6.5 Split models/ and mappers/ When API Differs From Storage
 
 **Impact: MEDIUM-HIGH** — keep the public graph decoupled from the database
 
@@ -2087,7 +2564,125 @@ Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
 
 ---
 
-### 6.3 Keep Data Access in repositories/
+### 6.6 Mongoose Schema Best Practices for Shared Types
+
+**Impact: MEDIUM-HIGH** — one class, correct schema options, nothing internal leaked
+
+**Purpose.** In the default (merged) case one class is *both* the Mongoose schema
+(`@Schema`/`@Prop`) and the GraphQL `@ObjectType` (`@Field`) — a single **shared type** that
+drives storage and the schema at once (see `data-entity-mongodb`). Keeping that one class correct
+means getting a few schema-level things right: the hydrated document type, explicit types where
+reflection cannot infer them, real schema options, and the `_id`/`__v` boundary.
+
+**Placement.** `modules/<feature>/entities/<entity>.entity.ts`.
+
+**Responsibilities.**
+
+- Declare the hydrated document type once: `export type UserDocument = HydratedDocument<User>`.
+- Pass real schema options to `@Schema(...)`: `timestamps: true`, an explicit `collection`, and a
+  `toJSON`/`toObject` transform when the stored shape needs normalising.
+- Give an explicit `@Prop` type whenever TypeScript reflection cannot infer it — arrays, nested
+  objects, and every `ref` (`@Prop([String])`, `@Prop({ type: Types.ObjectId, ref: 'Owner' })`).
+- Expose `_id` with `@Field(() => ID)` (the `ID` scalar stringifies it); never expose `__v`.
+- Declare `timestamps` fields (`createdAt`/`updatedAt`) with `@Field` when clients need them.
+- Index every unique or frequently queried field.
+
+**Never.**
+
+- Rely on the `@nestjs/graphql` CLI plugin to infer `@Prop`/`@Field` types from Mongoose types — it
+  cannot reflect `ObjectId`, `Date`, or a `ref`, so declare those explicitly.
+- Return the document as-is and leak `__v`, or type a field as a Mongoose model where the schema
+  promises an `ID`.
+- Re-declare the same shared type in several features; share it through a base `@ObjectType` class
+  (`@ObjectType({ implements: () => [Base] })`) and the GraphQL mapped types instead.
+- Store computed or duplicated values on the schema — that is `data-derived-fields`.
+
+**Incorrect (ambiguous types left to inference; internals leak):**
+
+```typescript
+// entities/user.entity.ts
+@ObjectType()
+@Schema()
+export class User {
+  @Field(() => ID)
+  _id: Types.ObjectId;
+
+  @Field()
+  @Prop()                       // array type left implicit -> stored as Mixed
+  tags: string[];
+
+  @Prop({ type: Types.ObjectId, ref: 'Owner' })
+  owner: Owner;                 // ref type not declared -> reflection cannot resolve it
+
+  // no timestamps/collection/transform -> __v reaches clients
+}
+```
+
+Why it is wrong: reflection and the CLI plugin cannot infer Mongoose-specific types, so the array
+is stored as `Mixed` and the `ref` is unresolved, while `__v` leaks because nothing normalises the
+document.
+
+**Correct (explicit types, real options, safe exposure):**
+
+```typescript
+// entities/user.entity.ts
+import { HydratedDocument, Types } from 'mongoose';
+
+export type UserDocument = HydratedDocument<User>;
+
+@ObjectType()
+@Schema({
+  timestamps: true,
+  collection: 'users',
+  toJSON: {
+    virtuals: true,
+    transform: (_doc, ret) => {
+      delete ret.__v;
+      return ret;
+    },
+  },
+})
+export class User {
+  @Field(() => ID)
+  _id: Types.ObjectId;
+
+  @Field(() => [String])
+  @Prop({ type: [String], default: [] })
+  tags: string[];                                 // explicit array type
+
+  @Field(() => ID)
+  @Prop({ type: Types.ObjectId, ref: 'Owner', required: true })
+  ownerId: Types.ObjectId;                        // explicit ref type
+
+  @Field()
+  createdAt: Date;
+
+  @Field()
+  updatedAt: Date;
+
+  @Prop({ required: true, select: false })        // persisted, never exposed
+  passwordHash: string;
+}
+
+export const UserSchema = SchemaFactory.createForClass(User);
+UserSchema.index({ email: 1 }, { unique: true });
+```
+
+Why it is right: every ambiguous type is explicit, the schema options are real, `__v` and secrets
+stay out of the graph, and the same class is usable as both the stored document and the published
+type.
+
+When the published shape and the stored shape genuinely diverge — computed/derived fields, relation
+fields — split into `models/` + `mappers/` instead; see `data-models-mappers` and
+`data-derived-fields`.
+
+Reference: [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb) | [Mongoose Schemas](https://mongoosejs.com/docs/guide.html) | [NestJS GraphQL CLI Plugin](https://docs.nestjs.com/graphql/cli-plugin)
+
+**Behavioral depth.** See `nestjs-best-practices` -> `perf-optimize-database`.
+
+---
+
+### 6.7 Keep Data Access in repositories/
 
 **Impact: MEDIUM-HIGH** — services stay free of ORM detail
 
@@ -3705,6 +4300,13 @@ Reference: [NestJS Testing](https://docs.nestjs.com/fundamentals/testing)
 - https://docs.nestjs.com/techniques/mongodb
 - https://docs.nestjs.com/cli/overview
 - https://github.com/graphql/dataloader
+- https://docs.nestjs.com/graphql/interfaces
+- https://docs.nestjs.com/graphql/unions-and-enums
+- https://docs.nestjs.com/graphql/cli-plugin
+- https://mongoosejs.com/docs/guide.html
+- https://mongoosejs.com/docs/discriminators.html
+- https://www.mongodb.com/docs/manual/data-modeling/best-practices/
+- https://www.mongodb.com/docs/manual/data-modeling/design-patterns/computed-values/
 - https://encore.dev/articles/nestjs-project-structure-best-practices
 
 ---

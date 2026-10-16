@@ -1,15 +1,15 @@
 ---
 name: nestjs-graphql-structure
-description: Application structure and file-placement guide for NestJS GraphQL (code-first) applications. Use when deciding where a file belongs, designing or reviewing a feature-first directory layout, scaffolding a new feature module, or working out how modules connect to resolve GraphQL fields and relations. Covers the base structure map plus per-file rules for modules, services, resolvers (query, mutation, subscription, field), inputs and args, pagination, entities, models/mappers, repositories, providers, loaders, events, background jobs, auth, exceptions, custom scalars, config, common building blocks, infra setup, and the naming/testing/lint conventions — and module-resolution concerns such as circular dependencies. For behavioral rules (DI depth, security, performance, error handling) use the nestjs-best-practices skill instead.
+description: Application structure and file-placement guide for NestJS GraphQL (code-first) applications. Use when deciding where a file belongs, designing or reviewing a feature-first directory layout, scaffolding a new feature module, or working out how modules connect to resolve GraphQL fields and relations. Covers the base structure map plus per-file rules for modules, services, resolvers (query, mutation, subscription, field), inputs and args, pagination, entities (Mongoose schema best practices for shared types), repository-only model injection, models/mappers, repositories, Mongoose discriminators, derived fields, providers, loaders, events, background jobs, auth, exceptions, custom scalars, config, common building blocks, infra setup, and the naming/testing/lint conventions — and module-resolution concerns such as circular dependencies. For behavioral rules (DI depth, security, performance, error handling) use the nestjs-best-practices skill instead.
 license: MIT
 metadata:
   author: Zoha
-  version: "1.3.1"
+  version: "1.4.0"
 ---
 
 # NestJS GraphQL Structure
 
-Where every file belongs in a NestJS GraphQL (code-first) application, and how each file works. This skill is a **placement and anatomy** guide: it answers "which folder does this file go in?", "what is this file responsible for?", and "how do modules connect to resolve fields and relations?". It covers the base structure map plus per-file rules for modules, services, resolvers (query, mutation, subscription, and field), inputs and args, pagination, entities, models/mappers, repositories, providers, loaders, events, background jobs, auth, exceptions, custom scalars, config, common building blocks, infra setup, and the naming/testing/lint conventions.
+Where every file belongs in a NestJS GraphQL (code-first) application, and how each file works. This skill is a **placement and anatomy** guide: it answers "which folder does this file go in?", "what is this file responsible for?", and "how do modules connect to resolve fields and relations?". It covers the base structure map plus per-file rules for modules, services, resolvers (query, mutation, subscription, and field), inputs and args, pagination, entities (Mongoose schema best practices for shared types), repository-only model injection, models/mappers, repositories, Mongoose discriminators, derived fields, providers, loaders, events, background jobs, auth, exceptions, custom scalars, config, common building blocks, infra setup, and the naming/testing/lint conventions.
 
 It is deliberately separate from the `nestjs-best-practices` skill. That skill covers framework behavior (dependency-injection depth, security, performance, error handling, microservices, DevOps); this one covers structure and module composition. Where they overlap (feature modules, circular dependencies), this skill looks at it through a placement lens and cross-references the other skill for behavioral depth.
 
@@ -22,6 +22,9 @@ Reference these guidelines when:
 - Deciding where a new file belongs in a NestJS GraphQL codebase
 - Designing or reviewing a feature-first directory layout
 - Scaffolding a new feature module and its files
+- Deciding how to model polymorphic documents (Mongoose discriminators) and publish their GraphQL type automatically
+- Deciding where a Mongoose model may be injected — and keeping database access behind a repository
+- Deciding whether a value belongs in the database or should be derived when read
 - Working out how a module resolves a field or relation that lives in another module
 - Resolving connection problems between modules (circular dependencies, missing exports)
 
@@ -79,12 +82,17 @@ Reference these guidelines when:
 - `type-args` - Define @Args Classes in dto/
 - `type-inputs` - Define GraphQL Inputs in dto/
 - `type-pagination` - Paginate List Queries with a Shared Page Type
+- `type-polymorphic-discriminators` - Publish Discriminated Documents as an Interface or Union
 - `type-unions-interfaces` - Place Union and Interface Types with the Module's Types
 
 ### 6. Data Access (MEDIUM-HIGH)
 
+- `data-derived-fields` - Compute Derived Fields; Do Not Store Them
+- `data-discriminators` - Model Polymorphic Subtypes with Discriminators
 - `data-entity-mongodb` - Place MongoDB Entities in entities/
+- `data-model-injection` - Inject a Model Only in the Repository
 - `data-models-mappers` - Split models/ and mappers/ When API Differs From Storage
+- `data-mongoose-schema` - Mongoose Schema Best Practices for Shared Types
 - `data-repository` - Keep Data Access in repositories/
 
 ### 7. Relations & Cross-Module (CRITICAL)
