@@ -45,12 +45,21 @@ const client = createCache({
 
 // infra/cache/cache.gc.ts — keep references from accumulating
 const storage = createStorage('redis', { client: redis, invalidation: true });
-setInterval(() => storage.gc('lazy', { lazy: { chunk: 200 } }), 60_000).unref();
+
+// lazy: chunked. Carry the cursor the report returns, or you rescan the same first chunk forever.
+let cursor: unknown;
+setInterval(async () => {
+  const report = await storage.gc('lazy', { lazy: { cursor } });
+  if (report.error) return;                 // log it; never throw out of a timer
+  cursor = report.cursor;
+}, 60_000).unref();
+
 setInterval(() => storage.gc('strict', { chunk: 250 }), 10 * 60_000).unref();
 ```
 
 ```typescript
 // infra/cache/cache.module.ts — close the Redis connection on shutdown
+// CACHE_REDIS is declared once, in infra/cache/cache.tokens.ts
 export class CacheModule implements OnApplicationShutdown {
   constructor(@Inject(CACHE_REDIS) private readonly redis: Redis) {}
   async onApplicationShutdown() { await this.redis.quit().catch(() => {}); }

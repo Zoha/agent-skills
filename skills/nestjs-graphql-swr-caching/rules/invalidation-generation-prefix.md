@@ -29,7 +29,7 @@ Why it is wrong: a cluster-wide `SCAN` is expensive, per-node, and races with co
 @Cacheable({
   ttl: 3600,
   swr: 300,
-  key: async (a, ctx) => ['catalog', a.category, await ctx.gen('catalog')],
+  key: async (args, ctx) => ['catalog', args[0], await ctx.gen('catalog')],
 })
 getCatalog(category: string) {}
 

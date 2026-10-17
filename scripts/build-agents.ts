@@ -141,8 +141,18 @@ export function parseSections(content: string): Section[] {
 // Shared helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * GitHub-compatible heading slug (mirrors `github-slugger`): lowercase, drop every
+ * character that is not a letter, number, whitespace, `-` or `_`, then turn each
+ * remaining space into a hyphen. It deliberately does NOT collapse runs, so
+ * "Foo — Bar" -> "foo--bar" (the em dash vanishes, leaving two spaces).
+ */
 function slug(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^\p{L}\p{N}\s_-]/gu, '')
+    .replace(/\s/g, '-');
 }
 
 function stripRuleBody(content: string): string {

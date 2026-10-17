@@ -39,8 +39,8 @@ getPopularTitles() { return this.repo.popular(); }
 ```
 
 ```text
-public   →  dashboard:{id}            ← served to everyone (WRONG when it varies)
-perUser  →  dashboard:u:123:{id}      ← only user 123 reads this
+public   →  getViewerDashboard:{"a":[]}            ← served to every caller (WRONG when it varies)
+perUser  →  getViewerDashboard:{"a":[],"u":123}    ← only user 123 reads this
 ```
 
 Why it is right: the caller-scoped read carries the explicit decorator, and the anonymous case

@@ -18,6 +18,11 @@ imports, and a surface half that feature code imports. One rule decides where ea
 Do not create a flat `src/cache/` folder, and do not invent a `common/<capability>/` folder for file
 kinds that already have homes.
 
+That split is the **general** rule, already owned by the `nestjs-graphql-structure` skill: see its
+`struct-canonical-layout` (`infra/` holds one-time infrastructure, including the `<cache|queue|…>`
+slot) and `infra-common` (`common/{decorators,filters,guards,interceptors,pipes,scalars,utils}`).
+Follow it there rather than re-deriving it; only the cache-specific consequences are below.
+
 **Incorrect (one flat folder features reach into for infrastructure):**
 
 ```text
@@ -45,7 +50,7 @@ src/
 │   ├── decorators/
 │   │   └── cache.decorators.ts        # @Cacheable/@CacheTag/@CacheScope/@InvalidateTags
 │   ├── interfaces/
-│   │   └── cache-service.interface.ts # port + CACHE_SERVICE token
+│   │   └── cache-service.interface.ts # the CacheService port (token: infra/cache/cache.tokens.ts)
 │   ├── services/
 │   │   └── cache.service.ts
 │   ├── interceptors/
@@ -57,7 +62,14 @@ src/
 
 Why it is right: infrastructure stays behind `infra/` (features may import `common/` but never
 `infra/`), and the decorators — which feature source files import — live where the boundary rule
-permits. This mirrors the canonical layout's `<cache|queue|…>` under `infra/`.
+permits. The cache folder lands exactly where the canonical layout's `<cache|queue|…>` slot already
+reserves it.
+
+**Why `CacheModule` is `@Global()`.** `setup-module-wiring` registers the module globally, which the
+sibling skill's `infra-shared-module` rule otherwise discourages. The exception is deliberate:
+features must not import `infra/` (the boundary rule above), so a global module is how `CACHE_CLIENT`
+reaches them without inverting the dependency direction. Put a comment at the `@Global()` site saying
+so, so a reader applying both skills sees why the exception is there.
 
 If the file-count scatter is unwanted, collapse the four decorators into the one
 `common/decorators/cache.decorators.ts` file shown above (one cohesive API surface). A single

@@ -20,6 +20,11 @@ Two unit facts that are the single most common implementation bug:
 - **`async-cache-dedupe` takes `ttl`/`stale` in SECONDS.**
 - `@nestjs/cache-manager`/Keyv and HTTP `Cache-Control` take **milliseconds**.
 
+And one default that silently disables caching: **`ttl` defaults to `0`**, which the engine documents
+as *"the function will be only the deduped"* — nothing is stored and every call reaches the source. So
+`@Cacheable({ swr: 300 })` with no `ttl` caches **nothing**. Always set `ttl` explicitly; an omitted
+one is the same class of silent no-op as a renamed library option (see `driver-version-pinning`).
+
 **Incorrect (hand-rolled envelope + millisecond TTLs):**
 
 ```typescript

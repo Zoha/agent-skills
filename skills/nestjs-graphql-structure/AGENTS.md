@@ -26,11 +26,11 @@ File-placement and anatomy guide for NestJS GraphQL applications, designed for A
    - 1.4 [File Placement Table](#14-file-placement-table)
    - 1.5 [Distinguish Domain Features from App-Level Modules](#15-distinguish-domain-features-from-app-level-modules)
    - 1.6 [Locate and Policy the Generated Schema Artifact](#16-locate-and-policy-the-generated-schema-artifact)
-2. [Modules & Bootstrap](#2-modules-bootstrap) — **CRITICAL**
-   - 2.1 [Keep main.ts and app.module.ts Thin](#21-keep-main-ts-and-app-module-ts-thin)
-   - 2.2 [Export Only the Feature's Public API (Its Services)](#22-export-only-the-feature-s-public-api-its-services-)
+2. [Modules & Bootstrap](#2-modules--bootstrap) — **CRITICAL**
+   - 2.1 [Keep main.ts and app.module.ts Thin](#21-keep-maints-and-appmodulets-thin)
+   - 2.2 [Export Only the Feature's Public API (Its Services)](#22-export-only-the-features-public-api-its-services)
    - 2.3 [The Feature Module File](#23-the-feature-module-file)
-3. [Relations & Cross-Module](#3-relations-cross-module) — **CRITICAL**
+3. [Relations & Cross-Module](#3-relations--cross-module) — **CRITICAL**
    - 3.1 [Resolve Circular Module Dependencies](#31-resolve-circular-module-dependencies)
    - 3.2 [Batch Relations with a Per-Request DataLoader](#32-batch-relations-with-a-per-request-dataloader)
    - 3.3 [Decouple Modules with Events](#33-decouple-modules-with-events)
@@ -38,47 +38,47 @@ File-placement and anatomy guide for NestJS GraphQL applications, designed for A
    - 3.5 [Put a Relation Field in the Module That Owns Its Data](#35-put-a-relation-field-in-the-module-that-owns-its-data)
 4. [Services](#4-services) — **HIGH**
    - 4.1 [Keep Queue Processors and Scheduled Jobs with the Feature](#41-keep-queue-processors-and-scheduled-jobs-with-the-feature)
-   - 4.2 [Keep Third-Party Clients in providers/](#42-keep-third-party-clients-in-providers-)
-   - 4.3 [Declare Service Contracts and Injection Tokens in interfaces/](#43-declare-service-contracts-and-injection-tokens-in-interfaces-)
+   - 4.2 [Keep Third-Party Clients in providers/](#42-keep-third-party-clients-in-providers)
+   - 4.3 [Declare Service Contracts and Injection Tokens in interfaces/](#43-declare-service-contracts-and-injection-tokens-in-interfaces)
    - 4.4 [Multiple Focused Services per Module](#44-multiple-focused-services-per-module)
    - 4.5 [Keep Service Methods Small and Focused](#45-keep-service-methods-small-and-focused)
 5. [GraphQL Resolvers](#5-graphql-resolvers) — **HIGH**
    - 5.1 [Declare Fields on the Type; Resolve Computed Ones in the Resolver](#51-declare-fields-on-the-type-resolve-computed-ones-in-the-resolver)
-   - 5.2 [Split Resolvers by Role into resolvers/](#52-split-resolvers-by-role-into-resolvers-)
+   - 5.2 [Split Resolvers by Role into resolvers/](#52-split-resolvers-by-role-into-resolvers)
    - 5.3 [One Resolver File per Type That Has Field Resolvers](#53-one-resolver-file-per-type-that-has-field-resolvers)
-   - 5.4 [Put Subscription Resolvers in resolvers/ with PubSub in infra/](#54-put-subscription-resolvers-in-resolvers-with-pubsub-in-infra-)
-6. [GraphQL Types & Inputs](#6-graphql-types-inputs) — **HIGH**
-   - 6.1 [Define @Args Classes in dto/](#61-define-args-classes-in-dto-)
-   - 6.2 [Define GraphQL Inputs in dto/](#62-define-graphql-inputs-in-dto-)
+   - 5.4 [Put Subscription Resolvers in resolvers/ with PubSub in infra/](#54-put-subscription-resolvers-in-resolvers-with-pubsub-in-infra)
+6. [GraphQL Types & Inputs](#6-graphql-types--inputs) — **HIGH**
+   - 6.1 [Define @Args Classes in dto/](#61-define-args-classes-in-dto)
+   - 6.2 [Define GraphQL Inputs in dto/](#62-define-graphql-inputs-in-dto)
    - 6.3 [Paginate List Queries with a Shared Page Type](#63-paginate-list-queries-with-a-shared-page-type)
    - 6.4 [Publish Discriminated Documents as an Interface or Union](#64-publish-discriminated-documents-as-an-interface-or-union)
-   - 6.5 [Place Union and Interface Types with the Module's Types](#65-place-union-and-interface-types-with-the-module-s-types)
+   - 6.5 [Place Union and Interface Types with the Module's Types](#65-place-union-and-interface-types-with-the-modules-types)
 7. [Data Access](#7-data-access) — **MEDIUM-HIGH**
    - 7.1 [Compute Derived Fields; Do Not Store Them](#71-compute-derived-fields-do-not-store-them)
    - 7.2 [Model Polymorphic Subtypes with Discriminators](#72-model-polymorphic-subtypes-with-discriminators)
-   - 7.3 [Place MongoDB Entities in entities/](#73-place-mongodb-entities-in-entities-)
+   - 7.3 [Place MongoDB Entities in entities/](#73-place-mongodb-entities-in-entities)
    - 7.4 [Inject a Model Only in the Repository](#74-inject-a-model-only-in-the-repository)
    - 7.5 [Split models/ and mappers/ When API Differs From Storage](#75-split-models-and-mappers-when-api-differs-from-storage)
    - 7.6 [Mongoose Schema Best Practices for Shared Types](#76-mongoose-schema-best-practices-for-shared-types)
-   - 7.7 [Keep Data Access in repositories/](#77-keep-data-access-in-repositories-)
-8. [Config, Common & Infra](#8-config-common-infra) — **MEDIUM**
-   - 8.1 [Put Shared Types in common/types/](#81-put-shared-types-in-common-types-)
-   - 8.2 [Put Shared Building Blocks in common/](#82-put-shared-building-blocks-in-common-)
-   - 8.3 [Put Typed Configuration in config/](#83-put-typed-configuration-in-config-)
-   - 8.4 [Implement Custom Scalars in common/scalars/](#84-implement-custom-scalars-in-common-scalars-)
-   - 8.5 [Put Database Setup and Migrations in infra/database/](#85-put-database-setup-and-migrations-in-infra-database-)
-   - 8.6 [Put Schema Directives in common/directives/](#86-put-schema-directives-in-common-directives-)
-   - 8.7 [Put Exceptions in exceptions/](#87-put-exceptions-in-exceptions-)
-   - 8.8 [Put GraphQL Setup in infra/graphql/](#88-put-graphql-setup-in-infra-graphql-)
-   - 8.9 [Put Seed Scripts in infra/database/seeds/](#89-put-seed-scripts-in-infra-database-seeds-)
+   - 7.7 [Keep Data Access in repositories/](#77-keep-data-access-in-repositories)
+8. [Config, Common & Infra](#8-config-common--infra) — **MEDIUM**
+   - 8.1 [Put Shared Types in common/types/](#81-put-shared-types-in-commontypes)
+   - 8.2 [Put Shared Building Blocks in common/](#82-put-shared-building-blocks-in-common)
+   - 8.3 [Put Typed Configuration in config/](#83-put-typed-configuration-in-config)
+   - 8.4 [Implement Custom Scalars in common/scalars/](#84-implement-custom-scalars-in-commonscalars)
+   - 8.5 [Put Database Setup and Migrations in infra/database/](#85-put-database-setup-and-migrations-in-infradatabase)
+   - 8.6 [Put Schema Directives in common/directives/](#86-put-schema-directives-in-commondirectives)
+   - 8.7 [Put Exceptions in exceptions/](#87-put-exceptions-in-exceptions)
+   - 8.8 [Put GraphQL Setup in infra/graphql/](#88-put-graphql-setup-in-infragraphql)
+   - 8.9 [Put Seed Scripts in infra/database/seeds/](#89-put-seed-scripts-in-infradatabaseseeds)
    - 8.10 [Use a SharedModule for Cross-Cutting Services](#810-use-a-sharedmodule-for-cross-cutting-services)
-9. [Conventions & Testing](#9-conventions-testing) — **MEDIUM**
+9. [Conventions & Testing](#9-conventions--testing) — **MEDIUM**
    - 9.1 [Use Barrels and Path Aliases Deliberately](#91-use-barrels-and-path-aliases-deliberately)
    - 9.2 [Use the Nest CLI Generator, Then Adjust](#92-use-the-nest-cli-generator-then-adjust)
    - 9.3 [Keep Constants and Enums Out of Class Files](#93-keep-constants-and-enums-out-of-class-files)
    - 9.4 [Enforce Module Boundaries with Lint](#94-enforce-module-boundaries-with-lint)
    - 9.5 [File and Class Naming Conventions](#95-file-and-class-naming-conventions)
-   - 9.6 [Place Test Fixtures, Factories, and Helpers in test/](#96-place-test-fixtures-factories-and-helpers-in-test-)
+   - 9.6 [Place Test Fixtures, Factories, and Helpers in test/](#96-place-test-fixtures-factories-and-helpers-in-test)
    - 9.7 [Test File Placement](#97-test-file-placement)
 
 ---

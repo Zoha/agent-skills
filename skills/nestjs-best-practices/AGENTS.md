@@ -53,8 +53,8 @@ Comprehensive best practices and architecture guide for NestJS applications, des
    - 6.1 [Use Supertest for E2E Testing](#61-use-supertest-for-e2e-testing)
    - 6.2 [Mock External Services in Tests](#62-mock-external-services-in-tests)
    - 6.3 [Use Testing Module for Unit Tests](#63-use-testing-module-for-unit-tests)
-7. [Database & ORM](#7-database-orm) — **MEDIUM-HIGH**
-   - 7.1 [Avoid N+1 Query Problems](#71-avoid-n-1-query-problems)
+7. [Database & ORM](#7-database--orm) — **MEDIUM-HIGH**
+   - 7.1 [Avoid N+1 Query Problems](#71-avoid-n1-query-problems)
    - 7.2 [Use Database Migrations](#72-use-database-migrations)
    - 7.3 [Use Transactions for Multi-Step Operations](#73-use-transactions-for-multi-step-operations)
 8. [Cross-Cutting Concerns](#8-cross-cutting-concerns) — **MEDIUM**
@@ -64,7 +64,7 @@ Comprehensive best practices and architecture guide for NestJS applications, des
 9. [Microservices](#9-microservices) — **MEDIUM**
    - 9.1 [Use Message and Event Patterns Correctly](#91-use-message-and-event-patterns-correctly)
    - 9.2 [Use Message Queues for Background Jobs](#92-use-message-queues-for-background-jobs)
-10. [DevOps & Deployment](#10-devops-deployment) — **LOW-MEDIUM**
+10. [DevOps & Deployment](#10-devops--deployment) — **LOW-MEDIUM**
    - 10.1 [Implement Graceful Shutdown](#101-implement-graceful-shutdown)
    - 10.2 [Use ConfigModule for Environment Configuration](#102-use-configmodule-for-environment-configuration)
    - 10.3 [Implement Health Checks](#103-implement-health-checks)

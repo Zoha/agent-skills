@@ -56,7 +56,7 @@ test('generateAgentsMd builds TOC with anchors and special-char slugs', () => {
   assert.ok(out.includes('1. [Architecture](#1-architecture) — **CRITICAL**\n'));
   assert.ok(out.includes('   - 1.1 [Rule One](#11-rule-one)\n'));
   assert.ok(out.includes('   - 1.2 [Rule Two](#12-rule-two)\n'));
-  assert.ok(out.includes('2. [Database & ORM](#2-database-orm) — **MEDIUM-HIGH**\n'));
+  assert.ok(out.includes('2. [Database & ORM](#2-database--orm) — **MEDIUM-HIGH**\n'));
   assert.ok(out.includes('   - 2.1 [Db Rule](#21-db-rule)\n'));
 });
 
@@ -79,6 +79,23 @@ test('generateAgentsMd strips body heading on CRLF rule content and normalizes t
   const out = generateAgentsMd([crlfRule], metadata, sections);
   assert.ok(out.includes('### 1.1 Crlf Rule\n\n**Impact: HIGH**\n\ncrlf body\n'));
   assert.ok(!out.includes('\r'), 'output should contain no carriage returns');
+});
+
+test('anchors match GitHub for headings with dashes, slashes and ampersands', () => {
+  // github-slugger drops punctuation WITHOUT collapsing the spaces it leaves behind, so a spaced
+  // em dash or a slash produces two adjacent hyphens. The generator must do the same or its TOC
+  // links do not resolve on GitHub.
+  const emDash = makeRule(
+    'arch-dash.md',
+    'Scope Covers the User Only — Every Other Dimension',
+    'HIGH',
+    sections[0],
+    'body',
+  );
+  const slash = makeRule('arch-slash.md', 'Option E — Transport / CDN SWR', 'HIGH', sections[0], 'body');
+  const out = generateAgentsMd([emDash, slash], metadata, sections);
+  assert.ok(out.includes('#11-scope-covers-the-user-only--every-other-dimension'), out);
+  assert.ok(out.includes('#12-option-e--transport--cdn-swr'), out);
 });
 
 test('generateAgentsMd omits empty sections', () => {

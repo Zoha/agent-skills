@@ -46,7 +46,7 @@ one method's entries to another.
 // common/decorators/cache.decorators.ts
 //
 // One callback contract for the whole skill:
-//   key              = (args, ctx) => unknown[]          args = the method's argument list, in call order
+//   key              = (args, ctx) => unknown[] | Promise<unknown[]>   args = the method's argument list, in call order
 //   @CacheTag        = (result, args) => string[] | null
 //   @InvalidateTags  = (result, args) => string[]
 // `ctx` carries request-derived dimensions; it is empty outside a request, so a job must pass what
@@ -58,7 +58,7 @@ export interface CacheContext {
   userId?: string; tenantId?: string; locale?: string;
   gen(name: string): Promise<number>;
 }
-export type CacheKeyFn = (args: unknown[], ctx: CacheContext) => unknown[];
+export type CacheKeyFn = (args: unknown[], ctx: CacheContext) => unknown[] | Promise<unknown[]>;
 type ArgsFn = (result: unknown, args: unknown[]) => string[] | null;
 
 interface CacheMeta {
@@ -97,7 +97,9 @@ function wrapOnce(target: any, propertyKey: string | symbol, descriptor: Propert
 
     const client = this.cache as Cache;
     const ctx = buildCacheContext(userId);                   // { userId, tenantId, locale, gen }
-    const arg = { a: args, k: meta.keyFn?.(args, ctx), u: userId };
+    // `await` so an async key (e.g. one that reads a generation counter) resolves before the
+    // argument bundle is serialized into the key; `await undefined` is harmless for a sync key.
+    const arg = { a: args, k: await meta.keyFn?.(args, ctx), u: userId };
 
     if (!(client as any)[meta.name]) {
       client.define(meta.name, {
@@ -117,7 +119,8 @@ function wrapOnce(target: any, propertyKey: string | symbol, descriptor: Propert
 
 export function Cacheable(opts: CacheableOptions = {}): MethodDecorator {
   return (target, propertyKey, descriptor: PropertyDescriptor) => {
-    // Explicit, stable name — never target.constructor.name, which minification changes or collides.
+    // Prefer an explicit `name`. The fallback is the class name, which minification can change or
+    // collide — always pass `name` when you ship a bundled/minified build (see point 1 above).
     const name = opts.name ?? `${target.constructor.name}.${String(propertyKey)}`;
     Inject(CACHE_CLIENT)(target, 'cache');      // the one documented property-injection exception
     merge(target, propertyKey, { name, ttl: opts.ttl, swr: opts.swr, keyFn: opts.key });

@@ -30,8 +30,8 @@ between methods so nothing is scannable.
 
 ```typescript
 // public (default) — one entry shared by every caller
-@Cacheable({ ttl: 60, swr: 300, key: (a) => ['title', a.id] })
-@CacheTag((r) => `title:${r.id}`)   // invalidation refs (stackable)
+@Cacheable({ ttl: 60, swr: 300, key: (args) => ['title', args[0]] })
+@CacheTag((r) => `title:${r.id}`)   // invalidation refs (stackable); (result, args) => string[]
 getTitle(id: string) {}
 
 // caller-scoped — explicit, because the result varies per caller
@@ -40,7 +40,7 @@ getTitle(id: string) {}
 getViewer(id: string) {}
 
 // invalidate on write — runs only AFTER the method succeeds
-@InvalidateTags((r, a) => [`title:${a.id}`])
+@InvalidateTags((r, a) => [`title:${a[0]}`])
 updateTitle(id: string, dto: Dto) {}
 ```
 

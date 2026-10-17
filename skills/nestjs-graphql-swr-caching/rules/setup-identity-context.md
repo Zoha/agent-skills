@@ -54,7 +54,7 @@ import { ClsServiceManager } from 'nestjs-cls';
 const userId = ClsServiceManager.getClsService().get<string>('userId');
 
 // a BullMQ processor — no request, so the caller passes the id explicitly
-@Cacheable({ ttl: 60, swr: 300, key: (a) => ['invoices', a.userId] })
+@Cacheable({ ttl: 60, swr: 300, key: (args) => ['invoices', args[0]] })
 rebuildInvoicesFor(userId: string) {}
 ```
 

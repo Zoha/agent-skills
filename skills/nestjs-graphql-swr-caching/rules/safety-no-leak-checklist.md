@@ -38,7 +38,7 @@ negative behaviour) and nothing in the code says so.
 **Correct (the checklist is satisfied visibly in the annotation):**
 
 ```typescript
-@Cacheable({ ttl: 300, swr: 300, key: (a, ctx) => ['account', ctx.tenantId] })
+@Cacheable({ ttl: 300, swr: 300, key: (args, ctx) => ['account', ctx.tenantId] })
 @CacheScope('perUser')
 @CacheTag((r) => `account:${r.id}`)
 getAccount() { return this.repo.for(this.cls.get('userId')); }

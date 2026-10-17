@@ -32,7 +32,7 @@ key→value association.
 getTitle(id: string) {}
 
 // write — purge every entry carrying the tag, after success
-@InvalidateTags((r, a) => [`title:${a.id}`, 'titles:popular'])
+@InvalidateTags((r, a) => [`title:${a[0]}`, 'titles:popular'])
 updateTitle(id: string, dto: Dto) {}
 ```
 

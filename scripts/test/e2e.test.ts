@@ -5,7 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { buildAll, buildSkill } from '../build-agents.ts';
+import { buildAll, buildSkill, parseSections, readRules } from '../build-agents.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const scriptsDir = path.join(__dirname, '..');
@@ -139,6 +139,30 @@ test('main exits 0 for a healthy tree and 1 for a broken tree', () => {
     assert.equal(bad.status, 1, bad.stderr);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('every real skill builds with zero skipped rule files', () => {
+  // Read-only: parse each real skill's rules the same way the build does and assert nothing is
+  // silently dropped. A rule whose filename prefix no longer matches _sections.md would otherwise
+  // vanish from the shipped AGENTS.md with only a console warning.
+  const root = path.join(scriptsDir, '..', 'skills');
+  const dirs = fs
+    .readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => path.join(root, entry.name))
+    .filter(
+      (dir) => fs.existsSync(path.join(dir, 'rules')) && fs.existsSync(path.join(dir, 'SKILL.md')),
+    );
+  assert.ok(dirs.length > 0, 'expected at least one real skill under skills/');
+
+  for (const dir of dirs) {
+    const name = path.basename(dir);
+    const sections = parseSections(fs.readFileSync(path.join(dir, 'rules', '_sections.md'), 'utf-8'));
+    assert.ok(sections.length > 0, `${name}: rules/_sections.md parsed to zero sections`);
+    const { rules, skipped } = readRules(dir, sections);
+    assert.deepEqual(skipped, [], `${name}: rule files skipped by the build: ${skipped.join(', ')}`);
+    assert.ok(rules.length > 0, `${name}: built zero rules`);
   }
 });
 

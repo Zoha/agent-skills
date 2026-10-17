@@ -29,11 +29,11 @@ with the old value by an in-flight read), so a failed write needlessly loses a v
 
 ```typescript
 // the write method — nothing to remember, runs only on success
-@InvalidateTags((r, a) => [`title:${a.id}`])
+@InvalidateTags((r, a) => [`title:${a[0]}`])
 updateTitle(id: string, dto: Dto) { return this.repo.update(id, dto); }
 
 // a write that also changes a shared list must purge that tag too
-@InvalidateTags((r, a) => [`title:${a.id}`, 'titles:popular'])
+@InvalidateTags((r, a) => [`title:${a[0]}`, 'titles:popular'])
 publishTitle(id: string) { return this.repo.publish(id); }
 ```
 

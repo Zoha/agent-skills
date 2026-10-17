@@ -20,7 +20,7 @@ final key: the user via `@CacheScope('perUser')`, the rest via `@Cacheable({ key
 **Incorrect (perUser, but tenant/locale missing from the key):**
 
 ```typescript
-// two tenants share cache:TitlesService.getTitle:u:123:{id:42}
+// two tenants share getTitle:{"a":[42],"u":123} — the tenant is not in the key
 @Cacheable({ ttl: 60, swr: 300 })
 @CacheScope('perUser')
 getTitle(id: string) { return this.repo.findById(id); } // tenant-scoped in the DB, not in the key
@@ -34,12 +34,13 @@ Why it is wrong: user 123 has the same key in every tenant, so tenant A's row is
 @Cacheable({
   ttl: 60,
   swr: 300,
-  key: (a, ctx) => ['title', a.id, ctx.tenantId, ctx.locale, ctx.pricingCohort],
+  key: (args, ctx) => ['title', args[0], ctx.tenantId, ctx.locale, ctx.pricingCohort],
 })
 @CacheScope('perUser')
 getTitle(id: string) {}
 
-// -> cache:TitlesService.getTitle:u:123:t:acme:l:en-US:cohort:B:{id:42}
+// key parts ['title', 42, 'acme', 'en-US', 'B'] plus the perUser segment, so tenant A's row can
+// never be served in tenant B
 ```
 
 Why it is right: scope handles *who*, the key handles *everything else*, so two different tenants (or

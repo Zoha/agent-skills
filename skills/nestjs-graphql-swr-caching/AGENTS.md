@@ -24,18 +24,18 @@ Implementation and policy guide for stale-while-revalidate (SWR) caching of Grap
    - 1.2 [Use a Deduplicating Engine, and Count TTL in Seconds](#12-use-a-deduplicating-engine-and-count-ttl-in-seconds)
    - 1.3 [Fail Open, and Never Cache Errors](#13-fail-open-and-never-cache-errors)
    - 1.4 [Place the Capability by Who Imports It](#14-place-the-capability-by-who-imports-it)
-   - 1.5 [Read the Caller from AsyncLocalStorage, Not Scope.REQUEST](#15-read-the-caller-from-asynclocalstorage-not-scope-request)
+   - 1.5 [Read the Caller from AsyncLocalStorage, Not Scope.REQUEST](#15-read-the-caller-from-asynclocalstorage-not-scoperequest)
    - 1.6 [Wire the Cache Module Once with forRootAsync](#16-wire-the-cache-module-once-with-forrootasync)
    - 1.7 [Enable Invalidation and Set referencesTTL and GC](#17-enable-invalidation-and-set-referencesttl-and-gc)
 2. [Cache Policy](#2-cache-policy) — **CRITICAL**
    - 2.1 [Know the Five Knobs](#21-know-the-five-knobs)
-   - 2.2 [Derive the Key Automatically, Never with JSON.stringify](#22-derive-the-key-automatically-never-with-json-stringify)
+   - 2.2 [Derive the Key Automatically, Never with JSON.stringify](#22-derive-the-key-automatically-never-with-jsonstringify)
    - 2.3 [Mount at the Service Level by Default](#23-mount-at-the-service-level-by-default)
    - 2.4 [The Decorators Are the One Writing Pattern](#24-the-decorators-are-the-one-writing-pattern)
    - 2.5 [The Service API Is an Escape Hatch, Not a Second Pattern](#25-the-service-api-is-an-escape-hatch-not-a-second-pattern)
 3. [Leak Safety](#3-leak-safety) — **CRITICAL**
-   - 3.1 [Scope Defaults to Public — Mark Caller-Varying Reads perUser](#31-scope-defaults-to-public-mark-caller-varying-reads-peruser)
-   - 3.2 [Scope Covers the User Only — Every Other Dimension Goes in the Key](#32-scope-covers-the-user-only-every-other-dimension-goes-in-the-key)
+   - 3.1 [Scope Defaults to Public — Mark Caller-Varying Reads perUser](#31-scope-defaults-to-public--mark-caller-varying-reads-peruser)
+   - 3.2 [Scope Covers the User Only — Every Other Dimension Goes in the Key](#32-scope-covers-the-user-only--every-other-dimension-goes-in-the-key)
    - 3.3 [Run the No-Leak Checklist on Every Cached Read](#33-run-the-no-leak-checklist-on-every-cached-read)
 4. [Invalidation](#4-invalidation) — **HIGH**
    - 4.1 [Invalidate Only After a Successful Write](#41-invalidate-only-after-a-successful-write)
@@ -48,14 +48,14 @@ Implementation and policy guide for stale-while-revalidate (SWR) caching of Grap
    - 5.3 [Surface a Per-Request Trace, Dev-Only on GraphQL](#53-surface-a-per-request-trace-dev-only-on-graphql)
    - 5.4 [Emit Structured Cache Events, Not Log Strings](#54-emit-structured-cache-events-not-log-strings)
 6. [Drivers](#6-drivers) — **MEDIUM**
-   - 6.1 [Option C — Apollo responseCachePlugin (Operation Level, TTL Only)](#61-option-c-apollo-responsecacheplugin-operation-level-ttl-only-)
+   - 6.1 [Option C — Apollo responseCachePlugin (Operation Level, TTL Only)](#61-option-c--apollo-responsecacheplugin-operation-level-ttl-only)
    - 6.2 [Pick the Field-Level Option from Your Driver](#62-pick-the-field-level-option-from-your-driver)
-   - 6.3 [Option A — async-cache-dedupe (Service Level, Transport-Agnostic)](#63-option-a-async-cache-dedupe-service-level-transport-agnostic-)
-   - 6.4 [Option E — Transport / CDN SWR (Public Reads Only)](#64-option-e-transport-cdn-swr-public-reads-only-)
-   - 6.5 [Option D — Envelop useResponseCache (Not Native to NestJS)](#65-option-d-envelop-useresponsecache-not-native-to-nestjs-)
-   - 6.6 [Federation Only — Apollo Router Response Caching](#66-federation-only-apollo-router-response-caching)
-   - 6.7 [Option B — mercurius-cache (Field Level, Real SWR)](#67-option-b-mercurius-cache-field-level-real-swr-)
-   - 6.8 [Pin Versions — This Area Drifts](#68-pin-versions-this-area-drifts)
+   - 6.3 [Option A — async-cache-dedupe (Service Level, Transport-Agnostic)](#63-option-a--async-cache-dedupe-service-level-transport-agnostic)
+   - 6.4 [Option E — Transport / CDN SWR (Public Reads Only)](#64-option-e--transport--cdn-swr-public-reads-only)
+   - 6.5 [Option D — Envelop useResponseCache (Not Native to NestJS)](#65-option-d--envelop-useresponsecache-not-native-to-nestjs)
+   - 6.6 [Federation Only — Apollo Router Response Caching](#66-federation-only--apollo-router-response-caching)
+   - 6.7 [Option B — mercurius-cache (Field Level, Real SWR)](#67-option-b--mercurius-cache-field-level-real-swr)
+   - 6.8 [Pin Versions — This Area Drifts](#68-pin-versions--this-area-drifts)
 
 ---
 
@@ -69,19 +69,24 @@ Implementation and policy guide for stale-while-revalidate (SWR) caching of Grap
 
 Nest interceptors only run for controller/resolver handlers — **not** for arbitrary service methods.
 So `@Cacheable()` on a service method is implemented by wrapping `descriptor.value`. Because a
-decorator cannot constructor-inject, it reaches the client by attaching `@Inject(CACHE_CLIENT)` as a
-property (the one documented property-injection exception).
+decorator cannot constructor-inject, it reaches the client with Nest's documented property injection,
+applied from the decorator itself.
 
-Four things break naive implementations:
+Five things break naive implementations:
 
 1. **Key from `target.constructor.name`** — under minification/bundling the class name changes or
    collides, so entries are shared across different methods. Use an explicit, stable name.
 2. **Stacking** — `@Cacheable` + `@CacheTag` + `@CacheScope` apply bottom-up; metadata must be
-   **merged**, not overwritten.
-3. **Registration race** — register `client.define(name, …)` lazily and once; guard concurrent first
-   calls.
+   **merged**, not overwritten, and the wrapper must be installed exactly once.
+3. **Registration race** — register `client.define(name, …)` lazily and once; a second decorator
+   running later must not re-wrap or re-define.
 4. **Context** — the wrapper must preserve `this`/`async` and read the caller from CLS (see
-   `setup-identity-context`), never assume a request.
+   `setup-identity-context`), never assume a request. Read CLS **only** for a `perUser` entry, and
+   wrap the read so a missing context degrades to the source instead of throwing (see
+   `setup-fail-open`).
+5. **Callback contract** — `key`, `@CacheTag` and `@InvalidateTags` all receive the method's
+   **argument list** as their `args`, in call order. An example that reads `a.id` off a method whose
+   first parameter is a bare `id` silently produces `undefined` key parts.
 
 **Incorrect (unstable key + overwritten metadata):**
 
@@ -93,45 +98,123 @@ const name = `${target.constructor.name}.${propertyKey}`;     // minified -> col
 Why it is wrong: two decorators on one method clobber each other, and a production build can serve
 one method's entries to another.
 
-**Correct (explicit name, merged metadata, guarded registration):**
+**Correct (explicit name, merged metadata, one contract, installed once):**
 
 ```typescript
 // common/decorators/cache.decorators.ts
+//
+// One callback contract for the whole skill:
+//   key              = (args, ctx) => unknown[] | Promise<unknown[]>   args = the method's argument list, in call order
+//   @CacheTag        = (result, args) => string[] | null
+//   @InvalidateTags  = (result, args) => string[]
+// `ctx` carries request-derived dimensions; it is empty outside a request, so a job must pass what
+// it needs as an argument (see setup-identity-context).
 export const CACHE_META = Symbol('CACHE_META');
+const WRAPPED = Symbol('CACHE_WRAPPED');
+
+export interface CacheContext {
+  userId?: string; tenantId?: string; locale?: string;
+  gen(name: string): Promise<number>;
+}
+export type CacheKeyFn = (args: unknown[], ctx: CacheContext) => unknown[] | Promise<unknown[]>;
+type ArgsFn = (result: unknown, args: unknown[]) => string[] | null;
+
+interface CacheMeta {
+  name?: string; ttl?: number; swr?: number;
+  keyFn?: CacheKeyFn; tagsFn?: ArgsFn; scope?: 'public' | 'perUser';
+}
+
+export interface CacheableOptions { name?: string; ttl?: number; swr?: number; key?: CacheKeyFn }
+// NOTE: no `scope` and no `tags` — those are their own decorators (see policy-one-writing-pattern).
 
 function merge(target: object, key: string | symbol, patch: Partial<CacheMeta>) {
   const current = Reflect.getMetadata(CACHE_META, target, key) ?? {};
-  Reflect.defineMetadata(CACHE_META, { ...current, ...patch }, target, key);
+  Reflect.defineMetadata(CACHE_META, { ...current, ...patch }, target, key); // merge, never replace
 }
 
-export function Cacheable<T>(opts: CacheableOptions = {}): MethodDecorator {
-  return (target, propertyKey, descriptor: PropertyDescriptor) => {
-    const name = opts.name ?? `${target.constructor.name}.${String(propertyKey)}`; // stable, reviewable
-    Inject(CACHE_CLIENT)(target, 'cache');                                         // property exception
-    merge(target, propertyKey, { name, ttl: opts.ttl, swr: opts.swr, keyFn: opts.key });
+// Installed once per method; every decorator below funnels through it, so stacking is order-safe.
+function wrapOnce(target: any, propertyKey: string | symbol, descriptor: PropertyDescriptor) {
+  if ((descriptor.value as any)?.[WRAPPED]) return descriptor;
+  const original = descriptor.value as (...a: unknown[]) => Promise<unknown>;
 
-    const original = descriptor.value as (...a: any[]) => Promise<T>;
-    descriptor.value = async function (this: any, ...args: any[]) {
-      const client: Cache = this.cache;
-      const meta = Reflect.getMetadata(CACHE_META, target, propertyKey) as CacheMeta;
-      const scope = meta.scope ?? 'public';
-      const cls = ClsServiceManager.getClsService();
-      const userId = cls?.get<string>('userId');
-      if (scope === 'perUser' && !userId) return original.apply(this, args); // anonymous -> bypass
+  const wrapped = async function (this: any, ...args: unknown[]) {
+    const meta = Reflect.getMetadata(CACHE_META, target, propertyKey) as CacheMeta | undefined;
+    if (!meta?.name) return original.apply(this, args);
+    const scope = meta.scope ?? 'public';
 
-      const arg = { a: args, k: meta.keyFn?.(...args), u: scope === 'perUser' ? userId : undefined };
-      if (!(client as any)[meta.name]) {
-        (client as any).define(meta.name, { ttl: meta.ttl, stale: meta.swr, references: meta.tagsFn },
-          (k: any) => original.apply(this, k.a));
+    // Read CLS only for a caller-scoped entry, and never let a missing context fail the request.
+    let userId: string | undefined;
+    if (scope === 'perUser') {
+      try {
+        userId = ClsServiceManager.getClsService().get<string>('userId') ?? undefined;
+      } catch {
+        userId = undefined;                                 // no active context (job / subscription)
       }
-      return (client as any)[meta.name](arg);
-    };
+      if (!userId) return original.apply(this, args);        // anonymous -> bypass, never key ''
+    }
+
+    const client = this.cache as Cache;
+    const ctx = buildCacheContext(userId);                   // { userId, tenantId, locale, gen }
+    // `await` so an async key (e.g. one that reads a generation counter) resolves before the
+    // argument bundle is serialized into the key; `await undefined` is harmless for a sync key.
+    const arg = { a: args, k: await meta.keyFn?.(args, ctx), u: userId };
+
+    if (!(client as any)[meta.name]) {
+      client.define(meta.name, {
+        ttl: meta.ttl,                 // SECONDS — omitting it disables caching (see setup-engine-choice)
+        stale: meta.swr,               // SECONDS
+        references: meta.tagsFn
+          ? ({ a }: { a: unknown[] }, _key: string, result: unknown) => meta.tagsFn!(result, a)
+          : undefined,
+      }, ({ a }: { a: unknown[] }) => original.apply(this, a));
+    }
+    return (client as any)[meta.name](arg);
+  };
+  (wrapped as any)[WRAPPED] = true;
+  descriptor.value = wrapped;
+  return descriptor;
+}
+
+export function Cacheable(opts: CacheableOptions = {}): MethodDecorator {
+  return (target, propertyKey, descriptor: PropertyDescriptor) => {
+    // Prefer an explicit `name`. The fallback is the class name, which minification can change or
+    // collide — always pass `name` when you ship a bundled/minified build (see point 1 above).
+    const name = opts.name ?? `${target.constructor.name}.${String(propertyKey)}`;
+    Inject(CACHE_CLIENT)(target, 'cache');      // the one documented property-injection exception
+    merge(target, propertyKey, { name, ttl: opts.ttl, swr: opts.swr, keyFn: opts.key });
+    return wrapOnce(target, propertyKey, descriptor);
   };
 }
+
+// These record metadata only, so their position relative to @Cacheable does not matter.
+export const CacheTag = (tagsFn: ArgsFn): MethodDecorator =>
+  (target, propertyKey, descriptor: PropertyDescriptor) => {
+    merge(target, propertyKey, { tagsFn });
+    return wrapOnce(target, propertyKey, descriptor);
+  };
+
+export const CacheScope = (scope: 'public' | 'perUser'): MethodDecorator =>
+  (target, propertyKey, descriptor: PropertyDescriptor) => {
+    merge(target, propertyKey, { scope });
+    return wrapOnce(target, propertyKey, descriptor);
+  };
+
+export const InvalidateTags = (tagsFn: ArgsFn): MethodDecorator =>
+  (target, propertyKey, descriptor: PropertyDescriptor) => {
+    const original = descriptor.value as (...a: unknown[]) => Promise<unknown>;
+    descriptor.value = async function (this: any, ...args: unknown[]) {
+      const result = await original.apply(this, args);        // purge ONLY after the write succeeds
+      const tags = tagsFn(result, args);
+      if (tags?.length) await (this.cache as Cache).invalidateAll(tags);
+      return result;
+    };
+    return descriptor;
+  };
 ```
 
-Why it is right: the name is explicit and stable, the three decorators merge into one metadata blob,
-registration happens once, and the caller comes from CLS with an anonymous bypass.
+Why it is right: the name is explicit and stable, the four decorators merge into one metadata blob,
+the wrapper is installed exactly once, the caller comes from CLS with an anonymous bypass and a
+fail-open read, and `references` is actually wired to the tag callback instead of left undefined.
 
 Reference: [NestJS Custom decorators](https://docs.nestjs.com/custom-decorators) | [NestJS Interceptors](https://docs.nestjs.com/interceptors)
 
@@ -151,6 +234,11 @@ Two unit facts that are the single most common implementation bug:
 
 - **`async-cache-dedupe` takes `ttl`/`stale` in SECONDS.**
 - `@nestjs/cache-manager`/Keyv and HTTP `Cache-Control` take **milliseconds**.
+
+And one default that silently disables caching: **`ttl` defaults to `0`**, which the engine documents
+as *"the function will be only the deduped"* — nothing is stored and every call reaches the source. So
+`@Cacheable({ swr: 300 })` with no `ttl` caches **nothing**. Always set `ttl` explicitly; an omitted
+one is the same class of silent no-op as a renamed library option (see `driver-version-pinning`).
 
 **Incorrect (hand-rolled envelope + millisecond TTLs):**
 
@@ -255,6 +343,11 @@ imports, and a surface half that feature code imports. One rule decides where ea
 Do not create a flat `src/cache/` folder, and do not invent a `common/<capability>/` folder for file
 kinds that already have homes.
 
+That split is the **general** rule, already owned by the `nestjs-graphql-structure` skill: see its
+`struct-canonical-layout` (`infra/` holds one-time infrastructure, including the `<cache|queue|…>`
+slot) and `infra-common` (`common/{decorators,filters,guards,interceptors,pipes,scalars,utils}`).
+Follow it there rather than re-deriving it; only the cache-specific consequences are below.
+
 **Incorrect (one flat folder features reach into for infrastructure):**
 
 ```text
@@ -282,7 +375,7 @@ src/
 │   ├── decorators/
 │   │   └── cache.decorators.ts        # @Cacheable/@CacheTag/@CacheScope/@InvalidateTags
 │   ├── interfaces/
-│   │   └── cache-service.interface.ts # port + CACHE_SERVICE token
+│   │   └── cache-service.interface.ts # the CacheService port (token: infra/cache/cache.tokens.ts)
 │   ├── services/
 │   │   └── cache.service.ts
 │   ├── interceptors/
@@ -294,7 +387,14 @@ src/
 
 Why it is right: infrastructure stays behind `infra/` (features may import `common/` but never
 `infra/`), and the decorators — which feature source files import — live where the boundary rule
-permits. This mirrors the canonical layout's `<cache|queue|…>` under `infra/`.
+permits. The cache folder lands exactly where the canonical layout's `<cache|queue|…>` slot already
+reserves it.
+
+**Why `CacheModule` is `@Global()`.** `setup-module-wiring` registers the module globally, which the
+sibling skill's `infra-shared-module` rule otherwise discourages. The exception is deliberate:
+features must not import `infra/` (the boundary rule above), so a global module is how `CACHE_CLIENT`
+reaches them without inverting the dependency direction. Put a comment at the `@Global()` site saying
+so, so a reader applying both skills sees why the exception is there.
 
 If the file-count scatter is unwanted, collapse the four decorators into the one
 `common/decorators/cache.decorators.ts` file shown above (one cohesive API surface). A single
@@ -354,7 +454,7 @@ import { ClsServiceManager } from 'nestjs-cls';
 const userId = ClsServiceManager.getClsService().get<string>('userId');
 
 // a BullMQ processor — no request, so the caller passes the id explicitly
-@Cacheable({ ttl: 60, swr: 300, key: (a) => ['invoices', a.userId] })
+@Cacheable({ ttl: 60, swr: 300, key: (args) => ['invoices', args[0]] })
 rebuildInvoicesFor(userId: string) {}
 ```
 
@@ -395,9 +495,11 @@ export interface CacheModuleOptions {
   swr: number;    // default stale window, SECONDS
 }
 
-// infra/cache/cache.tokens.ts
+// infra/cache/cache.tokens.ts — the ONE declaration site for every cache token.
+// Do not re-declare these in common/ (a common/interfaces file holds the CacheService *port* only).
 export const CACHE_CLIENT = Symbol('CACHE_CLIENT');
 export const CACHE_SERVICE = Symbol('CACHE_SERVICE');
+export const CACHE_REDIS = Symbol('CACHE_REDIS');   // the ioredis client, injected for shutdown/GC
 
 // infra/cache/cache.module.ts
 import { ConfigurableModuleBuilder, Global, Module, Inject } from '@nestjs/common';
@@ -489,12 +591,21 @@ const client = createCache({
 
 // infra/cache/cache.gc.ts — keep references from accumulating
 const storage = createStorage('redis', { client: redis, invalidation: true });
-setInterval(() => storage.gc('lazy', { lazy: { chunk: 200 } }), 60_000).unref();
+
+// lazy: chunked. Carry the cursor the report returns, or you rescan the same first chunk forever.
+let cursor: unknown;
+setInterval(async () => {
+  const report = await storage.gc('lazy', { lazy: { cursor } });
+  if (report.error) return;                 // log it; never throw out of a timer
+  cursor = report.cursor;
+}, 60_000).unref();
+
 setInterval(() => storage.gc('strict', { chunk: 250 }), 10 * 60_000).unref();
 ```
 
 ```typescript
 // infra/cache/cache.module.ts — close the Redis connection on shutdown
+// CACHE_REDIS is declared once, in infra/cache/cache.tokens.ts
 export class CacheModule implements OnApplicationShutdown {
   constructor(@Inject(CACHE_REDIS) private readonly redis: Redis) {}
   async onApplicationShutdown() { await this.redis.quit().catch(() => {}); }
@@ -523,7 +634,7 @@ Every caching decision is expressed with the same five knobs. Name them consiste
 | **key** | "Which single value is this?" | Where it's stored. Must encode **every** result-varying input (user, tenant, locale). 1:1. |
 | **tag** | "What to purge when X changes?" | Reverse index for invalidation. **Not** for lookup. A value can carry many tags. |
 | **scope** | "May callers share this?" | `public` (**default**) = byte-identical for everyone; `perUser` = caller-scoped. |
-| **ttl** | "How long is it *fresh*?" | In-window: served as-is, no work. |
+| **ttl** | "How long is it *fresh*?" | In-window: served as-is, no work. **The engine defaults it to `0` = caching off (dedupe only)** — always set it. |
 | **swr** | "After fresh, how long may I serve it *while refreshing*?" | Served instantly + background refresh. **Hard expiry = ttl + swr.** |
 
 ```
@@ -535,12 +646,17 @@ t=0 ─────────── ttl ────────────�
 `swr` removes the revalidation cliff — but only with **single-flight/dedupe**, so N concurrent stale
 reads trigger **one** refresh, not N.
 
-Scope ⇄ key, mechanically:
+Scope ⇄ key, mechanically — the wrapper passes one bundle `{ a: args, k: keyParts, u: userId }` and
+the engine keys the entry on its stable serialization, so `u` is what separates a caller-scoped entry
+from a shared one:
 
 ```
-public   →  cache:svc.getTitle:{id:42}          ← everyone reads this
-perUser  →  cache:svc.getTitle:u:123:{id:42}    ← only user 123 reads this
+public   →  getTitle:{"a":[42]}                     ← every caller shares this
+perUser  →  getTitle:{"a":[42],"u":123}             ← only user 123 reads this
 ```
+
+The stored key is the method name plus that bundle — not a prettified path. Read the key from an
+event, never guess its shape (see `observability-structured-events`).
 
 **Incorrect (TTL-only, unnamed windows):**
 
@@ -567,10 +683,12 @@ Reference: [RFC 5861 stale-while-revalidate](https://www.rfc-editor.org/rfc/rfc5
 
 **Impact: HIGH** — stable, collision-free keys without per-callsite hand-rolling
 
-The engine derives the key as `Class.method` + a **stable** serialization of the arguments
-(`safe-stable-stringify`: key order independent, circular-safe). Override `key` only to add extra
-dimensions. Never use `JSON.stringify` — its key order follows insertion order, so the same logical
-input can produce different keys and silently miss (or, worse, collide).
+The engine keys an entry on the **name** you passed to `define` plus a **stable** serialization of the
+argument it receives (`safe-stable-stringify`: key-order independent, circular-safe). The decorator
+wrapper passes one bundle — `{ a: args, k: keyParts, u: userId }` — so that bundle *is* the key.
+Override `key` only to add extra dimensions. Never use `JSON.stringify` yourself — its key order
+follows insertion order, so the same logical input can produce different keys and silently miss (or,
+worse, collide).
 
 **Incorrect (unstable serialization; hand-built keys everywhere):**
 
@@ -584,17 +702,38 @@ fragment.
 **Correct (auto-derived, with an explicit override only for extra dimensions):**
 
 ```typescript
-// auto: "TitlesService.getTitle:{id:42}" via safe-stable-stringify(args)
+// default — the wrapper passes the method's arguments through unchanged, so the stored key is the
+// name plus that bundle:  TitlesService.getTitle:{"a":[42]}
 @Cacheable({ ttl: 60, swr: 300 })
 getTitle(id: string) {}
 
-// override ONLY to add a dimension the args do not carry (e.g. locale, or a job with no request)
-@Cacheable({ ttl: 60, swr: 300, key: (a, ctx) => ['title', a.id, ctx.locale] })
+// override ONLY to add a dimension the args do not carry (locale, tenant, or a job with no request)
+@Cacheable({ ttl: 60, swr: 300, key: (args, ctx) => ['title', args[0], ctx.locale] })
 getTitle(id: string) {}
 ```
 
-Why it is right: the default key is stable and named after the method, and an override is a visible,
-reviewable decision rather than the norm.
+**The callback contract** — one shape, everywhere in this skill:
+
+```typescript
+type CacheKeyFn = (args: unknown[], ctx: CacheContext) => unknown[] | Promise<unknown[]>;
+
+interface CacheContext {
+  userId?: string; tenantId?: string; locale?: string;   // from CLS, per request
+  gen(name: string): Promise<number>;                     // generation counter (see invalidation-generation-prefix)
+}
+```
+
+- `args` is the method's **argument list, in call order**, so `args[0]` is the first parameter.
+  `@CacheTag` and `@InvalidateTags` receive the same list as their second argument. An example that
+  reads `a.id` off a method taking a bare `id` is wrong — it yields `undefined`.
+- `ctx` carries the request-derived dimensions a positional argument cannot hold. It is empty outside
+  a request, so a job or subscription must pass the value it needs as an argument instead (see
+  `setup-identity-context`).
+- Return an **array of primitives** (or a promise of one, for a key that needs `ctx.gen`). It becomes
+  the `k` part of the stored bundle, so the final key stays stable and readable in events.
+
+Why it is right: the default key is stable and named after the method, an override is a visible,
+reviewable decision rather than the norm, and the callback shape is the same everywhere.
 
 Also: the key must be **readable in events, not hashed** (see `observability-structured-events`), and
 must never contain secrets.
@@ -674,8 +813,8 @@ between methods so nothing is scannable.
 
 ```typescript
 // public (default) — one entry shared by every caller
-@Cacheable({ ttl: 60, swr: 300, key: (a) => ['title', a.id] })
-@CacheTag((r) => `title:${r.id}`)   // invalidation refs (stackable)
+@Cacheable({ ttl: 60, swr: 300, key: (args) => ['title', args[0]] })
+@CacheTag((r) => `title:${r.id}`)   // invalidation refs (stackable); (result, args) => string[]
 getTitle(id: string) {}
 
 // caller-scoped — explicit, because the result varies per caller
@@ -684,7 +823,7 @@ getTitle(id: string) {}
 getViewer(id: string) {}
 
 // invalidate on write — runs only AFTER the method succeeds
-@InvalidateTags((r, a) => [`title:${a.id}`])
+@InvalidateTags((r, a) => [`title:${a[0]}`])
 updateTitle(id: string, dto: Dto) {}
 ```
 
@@ -778,8 +917,8 @@ getPopularTitles() { return this.repo.popular(); }
 ```
 
 ```text
-public   →  dashboard:{id}            ← served to everyone (WRONG when it varies)
-perUser  →  dashboard:u:123:{id}      ← only user 123 reads this
+public   →  getViewerDashboard:{"a":[]}            ← served to every caller (WRONG when it varies)
+perUser  →  getViewerDashboard:{"a":[],"u":123}    ← only user 123 reads this
 ```
 
 Why it is right: the caller-scoped read carries the explicit decorator, and the anonymous case
@@ -804,7 +943,7 @@ final key: the user via `@CacheScope('perUser')`, the rest via `@Cacheable({ key
 **Incorrect (perUser, but tenant/locale missing from the key):**
 
 ```typescript
-// two tenants share cache:TitlesService.getTitle:u:123:{id:42}
+// two tenants share getTitle:{"a":[42],"u":123} — the tenant is not in the key
 @Cacheable({ ttl: 60, swr: 300 })
 @CacheScope('perUser')
 getTitle(id: string) { return this.repo.findById(id); } // tenant-scoped in the DB, not in the key
@@ -818,12 +957,13 @@ Why it is wrong: user 123 has the same key in every tenant, so tenant A's row is
 @Cacheable({
   ttl: 60,
   swr: 300,
-  key: (a, ctx) => ['title', a.id, ctx.tenantId, ctx.locale, ctx.pricingCohort],
+  key: (args, ctx) => ['title', args[0], ctx.tenantId, ctx.locale, ctx.pricingCohort],
 })
 @CacheScope('perUser')
 getTitle(id: string) {}
 
-// -> cache:TitlesService.getTitle:u:123:t:acme:l:en-US:cohort:B:{id:42}
+// key parts ['title', 42, 'acme', 'en-US', 'B'] plus the perUser segment, so tenant A's row can
+// never be served in tenant B
 ```
 
 Why it is right: scope handles *who*, the key handles *everything else*, so two different tenants (or
@@ -869,7 +1009,7 @@ negative behaviour) and nothing in the code says so.
 **Correct (the checklist is satisfied visibly in the annotation):**
 
 ```typescript
-@Cacheable({ ttl: 300, swr: 300, key: (a, ctx) => ['account', ctx.tenantId] })
+@Cacheable({ ttl: 300, swr: 300, key: (args, ctx) => ['account', ctx.tenantId] })
 @CacheScope('perUser')
 @CacheTag((r) => `account:${r.id}`)
 getAccount() { return this.repo.for(this.cls.get('userId')); }
@@ -910,11 +1050,11 @@ with the old value by an in-flight read), so a failed write needlessly loses a v
 
 ```typescript
 // the write method — nothing to remember, runs only on success
-@InvalidateTags((r, a) => [`title:${a.id}`])
+@InvalidateTags((r, a) => [`title:${a[0]}`])
 updateTitle(id: string, dto: Dto) { return this.repo.update(id, dto); }
 
 // a write that also changes a shared list must purge that tag too
-@InvalidateTags((r, a) => [`title:${a.id}`, 'titles:popular'])
+@InvalidateTags((r, a) => [`title:${a[0]}`, 'titles:popular'])
 publishTitle(id: string) { return this.repo.publish(id); }
 ```
 
@@ -933,10 +1073,11 @@ Reference: [NestJS Events](https://docs.nestjs.com/techniques/events)
 
 **Impact: HIGH** — non-atomic purges leave orphans; unbounded tags stall Redis
 
-The reverse index is `SADD <tag> <cacheKey>` per write; purging is `SMEMBERS` + `UNLINK`. Do the
-resolve-and-delete in **one Lua script** — a concurrent `SADD` between the two round-trips survives the
-sweep as a stale orphan. Guard cardinality, and use `UNLINK` (non-blocking), never `KEYS` or an
-unbounded `SCAN`.
+The reverse index is `SADD <tag> <cacheKey>` per write; purging is `SMEMBERS` + `UNLINK`. On a single
+Redis node, do the resolve-and-delete in **one Lua script** — a concurrent `SADD` between the two
+round-trips survives the sweep as a stale orphan. (On Redis Cluster this script needs the slot
+alignment described in the cluster notes below.) Guard cardinality, and use `UNLINK` (non-blocking),
+never `KEYS` or an unbounded `SCAN`.
 
 **Incorrect (two round-trips; unbounded tag; blocking delete):**
 
@@ -964,13 +1105,22 @@ if (count > 5_000) throw new Error(`tag ${tag} over cardinality ceiling`); // sh
 await redis.eval(purgeTagLua, 1, `tag:${tag}`);
 ```
 
-Why it is right: the sweep is atomic, deletes are non-blocking, and a runaway tag is caught before it
-stalls Redis.
+Why it is right: on a single node the sweep is atomic, deletes are non-blocking, and a runaway tag is
+caught before it stalls Redis.
 
 Cluster notes:
 
-- Prefix the tag set and its members with the **same `{hash tag}` slot** (`{tag:titles}:…`), or the
-  Lua sweep fails `CROSSSLOT`.
+- **A script may only touch keys that hash to the same slot as the keys it declares.** The snippet
+  above declares one key (the tag set) but `UNLINK`s members it reads at runtime, so on Redis Cluster
+  it fails the cross-slot check unless every member lands in the tag set's slot.
+- That alignment does **not** happen by itself: the members are cache keys **the engine names**
+  (`TitlesService.getTitle:…`), not keys this rule generates. To make the single-slot sweep work you
+  must pin the cache key to the slot yourself — override the key so it begins with the same
+  `{tag:…}` hash tag the tag set uses (see `policy-key-derivation`).
+- If you cannot pin the key, use a **two-step purge** instead (`SMEMBERS`, then `UNLINK` in bounded
+  batches) and accept that a concurrent `SADD` can leave one orphan: re-run the sweep, or let the
+  entry's `ttl + swr` retire it. Do not assume the atomic single-slot sweep on a cluster you have not
+  verified.
 - **Index TTL ≥ longest cache TTL**, else tag sets expire before their keys and purges silently miss.
 - Beyond ~5k members, shard the tag or switch to a generation prefix (see
   `invalidation-generation-prefix`).
@@ -1003,7 +1153,7 @@ Why it is wrong: a cluster-wide `SCAN` is expensive, per-node, and races with co
 @Cacheable({
   ttl: 3600,
   swr: 300,
-  key: async (a, ctx) => ['catalog', a.category, await ctx.gen('catalog')],
+  key: async (args, ctx) => ['catalog', args[0], await ctx.gen('catalog')],
 })
 getCatalog(category: string) {}
 
@@ -1053,7 +1203,7 @@ key→value association.
 getTitle(id: string) {}
 
 // write — purge every entry carrying the tag, after success
-@InvalidateTags((r, a) => [`title:${a.id}`, 'titles:popular'])
+@InvalidateTags((r, a) => [`title:${a[0]}`, 'titles:popular'])
 updateTitle(id: string, dto: Dto) {}
 ```
 
@@ -1091,8 +1241,11 @@ Pick one:
 1. **Instrument yourself.** Record your own write timestamp and derive age, and treat "past `ttl` but
    inside `ttl + swr`" as stale. That means a thin wrapper around the client that stores
    `{ value, writtenAt }` — only worth it if `Age`/stale ratio are real requirements.
-2. **Report only what is real.** Emit `hit` / `miss` / `revalidate` (dedupe) / `bypass` / `error`, and
-   report "revalidations" as the stampede metric instead of "stale_served".
+2. **Report only what is real.** Emit `hit` / `miss` / `dedupe` / `bypass` / `error`, and report the
+   `dedupe` count as the single-flight metric instead of "stale_served".
+
+`onDedupe` means **a concurrent duplicate request was collapsed into one load** — it is single-flight,
+not SWR revalidation. It says nothing about how many entries were served while revalidating.
 
 **Incorrect (a spec the engine cannot satisfy):**
 
@@ -1110,7 +1263,7 @@ Why it is wrong: `onStale` does not exist and `ageMs` is always undefined, so th
 // honest event set from engine hooks
 onHit: () => emit({ outcome: 'hit' }),
 onMiss: () => emit({ outcome: 'miss' }),
-onDedupe: () => emit({ outcome: 'revalidate', deduped: true }),
+onDedupe: () => emit({ outcome: 'dedupe', deduped: true }),
 onError: () => emit({ outcome: 'error' }),
 // stale-served / Age: only if you wrap the client with your own { value, writtenAt }
 ```
@@ -1126,8 +1279,11 @@ Reference: [async-cache-dedupe](https://github.com/mcollina/async-cache-dedupe)
 
 **Impact: MEDIUM** — you cannot claim the stampede is gone without these numbers
 
-Track: `hits`, `misses`, `revalidations` (`onDedupe`), `bypasses`, `errors`, `evictions`, `hit_ratio`.
-Watch **revalidations** — consistently high means `ttl` is too short and every read is refreshing.
+Track: `hits`, `misses`, `dedupes` (`onDedupe`), `bypasses`, `errors`, `evictions`, `hit_ratio`.
+Watch **dedupes** — a consistently high count means many callers were asking for the same key at the
+same time, so single-flight is doing its job under load (or keys are too coarse). It is **not** a
+TTL signal: the engine never tells you that a value was served while revalidating, so there is no
+"stale ratio" to watch unless you wrap the client yourself (see `observability-limits-of-events`).
 
 Provide test helpers backed by an in-memory store, and assert on the **outcome**, never on Redis
 internals.
@@ -1150,11 +1306,11 @@ const fake = createCache({ ttl: 60, stale: 300, storage: { type: 'memory' }, onH
 expect(onMiss).toHaveBeenCalledTimes(1);
 expect(onHit).toHaveBeenCalledTimes(1);
 
-// past ttl, within ttl+swr -> value served AND exactly one revalidation
+// past ttl, within ttl+swr -> value served AND one revalidation, from three concurrent callers
 jest.advanceTimersByTime(61_000);
 const [r1, r2, r3] = await Promise.all([getTitle('42'), getTitle('42'), getTitle('42')]);
-expect(loader).toHaveBeenCalledTimes(2);          // initial + one revalidation
-expect(onDedupe).toHaveBeenCalledTimes(1);        // single-flight worked
+expect(loader).toHaveBeenCalledTimes(2);          // initial + one refresh
+expect(onDedupe).toHaveBeenCalledTimes(2);        // 3 concurrent callers -> 2 collapsed into the 1 load
 ```
 
 Why it is right: the test asserts the observable contract — freshness window, one deduped refresh,
@@ -1172,11 +1328,18 @@ Reference: [NestJS Testing](https://docs.nestjs.com/fundamentals/testing)
 **Impact: MEDIUM** — one request shows exactly what was cached and why
 
 Collect cache events in AsyncLocalStorage for the duration of a request, then surface them once at
-the end:
+the end. Surface **only what the engine actually reports** (`observability-limits-of-events`): the
+callbacks give you hit / miss / dedupe / error, and nothing about staleness or entry age.
 
 - **GraphQL:** attach to `extensions.cache` via an Apollo `willSendResponse` plugin — **dev only**.
-- **HTTP:** `X-Cache: HIT | STALE | MISS` + `Age`.
-- Works across HTTP and BullMQ job context because the collection uses CLS, not the request object.
+- **HTTP:** a summary header using **only the outcomes the engine reports** — `X-Cache: HIT | MISS |
+  DEDUPE | BYPASS` (and `ERROR`). Do **not** emit `STALE` or `Age` from the engine's callbacks: it
+  has no stale callback and no entry age, so those values would read as zero forever (see
+  `observability-limits-of-events`). Add them only once you wrap the client with your own
+  `{ value, writtenAt }` record.
+- The event **collection** works in both an HTTP request and a BullMQ job because it uses CLS, not
+  the request object. The **header** is HTTP-only — a job has no response to write to, so a job reads
+  the collected events instead.
 
 ```typescript
 // common/interceptors/cache-trace.interceptor.ts — APP_INTERCEPTOR
@@ -1187,9 +1350,11 @@ export class CacheTraceInterceptor implements NestInterceptor {
   intercept(ctx: ExecutionContext, next: CallHandler): Observable<unknown> {
     return next.handle().pipe(tap(() => {
       const events = this.cls.get<CacheEvent[]>('cacheEvents') ?? [];
-      const summary = summarize(events); // worst outcome wins: MISS > STALE > HIT
+      const summary = summarize(events); // worst outcome wins: MISS > DEDUPE > HIT
       const res = ctx.switchToHttp().getResponse?.();
-      if (res?.setHeader) { res.setHeader('X-Cache', summary.outcome); if (summary.ageMs) res.setHeader('Age', Math.round(summary.ageMs / 1000)); }
+      if (res?.setHeader) res.setHeader('X-Cache', summary.outcome);
+      // Age exists ONLY if you wrapped the client (see observability-limits-of-events):
+      // if (res?.setHeader && summary.ageMs) res.setHeader('Age', Math.round(summary.ageMs / 1000));
       if (!isProd) this.cls.set('cacheTrace', events);
     }));
   }
@@ -1208,9 +1373,9 @@ logging.
 **Correct (aggregate per request; expose detail only in dev):**
 
 ```text
-X-Cache: STALE
-Age: 12
-# dev GraphQL: extensions.cache = [ {key:'TitlesService.getTitle:{id:42}', outcome:'revalidate', deduped:true, ...} ]
+X-Cache: DEDUPE
+# with your own { value, writtenAt } wrapper: X-Cache: STALE, Age: 12
+# dev GraphQL: extensions.cache = [ {key:'TitlesService.getTitle:{"a":[42]}', outcome:'dedupe', deduped:true, ...} ]
 ```
 
 Why it is right: one header summarizes the request, the dev extension carries the full evidence, and
@@ -1222,21 +1387,25 @@ Reference: [Apollo Server plugins](https://www.apollographql.com/docs/apollo-ser
 
 ### 5.4 Emit Structured Cache Events, Not Log Strings
 
-**Impact: MEDIUM** — every hit/stale/miss decision becomes queryable data
+**Impact: MEDIUM** — every hit/miss/dedupe decision becomes queryable data
 
 Emit one structured event per decision and push it into the request's context. Do not log formatted
 strings — you cannot aggregate them, and the per-request trace depends on the shape.
 
 ```typescript
-type CacheOutcome = 'hit' | 'stale' | 'miss' | 'revalidate' | 'bypass' | 'error';
+// Only outcomes the engine can actually report. `stale` is NOT one of them: the engine has no
+// stale callback (see observability-limits-of-events). Add `stale` to this union only when you
+// wrap the client with your own { value, writtenAt } record.
+type CacheOutcome = 'hit' | 'miss' | 'dedupe' | 'bypass' | 'error';
 
 interface CacheEvent {
   layer: 'service' | 'field' | 'operation';
   key: string;                    // readable parts, not a hash
   outcome: CacheOutcome;
-  ageMs?: number; freshMs?: number; swrMs?: number;
+  ageMs?: number;                 // set ONLY by your own wrapper; the engine never populates it
+  freshMs?: number; swrMs?: number;
   tags?: string[]; scope: 'public' | 'perUser';
-  deduped?: boolean;              // proves single-flight worked
+  deduped?: boolean;              // proves single-flight worked (onDedupe fired)
   durationMs: number; requestId?: string;
 }
 ```
@@ -1248,7 +1417,7 @@ const client = createCache({
   ttl, stale: swr, storage,
   onHit:    () => emit({ outcome: 'hit' }),
   onMiss:   () => emit({ outcome: 'miss' }),
-  onDedupe: () => emit({ outcome: 'revalidate', deduped: true }),
+  onDedupe: () => emit({ outcome: 'dedupe', deduped: true }),
   onError:  () => emit({ outcome: 'error' }),
 });
 ```

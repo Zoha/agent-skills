@@ -35,9 +35,11 @@ export interface CacheModuleOptions {
   swr: number;    // default stale window, SECONDS
 }
 
-// infra/cache/cache.tokens.ts
+// infra/cache/cache.tokens.ts — the ONE declaration site for every cache token.
+// Do not re-declare these in common/ (a common/interfaces file holds the CacheService *port* only).
 export const CACHE_CLIENT = Symbol('CACHE_CLIENT');
 export const CACHE_SERVICE = Symbol('CACHE_SERVICE');
+export const CACHE_REDIS = Symbol('CACHE_REDIS');   // the ioredis client, injected for shutdown/GC
 
 // infra/cache/cache.module.ts
 import { ConfigurableModuleBuilder, Global, Module, Inject } from '@nestjs/common';
