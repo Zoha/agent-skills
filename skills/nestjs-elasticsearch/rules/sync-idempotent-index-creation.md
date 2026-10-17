@@ -85,7 +85,13 @@ next sweep retries the ensure.
 
 The same property answers "the app booted but migrations were not run": creation happens on boot
 regardless, so the app works with an empty index and returns no results until a reindex job fills
-it — it never crashes because a migration step was skipped. Only when the **mapping changes** do you
-bump the version and run a deliberate reindex (see `sync-full-reindex-alias-swap`).
+it — it never crashes because a migration step was skipped. A boot-time guard can close that gap by
+enqueuing a fill **only when the index is empty**, so a normal restart does nothing (see
+`sync-full-reindex-alias-swap`). Only when the **mapping changes** do you bump the version and run a
+deliberate reindex.
+
+This is also why the guard is skipped, not faked, when search is configured off: with a
+non-Elasticsearch backend there is no index to ensure and no cluster to ping, so `ensureIndex` is a
+no-op and no index is created (see `cfg-search-backend-seam`).
 
 Reference: [Elasticsearch — Create index API](https://www.elastic.co/docs/api/doc/elasticsearch/operation/operation-indices-create)

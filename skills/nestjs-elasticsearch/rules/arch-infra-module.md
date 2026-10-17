@@ -77,4 +77,9 @@ The client is created by `registerAsync` from typed config, never from a literal
 Re-exporting matters: a module that provides a dynamic module must export that module too, or
 importers cannot resolve its providers.
 
+The client is also the single implementation behind the `SearchBackend` seam: the shared layer and
+features depend on the interface, and `ElasticsearchService` is injected in exactly one class, the
+Elasticsearch backend (see `cfg-search-backend-seam`). Keeping that dependency to one class is what
+lets the application boot with no cluster and lets a test inject a fake.
+
 Reference: [nestjs/elasticsearch](https://github.com/nestjs/elasticsearch) | [NestJS Modules](https://docs.nestjs.com/modules)

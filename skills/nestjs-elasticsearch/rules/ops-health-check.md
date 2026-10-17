@@ -48,6 +48,23 @@ instance cannot fully serve. The liveness probe (memory, event-loop) stays separ
 Elasticsearch outage is not a reason to restart the process. Wire the probes to the health module's
 queries.
 
+The check belongs in readiness only when Elasticsearch is actually the search backend. When search is
+configured off (`SEARCH_BACKEND=mongo`, see `cfg-search-backend-seam`), Elasticsearch is not a
+dependency of the instance, so the ping is absent from the check entirely — it is neither run nor
+reported healthy. Reporting a dependency you do not call as "up" is a false signal; omitting it is
+the honest state.
+
+```typescript
+ready() {
+  return this.health.check([
+    () => this.db.pingCheck('database'),                             // MongoDB — the source of truth
+    ...(this.isElasticsearchBackend
+      ? [() => this.es.pingCheck('elasticsearch')]                   // only when ES is the backend
+      : []),
+  ]);
+}
+```
+
 See `devops-use-health-checks` in the `nestjs-best-practices` skill for the liveness/readiness split
 this check follows.
 

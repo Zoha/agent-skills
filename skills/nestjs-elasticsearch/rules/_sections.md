@@ -34,3 +34,13 @@ The section ID (in parentheses) is the filename prefix used to group rules.
 
 **Impact:** MEDIUM
 **Description:** Running and debugging the integration in production. Request/response logging, an explain hook, migration and reindex CLI commands, a health check, and never scheduling indexing with an in-process timer.
+
+## 7. Configuration & Environments (cfg-)
+
+**Impact:** HIGH
+**Description:** Running with search optional and pluggable. A single backend seam lets the application boot and serve without Elasticsearch, the backend is selected from configuration instead of hardcoded, and the disabled path degrades to a deterministic MongoDB finder that keeps the IDs-only contract rather than returning an empty page.
+
+## 8. Testing (test-)
+
+**Impact:** MEDIUM-HIGH
+**Description:** Testing search without a live cluster for every case. Unit tests mock the backend seam; only the query DSL, analyzers, and pagination are exercised against a real, throwaway Elasticsearch. Unit tests never call an external service (see `test-mock-external-services` in the `nestjs-best-practices` skill).

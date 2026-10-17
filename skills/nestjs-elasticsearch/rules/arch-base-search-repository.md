@@ -45,7 +45,7 @@ export abstract class SearchRepository<Doc extends { id: string }> {
   abstract readonly index: string; // the alias
 
   constructor(
-    protected readonly es: ElasticsearchService,
+    @Inject(SEARCH_BACKEND) protected readonly backend: SearchBackend, // the seam, not the client
     @InjectQueue('search-reindex') protected readonly queue: Queue,
   ) {}
 
@@ -79,6 +79,10 @@ export class UsersSearchRepository extends SearchRepository<UserSearchDocument> 
 
 Why it is right: the pipeline exists once, the shared processor can drive any feature through the
 base contract, and a feature is a mapper plus a query.
+
+The base depends on the `SearchBackend` interface, not the Elasticsearch client, so the shared layer
+stays engine-agnostic and a test can inject a fake with no cluster running (see
+`cfg-search-backend-seam`).
 
 `bulkIndex` takes an optional target index because a versioned reindex must fill the **new** index,
 never the alias the cluster is still serving — writing to the alias would fill the old index and

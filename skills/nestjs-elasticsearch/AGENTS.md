@@ -1,6 +1,6 @@
 # NestJS Elasticsearch
 
-**Version 1.0.0**
+**Version 1.1.0**
 NestJS Elasticsearch
 October 2026
 
@@ -13,7 +13,7 @@ October 2026
 
 ## Abstract
 
-Integration guide for adding Elasticsearch-backed search to a NestJS GraphQL + MongoDB application, designed for AI agents and LLMs. Establishes the architectural boundary — a generic infra client, a shared search layer, and one index per feature owned by the feature module — then gives rules for the whole lifecycle: a typed search document that mirrors only the searchable subset of an entity, a mapping declared as a typed object, incremental indexing enqueued onto a shared BullMQ pipeline with same-id debouncing, immediate deletes, batched bulk indexing, versioned indices with atomic alias swaps, and idempotent index creation that is safe across concurrent instances. Query rules keep Elasticsearch a pure finder: searches return IDs only (`_source: false`), the result set is hydrated from MongoDB and reordered to the relevance ordering, and deep pagination uses `search_after` with a unique sort tiebreaker. Cross-entity rules keep derived values (visit counts, comment counts) cached on the owning document and indexed by the module that owns them, so a contributing module never learns about another module's index. Operations rules cover request/response logging, an explain hook, migration and reindex CLI commands, health checks, and why indexing never uses an in-process timer.
+Integration guide for adding Elasticsearch-backed search to a NestJS GraphQL + MongoDB application, designed for AI agents and LLMs. Establishes the architectural boundary — a generic infra client, a shared search layer, and one index per feature owned by the feature module — then gives rules for the whole lifecycle: a typed search document that mirrors only the searchable subset of an entity, a mapping declared as a typed object, incremental indexing enqueued onto a shared BullMQ pipeline with same-id debouncing, immediate deletes, batched bulk indexing, versioned indices with atomic alias swaps, and idempotent index creation that is safe across concurrent instances, including a boot-time guard that fills an empty index without blocking startup. Query rules keep Elasticsearch a pure finder: searches return IDs only (`_source: false`), the result set is hydrated from MongoDB and reordered to the relevance ordering, and deep pagination uses `search_after` with a unique sort tiebreaker. Cross-entity rules keep derived values (visit counts, comment counts) cached on the owning document and indexed by the module that owns them, so a contributing module never learns about another module's index. Configuration rules make search optional and pluggable: one backend seam selects Elasticsearch or a deterministic MongoDB fallback, so the application boots, serves, and is tested without a cluster. Operations rules cover request/response logging, an explain hook, migration and reindex CLI commands, health checks, and why indexing never uses an in-process timer. Testing rules keep unit tests on a mocked seam and reserve a real, throwaway Elasticsearch for analyzer, DSL, and pagination semantics.
 
 ---
 
@@ -51,6 +51,12 @@ Integration guide for adding Elasticsearch-backed search to a NestJS GraphQL + M
    - 6.3 [Include Elasticsearch in Health Checks](#63-include-elasticsearch-in-health-checks)
    - 6.4 [Log Elasticsearch Requests and Responses](#64-log-elasticsearch-requests-and-responses)
    - 6.5 [Never Schedule Indexing with an In-Process Timer](#65-never-schedule-indexing-with-an-in-process-timer)
+7. [Configuration & Environments](#7-configuration--environments) — **HIGH**
+   - 7.1 [Fall Back to a Deterministic MongoDB Finder](#71-fall-back-to-a-deterministic-mongodb-finder)
+   - 7.2 [Put Search Behind a Backend Seam](#72-put-search-behind-a-backend-seam)
+8. [Testing](#8-testing) — **MEDIUM-HIGH**
+   - 8.1 [Mock the Search Backend Seam in Unit Tests](#81-mock-the-search-backend-seam-in-unit-tests)
+   - 8.2 [Test Query Semantics Against a Real Elasticsearch](#82-test-query-semantics-against-a-real-elasticsearch)
 
 ---
 
@@ -98,7 +104,7 @@ export abstract class SearchRepository<Doc extends { id: string }> {
   abstract readonly index: string; // the alias
 
   constructor(
-    protected readonly es: ElasticsearchService,
+    @Inject(SEARCH_BACKEND) protected readonly backend: SearchBackend, // the seam, not the client
     @InjectQueue('search-reindex') protected readonly queue: Queue,
   ) {}
 
@@ -132,6 +138,10 @@ export class UsersSearchRepository extends SearchRepository<UserSearchDocument> 
 
 Why it is right: the pipeline exists once, the shared processor can drive any feature through the
 base contract, and a feature is a mapper plus a query.
+
+The base depends on the `SearchBackend` interface, not the Elasticsearch client, so the shared layer
+stays engine-agnostic and a test can inject a fake with no cluster running (see
+`cfg-search-backend-seam`).
 
 `bulkIndex` takes an optional target index because a versioned reindex must fill the **new** index,
 never the alias the cluster is still serving — writing to the alias would fill the old index and
@@ -367,6 +377,11 @@ and features can inject it, and the infra module carries no feature knowledge.
 The client is created by `registerAsync` from typed config, never from a literal in a feature.
 Re-exporting matters: a module that provides a dynamic module must export that module too, or
 importers cannot resolve its providers.
+
+The client is also the single implementation behind the `SearchBackend` seam: the shared layer and
+features depend on the interface, and `ElasticsearchService` is injected in exactly one class, the
+Elasticsearch backend (see `cfg-search-backend-seam`). Keeping that dependency to one class is what
+lets the application boot with no cluster and lets a test inject a fake.
 
 Reference: [nestjs/elasticsearch](https://github.com/nestjs/elasticsearch) | [NestJS Modules](https://docs.nestjs.com/modules)
 
@@ -694,10 +709,17 @@ when no version holds the alias yet (see `sync-idempotent-index-creation`), and 
 swap.
 
 Three triggers enqueue this job, and all three must use the same stable `jobId` (`reindex:${alias}`)
-so a fleet of instances collapses to one run: the CLI command for a deliberate migration, a boot-time
-enqueue when the current index is empty, and a nightly reconcile that repairs drift. None of them is
-the incremental catch-up — that is the two-minute sweep in `ops-no-cron-for-indexing`, which re-reads
-changed documents and never swaps an alias. The alias swap must never run on the enqueue path.
+so a fleet of instances collapses to one run: a boot-time guard that fires **only when the current
+index is empty**, the CLI command for a deliberate migration, and a nightly reconcile that repairs
+drift. None of them is the incremental catch-up — that is the two-minute sweep in
+`ops-no-cron-for-indexing`, which re-reads changed documents and never swaps an alias.
+
+Do not confuse the boot guard with the anti-pattern in `ops-cli-scripts`. The guard reads the live
+index and enqueues a job only when there is nothing to lose, so a healthy restart reindexes nothing;
+it enqueues and returns, so a slow or down cluster never delays boot; and it never swaps the alias
+inline, so the swap still happens on the worker after a clean loop. An unconditional
+`onApplicationBootstrap` reindex is the thing to avoid. When the selected backend is not
+Elasticsearch, the guard does not run at all (see `cfg-search-backend-seam`).
 
 See `data-repository` in the `nestjs-graphql-structure` skill for the repository boundary the shared
 pipeline respects.
@@ -786,8 +808,14 @@ next sweep retries the ensure.
 
 The same property answers "the app booted but migrations were not run": creation happens on boot
 regardless, so the app works with an empty index and returns no results until a reindex job fills
-it — it never crashes because a migration step was skipped. Only when the **mapping changes** do you
-bump the version and run a deliberate reindex (see `sync-full-reindex-alias-swap`).
+it — it never crashes because a migration step was skipped. A boot-time guard can close that gap by
+enqueuing a fill **only when the index is empty**, so a normal restart does nothing (see
+`sync-full-reindex-alias-swap`). Only when the **mapping changes** do you bump the version and run a
+deliberate reindex.
+
+This is also why the guard is skipped, not faked, when search is configured off: with a
+non-Elasticsearch backend there is no index to ensure and no cluster to ping, so `ensureIndex` is a
+no-op and no index is created (see `cfg-search-backend-seam`).
 
 Reference: [Elasticsearch — Create index API](https://www.elastic.co/docs/api/doc/elasticsearch/operation/operation-indices-create)
 
@@ -1213,7 +1241,7 @@ Why it is wrong: the response is the indexed copy, which can lag MongoDB, and ev
 **Correct (IDs and sort values only; `_source` disabled):**
 
 ```typescript
-// common/search/search.repository.ts (base)
+// infra/elasticsearch/elasticsearch.backend.ts — the Elasticsearch implementation of the seam
 const res = await this.es.search({
   index: this.index,
   _source: false,                 // no field data in the response
@@ -1246,6 +1274,10 @@ and reports `relation: "gte"` above the cap, so a naive read shows "10,000 resul
 matched far more. The example carries that relation out as `totalIsExact` instead of dropping it. If
 you genuinely need an exact count, set `track_total_hits: true` and accept that counting every hit is
 the expensive part of the query.
+
+The contract is the interface, not the engine: `searchIds` returns identifiers plus ordering, and a
+non-Elasticsearch backend (see `cfg-mongo-fallback-backend`) returns the same shape, so hydration and
+pagination are unchanged whichever backend answers.
 
 Reference: [Elasticsearch — Retrieve selected fields](https://www.elastic.co/docs/reference/elasticsearch/rest-apis/retrieve-selected-fields)
 
@@ -1429,17 +1461,20 @@ deliberate operations that belong in commands, not in the request path. Provide 
 `search:migrate`, `search:reindex`, and a mapping/inspection helper. The commands enqueue the same
 shared reindex job the app uses, so there is one implementation of the work.
 
-**Incorrect (a reindex triggered from application code, or run by hand with curl):**
+**Incorrect (an unconditional, blocking reindex on every boot, or a reindex run by hand with curl):**
 
 ```typescript
 // a controller or a boot hook that kicks off a full reindex whenever the app starts
 async onApplicationBootstrap() {
-  await this.reindexEverything(); // every instance, every restart, blocking startup
+  await this.reindexEverything(); // every instance, every restart, against a healthy index too
 }
 ```
 
-Why it is wrong: the reindex runs implicitly on every boot and on every instance, blocks startup,
-and cannot be run deliberately, watched, or re-run safely.
+Why it is wrong: the problem is not that boot may reindex, it is that this always does. It re-runs
+against a fully populated, healthy index, blocks startup while it runs on every instance, and gives
+an operator no way to watch, skip, or re-run it. The accepted boot trigger is the opposite: a guard
+that checks the live index and enqueues a job **only when the index is empty**, then returns (see
+`sync-full-reindex-alias-swap`).
 
 **Correct (scripts that enqueue the shared job):**
 
@@ -1599,6 +1634,23 @@ Keep the Elasticsearch check in **readiness**, paired with the database ping: if
 instance cannot fully serve. The liveness probe (memory, event-loop) stays separate, because an
 Elasticsearch outage is not a reason to restart the process. Wire the probes to the health module's
 queries.
+
+The check belongs in readiness only when Elasticsearch is actually the search backend. When search is
+configured off (`SEARCH_BACKEND=mongo`, see `cfg-search-backend-seam`), Elasticsearch is not a
+dependency of the instance, so the ping is absent from the check entirely — it is neither run nor
+reported healthy. Reporting a dependency you do not call as "up" is a false signal; omitting it is
+the honest state.
+
+```typescript
+ready() {
+  return this.health.check([
+    () => this.db.pingCheck('database'),                             // MongoDB — the source of truth
+    ...(this.isElasticsearchBackend
+      ? [() => this.es.pingCheck('elasticsearch')]                   // only when ES is the backend
+      : []),
+  ]);
+}
+```
 
 See `devops-use-health-checks` in the `nestjs-best-practices` skill for the liveness/readiness split
 this check follows.
@@ -1765,6 +1817,339 @@ Reference: [BullMQ — Job schedulers](https://docs.bullmq.io/guide/job-schedule
 
 ---
 
+## 7. Configuration & Environments
+
+**Section Impact: HIGH**
+
+### 7.1 Fall Back to a Deterministic MongoDB Finder
+
+**Impact: MEDIUM-HIGH** — search returns real, ordered results without Elasticsearch
+
+When Elasticsearch is not the selected backend, search must still return real data. Because the
+contract is already "the index finds identifiers and MongoDB serves the documents"
+(`query-ids-only-search`, `query-hydrate-restore-order`), the fallback is small: a `SearchBackend`
+that reads MongoDB, returns `_id`s, and leaves every hydration and ordering line unchanged. Make it
+deterministic — a stable sort with a unique tiebreaker — so pagination stays correct and tests can
+assert exact output.
+
+**Incorrect (an empty page, or random documents):**
+
+```typescript
+// the disabled backend returns nothing, so every search looks broken in development
+async searchIds(): Promise<SearchPage> {
+  return { ids: [], total: 0, totalIsExact: true, nextCursor: null };
+}
+
+// or it returns arbitrary documents and ignores the request
+async searchIds(): Promise<SearchPage> {
+  const docs = await this.model.aggregate([{ $sample: { size: 20 } }]);
+  return { ids: docs.map((d) => d._id.toString()), total: 20, totalIsExact: true, nextCursor: null };
+}
+```
+
+Why it is wrong: an empty page makes the whole feature look dead and hides bugs that only appear when
+real results exist; random documents are non-deterministic, so a test cannot assert an order, and the
+user sees results that do not answer their query.
+
+**Correct (a MongoDB finder behind the same interface; deterministic order and keyset cursor):**
+
+```typescript
+// infra/search/mongo-fallback.backend.ts
+@Injectable()
+export class MongoFallbackBackend implements SearchBackend {
+  readonly enabled = true; // the backend is active; only the engine differs
+
+  constructor(private readonly model: Model<unknown>) {}
+
+  // no index work: MongoDB already holds the truth, so these are no-ops
+  async ensureIndex(): Promise<void> {}
+  async bulkIndex(): Promise<void> {}
+  async deleteOne(): Promise<void> {}
+  ping(): Promise<boolean> {
+    return this.model.db.admin().ping().then(() => true);
+  }
+
+  async searchIds(req: SearchRequest): Promise<SearchPage> {
+    const after = req.cursor ? decodeCursor(req.cursor) : null;
+    const filter = {
+      ...this.termFilter(req.term),
+      ...(after
+        ? { $or: [{ createdAt: { $lt: after[0] } }, { createdAt: after[0], _id: { $gt: after[1] } }] }
+        : {}),
+    };
+
+    // the same total sort the Elasticsearch path uses: the requested sort, then a unique tiebreaker
+    const docs = await this.model.find(filter).sort({ createdAt: -1, _id: 1 }).limit(req.limit).lean();
+    const last = docs.at(-1);
+
+    return {
+      ids: docs.map((d) => d._id.toString()),
+      total: await this.model.countDocuments(this.termFilter(req.term)),
+      totalIsExact: true, // MongoDB counts are exact, unlike a capped hits.total
+      nextCursor:
+        docs.length === req.limit && last ? encodeCursor([last.createdAt, last._id.toString()]) : null,
+    };
+  }
+
+  private termFilter(term?: string): FilterQuery<unknown> {
+    return term ? { name: { $regex: escapeRegex(term), $options: 'i' } } : {};
+  }
+}
+```
+
+Why it is right: the fallback returns real identifiers in a stable order, the shared hydration and
+ordering code is untouched, and the cursor carries the same two sort values (the requested sort then
+the unique `_id`) that `query-sort-tiebreaker` requires.
+
+Two honest limits. There is no relevance ranking in this mode, so it is for development, tests, and
+small deployments rather than a replacement for search quality; the ordering is newest-first unless
+you extend `termFilter`. And it keeps `totalIsExact: true` because MongoDB counts exactly, whereas
+Elasticsearch may report a capped `hits.total` (`query-ids-only-search`). Do not make this mode the
+silent production default: `SEARCH_BACKEND=mongo` belongs in local and test environments, and in
+production it should be an explicit, logged choice.
+
+Reference: [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb) | [MongoDB — Query your data](https://www.mongodb.com/docs/manual/tutorial/query-documents/)
+
+---
+
+### 7.2 Put Search Behind a Backend Seam
+
+**Impact: HIGH** — the app boots and serves without Elasticsearch
+
+Search is an optional capability, not a hard dependency of the application. Put every Elasticsearch
+call behind one `SearchBackend` interface and choose the implementation from configuration. The
+application then boots, serves its non-search endpoints, and runs its tests with no cluster
+available, and a developer can turn search on per environment instead of running Elasticsearch on
+every machine.
+
+**Incorrect (the shared layer injects the raw client, so boot needs the cluster):**
+
+```typescript
+// common/search/search.repository.ts
+export abstract class SearchRepository<Doc extends { id: string }> {
+  constructor(
+    protected readonly es: ElasticsearchService, // concrete client, hard dependency
+    @InjectQueue('search-reindex') protected readonly queue: Queue,
+  ) {}
+}
+// every feature module now resolves ElasticsearchService, so a missing cluster
+// fails module instantiation and the whole app refuses to boot
+```
+
+Why it is wrong: the concrete client is a required constructor dependency, so an unreachable cluster
+fails startup, a test needs a running Elasticsearch, and swapping the search engine means editing the
+shared layer and every feature.
+
+**Correct (one backend interface; the implementation is chosen from config):**
+
+```typescript
+// common/search/search.backend.ts — the seam
+export interface SearchBackend {
+  readonly enabled: boolean; // false -> the write path and ensure are skipped
+  ensureIndex(def: SearchIndexDef<unknown>): Promise<void>;
+  bulkIndex(index: string, docs: unknown[]): Promise<void>;
+  deleteOne(index: string, id: string): Promise<void>;
+  searchIds(req: SearchRequest): Promise<SearchPage>; // { ids, total, totalIsExact, nextCursor }
+  ping(): Promise<boolean>;
+}
+
+// infra/elasticsearch/elasticsearch.backend.ts — the Elasticsearch implementation
+@Injectable()
+export class ElasticsearchBackend implements SearchBackend {
+  readonly enabled = true;
+  constructor(private readonly es: ElasticsearchService) {}
+  // the only class in the codebase that names ElasticsearchService
+}
+
+// infra/search/search-backend.provider.ts — one place selects the implementation
+export const SEARCH_BACKEND = Symbol('SEARCH_BACKEND');
+
+export const searchBackendProvider: Provider = {
+  provide: SEARCH_BACKEND,
+  inject: [ConfigService, ElasticsearchBackend, MongoFallbackBackend],
+  useFactory: (
+    config: ConfigService,
+    es: ElasticsearchBackend,
+    mongo: MongoFallbackBackend,
+  ): SearchBackend => (config.get('search.backend') === 'mongo' ? mongo : es),
+};
+
+// common/search/search.repository.ts — depends on the seam, not the client
+export abstract class SearchRepository<Doc extends { id: string }> {
+  constructor(
+    @Inject(SEARCH_BACKEND) protected readonly backend: SearchBackend,
+    @InjectQueue('search-reindex') protected readonly queue: Queue,
+  ) {}
+}
+```
+
+```bash
+# .env — the one switch (see devops-use-config-module and devops-maintain-env-example)
+SEARCH_BACKEND=elasticsearch   # or: mongo
+```
+
+Why it is right: the shared layer names only the interface, the implementation is picked in one
+factory from typed config, and the app boots with `SEARCH_BACKEND=mongo` on a machine that has no
+Elasticsearch.
+
+Two consequences of the switch, both handled elsewhere. Boot-time index creation and the boot-time
+fill are skipped when the selected backend is not Elasticsearch, so a disabled environment never
+creates an index it will not use (see `sync-idempotent-index-creation`). And readiness includes the
+Elasticsearch ping only when the backend actually depends on the cluster; when it does not, the check
+is absent, not reported healthy (see `ops-health-check`). The disabled backend itself is the
+deterministic MongoDB finder in `cfg-mongo-fallback-backend`, not an empty result.
+
+Keep the switch per environment, not per feature: one `SEARCH_BACKEND` for the whole application.
+A per-feature backend would mean two features could disagree about where search lives, and the shared
+reindex pipeline (see `arch-base-search-repository`) would have to resolve the engine per alias.
+
+Reference: [NestJS Custom Providers](https://docs.nestjs.com/fundamentals/custom-providers) | [@nestjs/elasticsearch](https://github.com/nestjs/elasticsearch)
+
+---
+
+## 8. Testing
+
+**Section Impact: MEDIUM-HIGH**
+
+### 8.1 Mock the Search Backend Seam in Unit Tests
+
+**Impact: HIGH** — unit tests run with no Elasticsearch
+
+The base repository is the single place every feature touches search
+(`arch-base-search-repository`), and it depends on the `SearchBackend` interface
+(`cfg-search-backend-seam`). That makes one fake enough for the whole codebase: provide a stub backend
+in the testing module and no test ever needs a running cluster. Never call a live Elasticsearch from
+a unit test (see `test-mock-external-services` in the `nestjs-best-practices` skill).
+
+**Incorrect (the test instantiates the real client, or points at localhost):**
+
+```typescript
+// hits a real cluster that may not be running; slow and flaky
+const service = new UsersService(
+  new ElasticsearchService({ node: 'http://localhost:9200' }),
+  usersRepo,
+);
+
+// or a mock so thin it asserts nothing about the contract
+const backend = { searchIds: async () => ({ ids: [] }) };
+```
+
+Why it is wrong: the first needs Elasticsearch on every machine and in CI, and the second returns an
+empty shape the real contract never produces, so the test passes while the hydration path is
+untested.
+
+**Correct (stub the interface; assert hydration and ordering):**
+
+```typescript
+// modules/users/services/users.service.spec.ts
+const search = {
+  enabled: true,
+  searchIds: async () => ({ ids: ['b', 'a'], total: 2, totalIsExact: true, nextCursor: null }),
+} as unknown as SearchBackend;
+const users = { findByIds: async () => [/* MongoDB order: a, b */] };
+
+const module = await Test.createTestingModule({
+  providers: [
+    UsersService,
+    { provide: SEARCH_BACKEND, useValue: search },
+    { provide: UsersRepository, useValue: users },
+  ],
+}).compile();
+
+const service = module.get(UsersService);
+const { nodes } = await service.findMany({ term: 'x' });
+
+expect(nodes.map((n) => n.id)).toEqual(['b', 'a']); // relevance order restored, not MongoDB order
+```
+
+Why it is right: the fake implements the same shape the real backend returns, the test asserts the
+behavior that matters (hydration plus order restoration), and moving search to a new engine changes
+only the `SEARCH_BACKEND` provider, not the test.
+
+Let the stub backend implement the whole interface, even the methods the unit under test does not
+call. A partial object cast with `as unknown as SearchBackend` is acceptable in a test, but it hides
+a new interface method from every future test, so prefer a small `createFakeSearchBackend()` helper
+when more than one suite needs it.
+
+Reference: [NestJS Testing](https://docs.nestjs.com/fundamentals/testing) | [NestJS Custom Providers](https://docs.nestjs.com/fundamentals/custom-providers)
+
+---
+
+### 8.2 Test Query Semantics Against a Real Elasticsearch
+
+**Impact: MEDIUM-HIGH** — analyzers, DSL and pagination are verified for real
+
+A mocked backend proves your code calls the right method; it proves nothing about what Elasticsearch
+does with the query. Analyzer behavior (`map-analyzers`), the default `_score` ordering, and
+`search_after` pagination (`query-cursor-pagination`) exist only in the engine. These few integration
+tests need a real cluster, so start a disposable one per suite with Testcontainers and tear it down
+afterward. This is integration coverage; unit tests still mock the seam and never call an external
+service (`test-mock-elasticsearch-seam`, and `test-mock-external-services` in the
+`nestjs-best-practices` skill).
+
+**Incorrect (asserting engine behavior against a hand-rolled fake):**
+
+```typescript
+// the fake "matches" on a fuzzy query because the test made it match — this proves nothing
+const fake = {
+  searchIds: async () => ({ ids: ['1'], total: 1, totalIsExact: true, nextCursor: null }),
+};
+```
+
+Why it is wrong: the fake returns whatever the test told it to, so a wrong analyzer, a mapping that
+never indexes a field, or a broken `search_after` cursor all pass.
+
+**Correct (a throwaway cluster for the query-semantics suite):**
+
+```typescript
+// test/search.e2e-spec.ts
+import { ElasticsearchContainer, StartedElasticsearchContainer } from '@testcontainers/elasticsearch';
+import { Client } from '@elastic/elasticsearch';
+
+let es: StartedElasticsearchContainer;
+
+beforeAll(async () => {
+  es = await new ElasticsearchContainer('docker.elastic.co/elasticsearch/elasticsearch:8.15.0')
+    .withEnvironment({ 'xpack.security.enabled': 'false' })
+    .start();
+}, 120_000);
+
+afterAll(async () => {
+  await es?.stop();
+});
+
+it('matches partial words with the configured analyzer', async () => {
+  const client = new Client({ node: es.getHttpUrl() });
+  await client.indices.create({
+    index: 'users_v1',
+    mappings: { properties: USER_SEARCH_MAPPING },
+  });
+  await client.index({
+    index: 'users_v1',
+    id: '1',
+    document: { name: 'Elasticsearch' },
+    refresh: true,
+  });
+
+  const res = await client.search({ index: 'users_v1', query: { match: { name: 'elastic' } } });
+  expect(res.hits.hits.map((h) => h._id)).toEqual(['1']); // standard analyzer lowercased the term
+});
+```
+
+Why it is right: the analyzer, mapping, and query run against the engine that will run them in
+production, so a mapping or analyzer regression fails the suite instead of surfacing later as wrong
+search results.
+
+The suite needs a container runtime (Docker or Podman) locally and in CI; keep it in its own file so
+the fast unit suite does not depend on one. Pin the image tag, not `latest`, so the engine behavior a
+test asserts does not change underneath it. This is the only place that hits a live cluster; if the
+whole suite would otherwise need Elasticsearch, that is a sign the mocked seam in
+`test-mock-elasticsearch-seam` is missing from a unit test.
+
+Reference: [Testcontainers for Node.js](https://node.testcontainers.org/) | [@nestjs/elasticsearch](https://github.com/nestjs/elasticsearch)
+
+---
+
 ## References
 
 - https://github.com/nestjs/elasticsearch
@@ -1776,7 +2161,10 @@ Reference: [BullMQ — Job schedulers](https://docs.bullmq.io/guide/job-schedule
 - https://docs.nestjs.com/techniques/queues
 - https://docs.nestjs.com/recipes/terminus
 - https://docs.nestjs.com/techniques/events
+- https://docs.nestjs.com/fundamentals/custom-providers
+- https://node.testcontainers.org/
 - https://docs.mongodb.com/manual/changeStreams/
+- https://docs.mongodb.com/manual/tutorial/query-documents/
 - https://mongoosejs.com/docs/guide.html
 
 ---

@@ -76,10 +76,17 @@ when no version holds the alias yet (see `sync-idempotent-index-creation`), and 
 swap.
 
 Three triggers enqueue this job, and all three must use the same stable `jobId` (`reindex:${alias}`)
-so a fleet of instances collapses to one run: the CLI command for a deliberate migration, a boot-time
-enqueue when the current index is empty, and a nightly reconcile that repairs drift. None of them is
-the incremental catch-up — that is the two-minute sweep in `ops-no-cron-for-indexing`, which re-reads
-changed documents and never swaps an alias. The alias swap must never run on the enqueue path.
+so a fleet of instances collapses to one run: a boot-time guard that fires **only when the current
+index is empty**, the CLI command for a deliberate migration, and a nightly reconcile that repairs
+drift. None of them is the incremental catch-up — that is the two-minute sweep in
+`ops-no-cron-for-indexing`, which re-reads changed documents and never swaps an alias.
+
+Do not confuse the boot guard with the anti-pattern in `ops-cli-scripts`. The guard reads the live
+index and enqueues a job only when there is nothing to lose, so a healthy restart reindexes nothing;
+it enqueues and returns, so a slow or down cluster never delays boot; and it never swaps the alias
+inline, so the swap still happens on the worker after a clean loop. An unconditional
+`onApplicationBootstrap` reindex is the thing to avoid. When the selected backend is not
+Elasticsearch, the guard does not run at all (see `cfg-search-backend-seam`).
 
 See `data-repository` in the `nestjs-graphql-structure` skill for the repository boundary the shared
 pipeline respects.

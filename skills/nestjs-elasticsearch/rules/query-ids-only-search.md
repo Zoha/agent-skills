@@ -30,7 +30,7 @@ Why it is wrong: the response is the indexed copy, which can lag MongoDB, and ev
 **Correct (IDs and sort values only; `_source` disabled):**
 
 ```typescript
-// common/search/search.repository.ts (base)
+// infra/elasticsearch/elasticsearch.backend.ts — the Elasticsearch implementation of the seam
 const res = await this.es.search({
   index: this.index,
   _source: false,                 // no field data in the response
@@ -63,5 +63,9 @@ and reports `relation: "gte"` above the cap, so a naive read shows "10,000 resul
 matched far more. The example carries that relation out as `totalIsExact` instead of dropping it. If
 you genuinely need an exact count, set `track_total_hits: true` and accept that counting every hit is
 the expensive part of the query.
+
+The contract is the interface, not the engine: `searchIds` returns identifiers plus ordering, and a
+non-Elasticsearch backend (see `cfg-mongo-fallback-backend`) returns the same shape, so hydration and
+pagination are unchanged whichever backend answers.
 
 Reference: [Elasticsearch — Retrieve selected fields](https://www.elastic.co/docs/reference/elasticsearch/rest-apis/retrieve-selected-fields)

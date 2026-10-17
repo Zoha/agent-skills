@@ -1,10 +1,10 @@
 ---
 name: nestjs-elasticsearch
-description: Use when adding or maintaining Elasticsearch full-text search in a NestJS backend — client and module wiring, MongoDB-to-Elasticsearch sync and reindexing, index mappings and the search projection, ID-only queries with MongoDB hydration, cursor pagination, and cross-entity derived fields.
+description: Use when adding or maintaining Elasticsearch full-text search in a NestJS backend — client and module wiring, MongoDB-to-Elasticsearch sync and reindexing, index mappings and the search projection, ID-only queries with MongoDB hydration, cursor pagination, cross-entity derived fields, making search optional through a configurable backend seam, and testing search with a mocked seam or a real throwaway cluster.
 license: MIT
 metadata:
   author: Zoha
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # NestJS Elasticsearch
@@ -13,6 +13,7 @@ Integration guide for adding Elasticsearch-backed search to a NestJS GraphQL + M
 application. It fixes the architectural boundary (generic infra, a shared search layer, one
 owned index per feature), then covers the full lifecycle: the search projection, indexing and
 sync, ID-only querying with MongoDB hydration, cursor pagination, cross-entity derived fields,
+running with search optional via a configurable backend seam, testing without a live cluster,
 and the operations and DX around all of it.
 
 The guiding contract is **Elasticsearch finds, MongoDB serves**: Elasticsearch is a pure
@@ -29,6 +30,8 @@ Reference these guidelines when:
 - Implementing MongoDB-to-Elasticsearch sync, reindexing, or index migrations
 - Writing a search query, cursor pagination, or result hydration
 - Keeping a derived value (counts, ratings) searchable across entities
+- Making search optional, or swapping the backend, from configuration without a cluster
+- Testing search with a mocked backend seam, or against a real throwaway cluster
 - Debugging stale search results or indexing storms
 
 ## Rule Categories by Priority
@@ -42,6 +45,8 @@ Reference these guidelines when:
 | 4 | Querying | HIGH | `query-` |
 | 5 | Cross-Entity | MEDIUM-HIGH | `rel-` |
 | 6 | Operations & DX | MEDIUM | `ops-` |
+| 7 | Configuration & Environments | HIGH | `cfg-` |
+| 8 | Testing | MEDIUM-HIGH | `test-` |
 <!-- GENERATED:END:sections -->
 
 ## Quick Reference
@@ -90,6 +95,16 @@ Reference these guidelines when:
 - `ops-health-check` - Include Elasticsearch in Health Checks
 - `ops-log-es-requests` - Log Elasticsearch Requests and Responses
 - `ops-no-cron-for-indexing` - Never Schedule Indexing with an In-Process Timer
+
+### 7. Configuration & Environments (HIGH)
+
+- `cfg-mongo-fallback-backend` - Fall Back to a Deterministic MongoDB Finder
+- `cfg-search-backend-seam` - Put Search Behind a Backend Seam
+
+### 8. Testing (MEDIUM-HIGH)
+
+- `test-mock-elasticsearch-seam` - Mock the Search Backend Seam in Unit Tests
+- `test-real-es-for-query-semantics` - Test Query Semantics Against a Real Elasticsearch
 <!-- GENERATED:END:rules -->
 
 ## How to Use

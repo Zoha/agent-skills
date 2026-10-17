@@ -14,17 +14,20 @@ deliberate operations that belong in commands, not in the request path. Provide 
 `search:migrate`, `search:reindex`, and a mapping/inspection helper. The commands enqueue the same
 shared reindex job the app uses, so there is one implementation of the work.
 
-**Incorrect (a reindex triggered from application code, or run by hand with curl):**
+**Incorrect (an unconditional, blocking reindex on every boot, or a reindex run by hand with curl):**
 
 ```typescript
 // a controller or a boot hook that kicks off a full reindex whenever the app starts
 async onApplicationBootstrap() {
-  await this.reindexEverything(); // every instance, every restart, blocking startup
+  await this.reindexEverything(); // every instance, every restart, against a healthy index too
 }
 ```
 
-Why it is wrong: the reindex runs implicitly on every boot and on every instance, blocks startup,
-and cannot be run deliberately, watched, or re-run safely.
+Why it is wrong: the problem is not that boot may reindex, it is that this always does. It re-runs
+against a fully populated, healthy index, blocks startup while it runs on every instance, and gives
+an operator no way to watch, skip, or re-run it. The accepted boot trigger is the opposite: a guard
+that checks the live index and enqueues a job **only when the index is empty**, then returns (see
+`sync-full-reindex-alias-swap`).
 
 **Correct (scripts that enqueue the shared job):**
 

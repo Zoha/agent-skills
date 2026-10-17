@@ -1,11 +1,11 @@
 {
   "title": "NestJS Elasticsearch",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "organization": "NestJS Elasticsearch",
   "author": "Zoha",
   "license": "MIT",
   "date": "October 2026",
-  "abstract": "Integration guide for adding Elasticsearch-backed search to a NestJS GraphQL + MongoDB application, designed for AI agents and LLMs. Establishes the architectural boundary — a generic infra client, a shared search layer, and one index per feature owned by the feature module — then gives rules for the whole lifecycle: a typed search document that mirrors only the searchable subset of an entity, a mapping declared as a typed object, incremental indexing enqueued onto a shared BullMQ pipeline with same-id debouncing, immediate deletes, batched bulk indexing, versioned indices with atomic alias swaps, and idempotent index creation that is safe across concurrent instances. Query rules keep Elasticsearch a pure finder: searches return IDs only (`_source: false`), the result set is hydrated from MongoDB and reordered to the relevance ordering, and deep pagination uses `search_after` with a unique sort tiebreaker. Cross-entity rules keep derived values (visit counts, comment counts) cached on the owning document and indexed by the module that owns them, so a contributing module never learns about another module's index. Operations rules cover request/response logging, an explain hook, migration and reindex CLI commands, health checks, and why indexing never uses an in-process timer.",
+  "abstract": "Integration guide for adding Elasticsearch-backed search to a NestJS GraphQL + MongoDB application, designed for AI agents and LLMs. Establishes the architectural boundary — a generic infra client, a shared search layer, and one index per feature owned by the feature module — then gives rules for the whole lifecycle: a typed search document that mirrors only the searchable subset of an entity, a mapping declared as a typed object, incremental indexing enqueued onto a shared BullMQ pipeline with same-id debouncing, immediate deletes, batched bulk indexing, versioned indices with atomic alias swaps, and idempotent index creation that is safe across concurrent instances, including a boot-time guard that fills an empty index without blocking startup. Query rules keep Elasticsearch a pure finder: searches return IDs only (`_source: false`), the result set is hydrated from MongoDB and reordered to the relevance ordering, and deep pagination uses `search_after` with a unique sort tiebreaker. Cross-entity rules keep derived values (visit counts, comment counts) cached on the owning document and indexed by the module that owns them, so a contributing module never learns about another module's index. Configuration rules make search optional and pluggable: one backend seam selects Elasticsearch or a deterministic MongoDB fallback, so the application boots, serves, and is tested without a cluster. Operations rules cover request/response logging, an explain hook, migration and reindex CLI commands, health checks, and why indexing never uses an in-process timer. Testing rules keep unit tests on a mocked seam and reserve a real, throwaway Elasticsearch for analyzer, DSL, and pagination semantics.",
   "references": [
     "https://github.com/nestjs/elasticsearch",
     "https://www.npmjs.com/package/@nestjs/elasticsearch",
@@ -16,7 +16,10 @@
     "https://docs.nestjs.com/techniques/queues",
     "https://docs.nestjs.com/recipes/terminus",
     "https://docs.nestjs.com/techniques/events",
+    "https://docs.nestjs.com/fundamentals/custom-providers",
+    "https://node.testcontainers.org/",
     "https://docs.mongodb.com/manual/changeStreams/",
+    "https://docs.mongodb.com/manual/tutorial/query-documents/",
     "https://mongoosejs.com/docs/guide.html"
   ]
 }
