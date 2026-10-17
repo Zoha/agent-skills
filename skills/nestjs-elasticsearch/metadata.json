@@ -1,0 +1,22 @@
+{
+  "title": "NestJS Elasticsearch",
+  "version": "1.0.0",
+  "organization": "NestJS Elasticsearch",
+  "author": "Zoha",
+  "license": "MIT",
+  "date": "October 2026",
+  "abstract": "Integration guide for adding Elasticsearch-backed search to a NestJS GraphQL + MongoDB application, designed for AI agents and LLMs. Establishes the architectural boundary — a generic infra client, a shared search layer, and one index per feature owned by the feature module — then gives rules for the whole lifecycle: a typed search document that mirrors only the searchable subset of an entity, a mapping declared as a typed object, incremental indexing enqueued onto a shared BullMQ pipeline with same-id debouncing, immediate deletes, batched bulk indexing, versioned indices with atomic alias swaps, and idempotent index creation that is safe across concurrent instances. Query rules keep Elasticsearch a pure finder: searches return IDs only (`_source: false`), the result set is hydrated from MongoDB and reordered to the relevance ordering, and deep pagination uses `search_after` with a unique sort tiebreaker. Cross-entity rules keep derived values (visit counts, comment counts) cached on the owning document and indexed by the module that owns them, so a contributing module never learns about another module's index. Operations rules cover request/response logging, an explain hook, migration and reindex CLI commands, health checks, and why indexing never uses an in-process timer.",
+  "references": [
+    "https://github.com/nestjs/elasticsearch",
+    "https://www.npmjs.com/package/@nestjs/elasticsearch",
+    "https://www.elastic.co/docs/reference/elasticsearch/rest-apis/paginate-search-results",
+    "https://www.elastic.co/docs/api/doc/elasticsearch/operation/operation-open-point-in-time",
+    "https://www.elastic.co/docs/reference/elasticsearch/rest-apis/retrieve-selected-fields",
+    "https://www.elastic.co/docs/manage-data/data-store/aliases",
+    "https://docs.nestjs.com/techniques/queues",
+    "https://docs.nestjs.com/recipes/terminus",
+    "https://docs.nestjs.com/techniques/events",
+    "https://docs.mongodb.com/manual/changeStreams/",
+    "https://mongoosejs.com/docs/guide.html"
+  ]
+}
