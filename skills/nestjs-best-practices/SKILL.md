@@ -9,7 +9,7 @@ metadata:
 
 # NestJS Best Practices
 
-Comprehensive best practices guide for NestJS GraphQL applications. Contains 40 rules across 10 categories, prioritized by impact to guide automated refactoring and code generation. 16 rules include GraphQL-specific examples (resolvers, input/args types, `GraphQLError`, `GqlExecutionContext`); the remaining 24 are framework-level rules that apply equally to REST and GraphQL.
+Comprehensive best practices guide for NestJS GraphQL applications. Contains 41 rules across 10 categories, prioritized by impact to guide automated refactoring and code generation. 16 rules include GraphQL-specific examples (resolvers, input/args types, `GraphQLError`, `GqlExecutionContext`); the remaining 25 are framework-level rules that apply equally to REST and GraphQL.
 
 ## When to Apply
 
@@ -108,6 +108,7 @@ Reference these guidelines when:
 ### 10. DevOps & Deployment (LOW-MEDIUM)
 
 - `devops-graceful-shutdown` - Implement Graceful Shutdown
+- `devops-maintain-env-example` - Keep a .env.example in Sync with Configuration
 - `devops-use-config-module` - Use ConfigModule for Environment Configuration
 - `devops-use-health-checks` - Implement Health Checks
 - `devops-use-logging` - Use Structured Logging
