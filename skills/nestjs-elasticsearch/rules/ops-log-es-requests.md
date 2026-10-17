@@ -10,9 +10,10 @@ tags: ops, logging, debugging, observability
 **Impact: MEDIUM-HIGH** — every query is traceable by correlation id
 
 The Elasticsearch client emits `request` and `response` events but logs nothing by default, and it
-retries a failing request, so a burst of `request` events can belong to a single call. Correlate
-them with an id generated per call, log through the app's structured logger, and redact credentials.
-This is what makes a slow or failing search diagnosable in production.
+retries a failing request, so several `request` events can belong to one logical call. The client
+already tags every event with a per-request id — `result.meta.request.id` — and a retry reuses it, so
+grouping by that id shows the retry behaviour. Log it through the app's structured logger and redact
+credentials. This is what makes a slow or failing search diagnosable in production.
 
 **Incorrect (no visibility, or raw console logging):**
 
@@ -40,12 +41,11 @@ export class ElasticsearchLogger implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    const id = `${randomUUID()}`; // start a correlation id for this module's client
-
+    // the client generates one id per request, and the matching `response` carries the same id
     this.es.on('request', (err, result) => {
       if (err) return;
       this.logger.log('es request', ElasticsearchLogger.name, {
-        correlationId: id,
+        requestId: result.meta.request.id,
         method: result.meta.request.params.method,
         path: result.meta.request.params.path,
       });
@@ -53,7 +53,7 @@ export class ElasticsearchLogger implements OnModuleInit {
 
     this.es.on('response', (err, result) => {
       this.logger.log('es response', ElasticsearchLogger.name, {
-        correlationId: id,
+        requestId: result.meta.request.id,
         status: result.meta.statusCode,
         took: result.meta.body?.took,
         hits: result.meta.body?.hits?.total,
@@ -67,8 +67,11 @@ Why it is right: each call has a correlation id, the query path, status, `took`,
 logged as structured fields, and the app's existing logger owns formatting.
 
 The correlation id also makes retries legible: a failing call produces several `request` events but
-one `response`, so grouping by id shows the retry behaviour. Never send the app's own logs into the
-same Elasticsearch cluster being debugged without care, and never log request bodies unredacted if
-they can contain user data.
+one `response`, so grouping by id shows the retry behaviour. The default id is an incremental
+integer, unique within one client instance but not across replicas — for a globally unique id, or to
+see the same id in Elasticsearch's slow logs and running tasks, pass a request-scoped `opaqueId` per
+call (it becomes the `X-Opaque-Id` header) and set `opaqueIdPrefix` to the instance name. Never send
+the app's own logs into the same Elasticsearch cluster being debugged without care, and never log
+request bodies unredacted if they can contain user data.
 
 Reference: [@elastic/elasticsearch — Client events](https://www.elastic.co/docs/reference/elasticsearch/clients/javascript/advanced-config) | [NestJS Logger](https://docs.nestjs.com/techniques/logger)

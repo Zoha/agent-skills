@@ -48,4 +48,7 @@ instance cannot fully serve. The liveness probe (memory, event-loop) stays separ
 Elasticsearch outage is not a reason to restart the process. Wire the probes to the health module's
 queries.
 
-Reference: [NestJS Terminus](https://docs.nestjs.com/recipes/terminus) | [nestjs-best-practices — devops-use-health-checks](https://docs.nestjs.com/recipes/terminus)
+See `devops-use-health-checks` in the `nestjs-best-practices` skill for the liveness/readiness split
+this check follows.
+
+Reference: [NestJS Terminus](https://docs.nestjs.com/recipes/terminus)

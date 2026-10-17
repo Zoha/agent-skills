@@ -115,6 +115,10 @@ Each rule file contains:
   feature-module, repository, and event rules.
 - **`nestjs-best-practices`** — behavioral rules for services, events, queues, config, and
   health checks that this skill's examples build on.
+- **One deliberate exception** — `nestjs-graphql-structure`'s `service-background-jobs` rule keeps
+  processors in the owning feature. The search pipeline runs once in `common/search/` and resolves
+  each feature's repository through the index registry instead, because the pipeline is identical for
+  every feature; see `arch-base-search-repository`.
 
 ## Full Compiled Document
 

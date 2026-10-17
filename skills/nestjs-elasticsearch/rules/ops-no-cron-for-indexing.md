@@ -49,6 +49,22 @@ async sweep(job: Job<{ alias: string }>): Promise<void> {
   if (ids.length) await repo.enqueueMany(ids);
   await this.watermark.set(job.data.alias, new Date());
 }
+
+// common/search/search.watermark.ts — one Redis key per alias, in the shared search layer
+@Injectable()
+export class SearchWatermark {
+  constructor(@InjectRedis() private readonly redis: Redis) {}
+
+  async get(alias: string): Promise<Date> {
+    const stored = await this.redis.get(`search:watermark:${alias}`);
+    // no watermark yet: re-read from the beginning rather than silently skipping history
+    return stored ? new Date(stored) : new Date(0);
+  }
+
+  async set(alias: string, at: Date): Promise<void> {
+    await this.redis.set(`search:watermark:${alias}`, at.toISOString());
+  }
+}
 ```
 
 Why it is right: `upsertJobScheduler` is idempotent, the job lives in Redis and is fetched by one
@@ -57,8 +73,17 @@ registered before the Elasticsearch-dependent index ensure, so an instance that 
 cluster was down still gets its sweep — which retries the deferred ensure on the next tick.
 
 When a timer is genuinely local to one node — a cache warm-up with no shared state — `@Interval` is
-fine; anything that indexes shared data is not. The per-feature two-minute sweep is also the safety
+fine; anything that indexes shared data is not. This two-minute sweep is the *incremental* catch-up:
+it re-reads documents changed since the last watermark and never swaps an alias. That makes it a
+different trigger from the full reindex that `sync-full-reindex-alias-swap` and `ops-cli-scripts`
+call the nightly reconcile — that one rebuilds an index, and does swap. The sweep is also the safety
 net that catches changes made outside the app (a direct MongoDB write, another service), because it
-re-reads documents changed since the last watermark regardless of who changed them.
+re-reads changed documents regardless of who changed them.
+
+The watermark is a single Redis key per alias (`search:watermark:${alias}`), owned by the shared
+search layer beside the pipeline. It must not be in-process state: a per-replica watermark would make
+the sweep skip whatever another replica had already swept. Losing it is safe by construction — an
+absent watermark means "re-read from the beginning", so the worst case is a wider sweep, never a
+missed change.
 
 Reference: [BullMQ — Job schedulers](https://docs.bullmq.io/guide/job-schedulers) | [NestJS Task Scheduling](https://docs.nestjs.com/techniques/task-scheduling)

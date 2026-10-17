@@ -59,4 +59,7 @@ single responsibility, and ES-only fields have one home.
 The `Pick<UserDocument, ...>` half ties the search document to the entity: renaming a mirrored
 field on the entity is then a compile error in the projection (see `map-typed-search-document`).
 
-Reference: [nestjs-graphql-structure — data-models-mappers](https://docs.nestjs.com/techniques/mongodb)
+See `data-models-mappers` in the `nestjs-graphql-structure` skill for where the search document sits
+in a feature's file layout.
+
+Reference: [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb)

@@ -66,9 +66,12 @@ void main();
 Why it is right: reindexing and migration are explicit, observable, repeatable steps, and they run
 through the same engine the background worker uses.
 
-The three triggers for the shared reindex job are: this CLI (a deliberate migration), a boot-time
-enqueue when the current index is empty, and a nightly reconcile. All three enqueue the same job —
-see `sync-full-reindex-alias-swap`. The mapping command is also how you invoke `_analyze` to check a
-field's analyzer (see `map-analyzers`).
+The three triggers for the shared full-reindex job are: this CLI (a deliberate migration), a
+boot-time enqueue when the current index is empty, and a nightly reconcile. All three enqueue the
+same job with the same stable `jobId`, so a fleet of instances collapses to one run — see
+`sync-full-reindex-alias-swap`. This is not the incremental catch-up: changes made outside the app
+are picked up by the two-minute sweep in `ops-no-cron-for-indexing`, which re-reads changed documents
+and never swaps an alias. The mapping command is also how you invoke `_analyze` to check a field's
+analyzer (see `map-analyzers`).
 
 Reference: [NestJS Standalone applications](https://docs.nestjs.com/standalone-applications) | [Elasticsearch — Index APIs](https://www.elastic.co/docs/api/doc/elasticsearch/operation/operation-indices-create)

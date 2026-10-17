@@ -56,4 +56,7 @@ owning-module principle as `relations-owning-module` in `nestjs-graphql-structur
 index. Owned derived values are cached on the owning document so recomputation on an event is cheap
 — see `rel-derived-counter-cache`.
 
-Reference: [NestJS Events](https://docs.nestjs.com/techniques/events) | [nestjs-best-practices — arch-use-events](https://docs.nestjs.com/techniques/events)
+See `arch-use-events` in the `nestjs-best-practices` skill for when an event is the right coupling
+and when a direct call is the right tool.
+
+Reference: [NestJS Events](https://docs.nestjs.com/techniques/events)

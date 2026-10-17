@@ -58,4 +58,7 @@ The batch mapper is the only mapper. The incremental path (`loadByIds`) and the 
 that is read constantly is cached on the owning document instead of recomputed — see
 `rel-derived-counter-cache`.
 
-Reference: [nestjs-graphql-structure — relations-dataloader](https://github.com/graphql/dataloader) | [MongoDB — Aggregation](https://www.mongodb.com/docs/manual/aggregation/)
+See `relations-dataloader` in the `nestjs-graphql-structure` skill for the per-request batching
+pattern this batch mapper mirrors.
+
+Reference: [DataLoader](https://github.com/graphql/dataloader) | [MongoDB — Aggregation](https://www.mongodb.com/docs/manual/aggregation/)

@@ -84,4 +84,23 @@ base contract, and a feature is a mapper plus a query.
 never the alias the cluster is still serving — writing to the alias would fill the old index and
 then publish an empty one (see `sync-full-reindex-alias-swap`).
 
+**A deliberate exception to the queue-placement rule.** `service-background-jobs` in
+`nestjs-graphql-structure` puts processors in the feature that owns the data, and forbids processing
+a feature's jobs from an unrelated module. The search pipeline is the exception: it is byte-for-byte
+identical for every feature, so it runs once in the shared layer and resolves the owning feature's
+repository through the registry instead of importing it. What stays feature-local is the mapper and
+the query. The queue itself is registered once, with the other queue connections:
+
+```typescript
+// infra/queue/queue.module.ts
+@Module({
+  imports: [BullModule.registerQueue({ name: 'search-reindex' })],
+  exports: [BullModule],
+})
+export class QueueModule {}
+```
+
+The registry is what makes the exception safe: a processor never names a feature, and a feature never
+names another feature's index.
+
 Reference: [NestJS Custom Providers](https://docs.nestjs.com/fundamentals/custom-providers) | [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb)

@@ -34,17 +34,21 @@ async findMany(args: FindUsersArgs, cursor?: string): Promise<Paginated<User>> {
 
   const users = await this.usersRepository.findByIds(ids);          // ONE Mongo query
   const byId = new Map(users.map((u) => [u._id.toString(), u]));
-  const nodes = ids.map((id) => byId.get(id)).filter(Boolean);      // restore relevance order
+  const nodes = ids
+    .map((id) => byId.get(id))
+    .filter((u): u is User => u !== undefined);                     // restore relevance order
 
   return { nodes, total, nextCursor };
 }
 ```
 
 Why it is right: one MongoDB query fetches every entity, the map restores the relevance order in
-memory, and `filter(Boolean)` tolerates an id that was deleted between the search and the load.
+memory, and the filter tolerates an id that was deleted between the search and the load.
 
 This two-phase read is the point of the whole design: the search is a ranking over IDs, and the
-entities always come from the source of truth. `.filter(Boolean)` covers the small race where a
-document is removed from MongoDB after Elasticsearch matched it.
+entities always come from the source of truth. The filter covers the small race where a document is
+removed from MongoDB after Elasticsearch matched it. Write it as a type predicate rather than
+`.filter(Boolean)`: TypeScript does not narrow `(User | undefined)[]` from a plain boolean test, so
+`filter(Boolean)` leaves `nodes` typed as `(User | undefined)[]` and fails to compile under `strict`.
 
 Reference: [MongoDB — Query an Array with $in](https://www.mongodb.com/docs/manual/reference/operator/query/in/)

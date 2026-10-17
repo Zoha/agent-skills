@@ -33,7 +33,9 @@ it) or leaves a dangling hit that surfaces in results.
 ```typescript
 // common/search/search.repository.ts (base)
 async deleteOne(id: string): Promise<void> {
-  await this.es.delete({ index: this.index, id }, { ignore: [404] }); // idempotent
+  // deletes are low-frequency, so refresh here: a stale hit is worse than a missing one.
+  // This is the deliberate exception to "never refresh per batch" (see sync-bulk-index).
+  await this.es.delete({ index: this.index, id }, { ignore: [404], refresh: true }); // idempotent
 }
 
 // modules/users/search/users.search-indexer.ts
@@ -52,8 +54,13 @@ async indexOne(job: Job<{ alias: string; id: string }>): Promise<void> {
 }
 ```
 
-Why it is right: deletes take effect immediately, `ignore: [404]` makes them idempotent, and the
-incremental processor deletes when the source document has since disappeared.
+Why it is right: `refresh: true` makes the delete visible at once, `ignore: [404]` makes it
+idempotent, and the incremental processor deletes when the source document has since disappeared.
+
+The refresh is deliberate and local to deletes. Without it the document stays searchable until the
+next index refresh — about a second by default — so "immediately" would really mean "within the
+refresh interval". Deletes are low-frequency, so one refresh per delete is cheap; a batch index is
+the opposite case, where `refresh: false` is what keeps a reindex fast (see `sync-bulk-index`).
 
 A soft-delete design (a `deletedAt` field) instead indexes the document normally and filters
 deleted documents at query time; pick one approach per feature and apply it consistently.

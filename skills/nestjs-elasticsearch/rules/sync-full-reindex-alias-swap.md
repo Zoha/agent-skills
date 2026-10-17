@@ -75,7 +75,13 @@ publish an empty new one. `pointAliasAt` is the single alias mutator — `ensure
 when no version holds the alias yet (see `sync-idempotent-index-creation`), and this rule uses it to
 swap.
 
-Triggers are one worker: a CLI command for a deliberate migration, a boot-time enqueue when the
-current index is empty, and a nightly reconcile. The alias swap must never run on the enqueue path.
+Three triggers enqueue this job, and all three must use the same stable `jobId` (`reindex:${alias}`)
+so a fleet of instances collapses to one run: the CLI command for a deliberate migration, a boot-time
+enqueue when the current index is empty, and a nightly reconcile that repairs drift. None of them is
+the incremental catch-up — that is the two-minute sweep in `ops-no-cron-for-indexing`, which re-reads
+changed documents and never swaps an alias. The alias swap must never run on the enqueue path.
 
-Reference: [Elasticsearch — Aliases](https://www.elastic.co/docs/manage-data/data-store/aliases) | [nestjs-graphql-structure — data-repository](https://docs.nestjs.com/techniques/mongodb)
+See `data-repository` in the `nestjs-graphql-structure` skill for the repository boundary the shared
+pipeline respects.
+
+Reference: [Elasticsearch — Aliases](https://www.elastic.co/docs/manage-data/data-store/aliases) | [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb)

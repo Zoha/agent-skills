@@ -137,6 +137,25 @@ base contract, and a feature is a mapper plus a query.
 never the alias the cluster is still serving — writing to the alias would fill the old index and
 then publish an empty one (see `sync-full-reindex-alias-swap`).
 
+**A deliberate exception to the queue-placement rule.** `service-background-jobs` in
+`nestjs-graphql-structure` puts processors in the feature that owns the data, and forbids processing
+a feature's jobs from an unrelated module. The search pipeline is the exception: it is byte-for-byte
+identical for every feature, so it runs once in the shared layer and resolves the owning feature's
+repository through the registry instead of importing it. What stays feature-local is the mapper and
+the query. The queue itself is registered once, with the other queue connections:
+
+```typescript
+// infra/queue/queue.module.ts
+@Module({
+  imports: [BullModule.registerQueue({ name: 'search-reindex' })],
+  exports: [BullModule],
+})
+export class QueueModule {}
+```
+
+The registry is what makes the exception safe: a processor never names a feature, and a feature never
+names another feature's index.
+
 Reference: [NestJS Custom Providers](https://docs.nestjs.com/fundamentals/custom-providers) | [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb)
 
 ---
@@ -195,7 +214,10 @@ single responsibility, and ES-only fields have one home.
 The `Pick<UserDocument, ...>` half ties the search document to the entity: renaming a mirrored
 field on the entity is then a compile error in the projection (see `map-typed-search-document`).
 
-Reference: [nestjs-graphql-structure — data-models-mappers](https://docs.nestjs.com/techniques/mongodb)
+See `data-models-mappers` in the `nestjs-graphql-structure` skill for where the search document sits
+in a feature's file layout.
+
+Reference: [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb)
 
 ---
 
@@ -509,7 +531,9 @@ it) or leaves a dangling hit that surfaces in results.
 ```typescript
 // common/search/search.repository.ts (base)
 async deleteOne(id: string): Promise<void> {
-  await this.es.delete({ index: this.index, id }, { ignore: [404] }); // idempotent
+  // deletes are low-frequency, so refresh here: a stale hit is worse than a missing one.
+  // This is the deliberate exception to "never refresh per batch" (see sync-bulk-index).
+  await this.es.delete({ index: this.index, id }, { ignore: [404], refresh: true }); // idempotent
 }
 
 // modules/users/search/users.search-indexer.ts
@@ -528,8 +552,13 @@ async indexOne(job: Job<{ alias: string; id: string }>): Promise<void> {
 }
 ```
 
-Why it is right: deletes take effect immediately, `ignore: [404]` makes them idempotent, and the
-incremental processor deletes when the source document has since disappeared.
+Why it is right: `refresh: true` makes the delete visible at once, `ignore: [404]` makes it
+idempotent, and the incremental processor deletes when the source document has since disappeared.
+
+The refresh is deliberate and local to deletes. Without it the document stays searchable until the
+next index refresh — about a second by default — so "immediately" would really mean "within the
+refresh interval". Deletes are low-frequency, so one refresh per delete is cheap; a batch index is
+the opposite case, where `refresh: false` is what keeps a reindex fast (see `sync-bulk-index`).
 
 A soft-delete design (a `deletedAt` field) instead indexes the document normally and filters
 deleted documents at query time; pick one approach per feature and apply it consistently.
@@ -664,10 +693,16 @@ publish an empty new one. `pointAliasAt` is the single alias mutator — `ensure
 when no version holds the alias yet (see `sync-idempotent-index-creation`), and this rule uses it to
 swap.
 
-Triggers are one worker: a CLI command for a deliberate migration, a boot-time enqueue when the
-current index is empty, and a nightly reconcile. The alias swap must never run on the enqueue path.
+Three triggers enqueue this job, and all three must use the same stable `jobId` (`reindex:${alias}`)
+so a fleet of instances collapses to one run: the CLI command for a deliberate migration, a boot-time
+enqueue when the current index is empty, and a nightly reconcile that repairs drift. None of them is
+the incremental catch-up — that is the two-minute sweep in `ops-no-cron-for-indexing`, which re-reads
+changed documents and never swaps an alias. The alias swap must never run on the enqueue path.
 
-Reference: [Elasticsearch — Aliases](https://www.elastic.co/docs/manage-data/data-store/aliases) | [nestjs-graphql-structure — data-repository](https://docs.nestjs.com/techniques/mongodb)
+See `data-repository` in the `nestjs-graphql-structure` skill for the repository boundary the shared
+pipeline respects.
+
+Reference: [Elasticsearch — Aliases](https://www.elastic.co/docs/manage-data/data-store/aliases) | [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb)
 
 ---
 
@@ -868,7 +903,10 @@ The batch mapper is the only mapper. The incremental path (`loadByIds`) and the 
 that is read constantly is cached on the owning document instead of recomputed — see
 `rel-derived-counter-cache`.
 
-Reference: [nestjs-graphql-structure — relations-dataloader](https://github.com/graphql/dataloader) | [MongoDB — Aggregation](https://www.mongodb.com/docs/manual/aggregation/)
+See `relations-dataloader` in the `nestjs-graphql-structure` skill for the per-request batching
+pattern this batch mapper mirrors.
+
+Reference: [DataLoader](https://github.com/graphql/dataloader) | [MongoDB — Aggregation](https://www.mongodb.com/docs/manual/aggregation/)
 
 ---
 
@@ -1129,18 +1167,22 @@ async findMany(args: FindUsersArgs, cursor?: string): Promise<Paginated<User>> {
 
   const users = await this.usersRepository.findByIds(ids);          // ONE Mongo query
   const byId = new Map(users.map((u) => [u._id.toString(), u]));
-  const nodes = ids.map((id) => byId.get(id)).filter(Boolean);      // restore relevance order
+  const nodes = ids
+    .map((id) => byId.get(id))
+    .filter((u): u is User => u !== undefined);                     // restore relevance order
 
   return { nodes, total, nextCursor };
 }
 ```
 
 Why it is right: one MongoDB query fetches every entity, the map restores the relevance order in
-memory, and `filter(Boolean)` tolerates an id that was deleted between the search and the load.
+memory, and the filter tolerates an id that was deleted between the search and the load.
 
 This two-phase read is the point of the whole design: the search is a ranking over IDs, and the
-entities always come from the source of truth. `.filter(Boolean)` covers the small race where a
-document is removed from MongoDB after Elasticsearch matched it.
+entities always come from the source of truth. The filter covers the small race where a document is
+removed from MongoDB after Elasticsearch matched it. Write it as a type predicate rather than
+`.filter(Boolean)`: TypeScript does not narrow `(User | undefined)[]` from a plain boolean test, so
+`filter(Boolean)` leaves `nodes` typed as `(User | undefined)[]` and fails to compile under `strict`.
 
 Reference: [MongoDB — Query an Array with $in](https://www.mongodb.com/docs/manual/reference/operator/query/in/)
 
@@ -1184,6 +1226,9 @@ const res = await this.es.search({
 return {
   ids: res.hits.hits.map((h) => h._id),
   total: typeof res.hits.total === 'number' ? res.hits.total : res.hits.total?.value ?? 0,
+  // "gte" means the count stopped at track_total_hits (10,000 by default) — carry that out,
+  // never present a capped count as exact
+  totalIsExact: typeof res.hits.total === 'number' || res.hits.total?.relation === 'eq',
   nextCursor: res.hits.hits.length === limit ? encodeCursor(res.hits.hits.at(-1)!.sort!) : null,
 };
 ```
@@ -1195,6 +1240,12 @@ search structure and MongoDB remains the single source of returned field data.
 place in the mapping, while fields nobody queries can be dropped entirely (see
 `map-exclude-non-search-fields`). The IDs are hydrated in the next step — see
 `query-hydrate-restore-order`.
+
+`total` is not always a count. `hits.total` is capped by `track_total_hits` — 10,000 by default —
+and reports `relation: "gte"` above the cap, so a naive read shows "10,000 results" for a search that
+matched far more. The example carries that relation out as `totalIsExact` instead of dropping it. If
+you genuinely need an exact count, set `track_total_hits: true` and accept that counting every hit is
+the expensive part of the query.
 
 Reference: [Elasticsearch — Retrieve selected fields](https://www.elastic.co/docs/reference/elasticsearch/rest-apis/retrieve-selected-fields)
 
@@ -1358,7 +1409,10 @@ owning-module principle as `relations-owning-module` in `nestjs-graphql-structur
 index. Owned derived values are cached on the owning document so recomputation on an event is cheap
 — see `rel-derived-counter-cache`.
 
-Reference: [NestJS Events](https://docs.nestjs.com/techniques/events) | [nestjs-best-practices — arch-use-events](https://docs.nestjs.com/techniques/events)
+See `arch-use-events` in the `nestjs-best-practices` skill for when an event is the right coupling
+and when a direct call is the right tool.
+
+Reference: [NestJS Events](https://docs.nestjs.com/techniques/events)
 
 ---
 
@@ -1427,10 +1481,13 @@ void main();
 Why it is right: reindexing and migration are explicit, observable, repeatable steps, and they run
 through the same engine the background worker uses.
 
-The three triggers for the shared reindex job are: this CLI (a deliberate migration), a boot-time
-enqueue when the current index is empty, and a nightly reconcile. All three enqueue the same job —
-see `sync-full-reindex-alias-swap`. The mapping command is also how you invoke `_analyze` to check a
-field's analyzer (see `map-analyzers`).
+The three triggers for the shared full-reindex job are: this CLI (a deliberate migration), a
+boot-time enqueue when the current index is empty, and a nightly reconcile. All three enqueue the
+same job with the same stable `jobId`, so a fleet of instances collapses to one run — see
+`sync-full-reindex-alias-swap`. This is not the incremental catch-up: changes made outside the app
+are picked up by the two-minute sweep in `ops-no-cron-for-indexing`, which re-reads changed documents
+and never swaps an alias. The mapping command is also how you invoke `_analyze` to check a field's
+analyzer (see `map-analyzers`).
 
 Reference: [NestJS Standalone applications](https://docs.nestjs.com/standalone-applications) | [Elasticsearch — Index APIs](https://www.elastic.co/docs/api/doc/elasticsearch/operation/operation-indices-create)
 
@@ -1543,7 +1600,10 @@ instance cannot fully serve. The liveness probe (memory, event-loop) stays separ
 Elasticsearch outage is not a reason to restart the process. Wire the probes to the health module's
 queries.
 
-Reference: [NestJS Terminus](https://docs.nestjs.com/recipes/terminus) | [nestjs-best-practices — devops-use-health-checks](https://docs.nestjs.com/recipes/terminus)
+See `devops-use-health-checks` in the `nestjs-best-practices` skill for the liveness/readiness split
+this check follows.
+
+Reference: [NestJS Terminus](https://docs.nestjs.com/recipes/terminus)
 
 ---
 
@@ -1552,9 +1612,10 @@ Reference: [NestJS Terminus](https://docs.nestjs.com/recipes/terminus) | [nestjs
 **Impact: MEDIUM-HIGH** — every query is traceable by correlation id
 
 The Elasticsearch client emits `request` and `response` events but logs nothing by default, and it
-retries a failing request, so a burst of `request` events can belong to a single call. Correlate
-them with an id generated per call, log through the app's structured logger, and redact credentials.
-This is what makes a slow or failing search diagnosable in production.
+retries a failing request, so several `request` events can belong to one logical call. The client
+already tags every event with a per-request id — `result.meta.request.id` — and a retry reuses it, so
+grouping by that id shows the retry behaviour. Log it through the app's structured logger and redact
+credentials. This is what makes a slow or failing search diagnosable in production.
 
 **Incorrect (no visibility, or raw console logging):**
 
@@ -1582,12 +1643,11 @@ export class ElasticsearchLogger implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    const id = `${randomUUID()}`; // start a correlation id for this module's client
-
+    // the client generates one id per request, and the matching `response` carries the same id
     this.es.on('request', (err, result) => {
       if (err) return;
       this.logger.log('es request', ElasticsearchLogger.name, {
-        correlationId: id,
+        requestId: result.meta.request.id,
         method: result.meta.request.params.method,
         path: result.meta.request.params.path,
       });
@@ -1595,7 +1655,7 @@ export class ElasticsearchLogger implements OnModuleInit {
 
     this.es.on('response', (err, result) => {
       this.logger.log('es response', ElasticsearchLogger.name, {
-        correlationId: id,
+        requestId: result.meta.request.id,
         status: result.meta.statusCode,
         took: result.meta.body?.took,
         hits: result.meta.body?.hits?.total,
@@ -1609,9 +1669,12 @@ Why it is right: each call has a correlation id, the query path, status, `took`,
 logged as structured fields, and the app's existing logger owns formatting.
 
 The correlation id also makes retries legible: a failing call produces several `request` events but
-one `response`, so grouping by id shows the retry behaviour. Never send the app's own logs into the
-same Elasticsearch cluster being debugged without care, and never log request bodies unredacted if
-they can contain user data.
+one `response`, so grouping by id shows the retry behaviour. The default id is an incremental
+integer, unique within one client instance but not across replicas — for a globally unique id, or to
+see the same id in Elasticsearch's slow logs and running tasks, pass a request-scoped `opaqueId` per
+call (it becomes the `X-Opaque-Id` header) and set `opaqueIdPrefix` to the instance name. Never send
+the app's own logs into the same Elasticsearch cluster being debugged without care, and never log
+request bodies unredacted if they can contain user data.
 
 Reference: [@elastic/elasticsearch — Client events](https://www.elastic.co/docs/reference/elasticsearch/clients/javascript/advanced-config) | [NestJS Logger](https://docs.nestjs.com/techniques/logger)
 
@@ -1661,6 +1724,22 @@ async sweep(job: Job<{ alias: string }>): Promise<void> {
   if (ids.length) await repo.enqueueMany(ids);
   await this.watermark.set(job.data.alias, new Date());
 }
+
+// common/search/search.watermark.ts — one Redis key per alias, in the shared search layer
+@Injectable()
+export class SearchWatermark {
+  constructor(@InjectRedis() private readonly redis: Redis) {}
+
+  async get(alias: string): Promise<Date> {
+    const stored = await this.redis.get(`search:watermark:${alias}`);
+    // no watermark yet: re-read from the beginning rather than silently skipping history
+    return stored ? new Date(stored) : new Date(0);
+  }
+
+  async set(alias: string, at: Date): Promise<void> {
+    await this.redis.set(`search:watermark:${alias}`, at.toISOString());
+  }
+}
 ```
 
 Why it is right: `upsertJobScheduler` is idempotent, the job lives in Redis and is fetched by one
@@ -1669,9 +1748,18 @@ registered before the Elasticsearch-dependent index ensure, so an instance that 
 cluster was down still gets its sweep — which retries the deferred ensure on the next tick.
 
 When a timer is genuinely local to one node — a cache warm-up with no shared state — `@Interval` is
-fine; anything that indexes shared data is not. The per-feature two-minute sweep is also the safety
+fine; anything that indexes shared data is not. This two-minute sweep is the *incremental* catch-up:
+it re-reads documents changed since the last watermark and never swaps an alias. That makes it a
+different trigger from the full reindex that `sync-full-reindex-alias-swap` and `ops-cli-scripts`
+call the nightly reconcile — that one rebuilds an index, and does swap. The sweep is also the safety
 net that catches changes made outside the app (a direct MongoDB write, another service), because it
-re-reads documents changed since the last watermark regardless of who changed them.
+re-reads changed documents regardless of who changed them.
+
+The watermark is a single Redis key per alias (`search:watermark:${alias}`), owned by the shared
+search layer beside the pipeline. It must not be in-process state: a per-replica watermark would make
+the sweep skip whatever another replica had already swept. Losing it is safe by construction — an
+absent watermark means "re-read from the beginning", so the worst case is a wider sweep, never a
+missed change.
 
 Reference: [BullMQ — Job schedulers](https://docs.bullmq.io/guide/job-schedulers) | [NestJS Task Scheduling](https://docs.nestjs.com/techniques/task-scheduling)
 

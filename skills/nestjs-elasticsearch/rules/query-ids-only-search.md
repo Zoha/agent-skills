@@ -43,6 +43,9 @@ const res = await this.es.search({
 return {
   ids: res.hits.hits.map((h) => h._id),
   total: typeof res.hits.total === 'number' ? res.hits.total : res.hits.total?.value ?? 0,
+  // "gte" means the count stopped at track_total_hits (10,000 by default) — carry that out,
+  // never present a capped count as exact
+  totalIsExact: typeof res.hits.total === 'number' || res.hits.total?.relation === 'eq',
   nextCursor: res.hits.hits.length === limit ? encodeCursor(res.hits.hits.at(-1)!.sort!) : null,
 };
 ```
@@ -54,5 +57,11 @@ search structure and MongoDB remains the single source of returned field data.
 place in the mapping, while fields nobody queries can be dropped entirely (see
 `map-exclude-non-search-fields`). The IDs are hydrated in the next step — see
 `query-hydrate-restore-order`.
+
+`total` is not always a count. `hits.total` is capped by `track_total_hits` — 10,000 by default —
+and reports `relation: "gte"` above the cap, so a naive read shows "10,000 results" for a search that
+matched far more. The example carries that relation out as `totalIsExact` instead of dropping it. If
+you genuinely need an exact count, set `track_total_hits: true` and accept that counting every hit is
+the expensive part of the query.
 
 Reference: [Elasticsearch — Retrieve selected fields](https://www.elastic.co/docs/reference/elasticsearch/rest-apis/retrieve-selected-fields)
