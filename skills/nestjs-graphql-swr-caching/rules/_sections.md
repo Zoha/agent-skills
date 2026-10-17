@@ -8,7 +8,7 @@ The section ID (in parentheses) is the filename prefix used to group rules.
 ## 1. One-Time Setup (setup-)
 
 **Impact:** CRITICAL
-**Description:** Wire the caching capability once: the module, file placement, the engine, storage/invalidation, caller identity, the decorator runtime, and the fail-open contract.
+**Description:** Wire the caching capability once: the module, file placement, the engine, storage/invalidation, caller identity, the decorator runtime, the fail-open contract, and the one flag that turns it off.
 
 ## 2. Cache Policy (policy-)
 

@@ -1,10 +1,10 @@
 ---
 name: nestjs-graphql-swr-caching
-description: Use when caching GraphQL reads in a NestJS (code-first) app — wiring a stale-while-revalidate (SWR) cache module once, deciding what to cache and where to mount it (service, field, operation, or CDN), and keeping it leak-safe. Triggers when you need SWR, single-flight dedupe, tag invalidation, per-user vs public scoping, cache observability, a stampede or blocking-miss at TTL expiry, a shared-key data leak, or a one-time setup reference (module, file placement, storage, referencesTTL/GC, caller identity, decorator runtime, fail-open).
+description: Use when caching GraphQL reads in a NestJS (code-first) app — wiring a stale-while-revalidate (SWR) cache module once, deciding what to cache and where to mount it (service, field, operation, or CDN), and keeping it leak-safe. Triggers when you need SWR, single-flight dedupe, tag invalidation, per-user vs public scoping, cache observability, a stampede or blocking-miss at TTL expiry, a shared-key data leak, a dev/ops switch that disables caching entirely, or a one-time setup reference (module, file placement, storage, referencesTTL/GC, caller identity, decorator runtime, fail-open).
 license: MIT
 metadata:
   author: Zoha
-  version: "2.1.0"
+  version: "2.2.0"
 ---
 
 # GraphQL SWR Caching (NestJS, code-first)
@@ -25,6 +25,7 @@ Three hard truths that shape every decision:
 - You need to remove latency spikes and stampedes at TTL expiry (true SWR).
 - You need to reason about multi-user cache safety / leakage.
 - You need visibility into hit / stale / miss decisions.
+- You need to turn caching off entirely — dev, CI, or an incident — with one flag (see Section 1, `setup-disable-switch`).
 - You are wiring the caching capability into an app for the first time (see Section 1).
 
 **When NOT to use:**
@@ -75,6 +76,7 @@ Full contract, the key bundle `{ a, k, u }`, and the serialization edge cases:
 ### 1. One-Time Setup (CRITICAL)
 
 - `setup-decorator-runtime` - Implement the Decorators as Method Wrappers with Stable Names
+- `setup-disable-switch` - Ship One Config Switch That Bypasses the Service-Level Cache
 - `setup-engine-choice` - Use a Deduplicating Engine, and Count TTL in Seconds
 - `setup-fail-open` - Fail Open, and Never Cache Errors
 - `setup-file-placement` - Place the Capability by Who Imports It

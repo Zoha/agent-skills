@@ -1,6 +1,6 @@
 # NestJS GraphQL SWR Caching
 
-**Version 2.1.0**
+**Version 2.2.0**
 NestJS GraphQL SWR Caching
 October 2026
 
@@ -13,7 +13,7 @@ October 2026
 
 ## Abstract
 
-Implementation and policy guide for stale-while-revalidate (SWR) caching of GraphQL reads in NestJS (code-first) applications, designed for AI agents and LLMs. Covers the one-time module wiring (a forRootAsync cache module, its tokens, storage, invalidation, and context), the five knobs (key, tag, scope, ttl, swr), the callback contract for key/tag derivation, the @Cacheable/@CacheTag/@CacheScope/@InvalidateTags decorator surface, where to mount caching (service, field, operation, transport), leak safety (default-public scope, per-caller key dimensions, the no-leak checklist), tag-invalidation mechanics (referencesTTL, atomic purge, cardinality, generation prefixes), observability (structured events, per-request trace, metrics), and the driver reality check across async-cache-dedupe, mercurius-cache, Apollo responseCachePlugin, Envelop, and CDN/APQ.
+Implementation and policy guide for stale-while-revalidate (SWR) caching of GraphQL reads in NestJS (code-first) applications, designed for AI agents and LLMs. Covers the one-time module wiring (a forRootAsync cache module, its tokens, storage, invalidation, and context), the five knobs (key, tag, scope, ttl, swr), the callback contract for key/tag derivation, the @Cacheable/@CacheTag/@CacheScope/@InvalidateTags decorator surface, where to mount caching (service, field, operation, transport), leak safety (default-public scope, per-caller key dimensions, the no-leak checklist), tag-invalidation mechanics (referencesTTL, atomic purge, cardinality, generation prefixes), observability (structured events, per-request trace, metrics), a single dev/ops enable/disable switch that bypasses the service-level cache entirely, and the driver reality check across async-cache-dedupe, mercurius-cache, Apollo responseCachePlugin, Envelop, and CDN/APQ.
 
 ---
 
@@ -21,12 +21,13 @@ Implementation and policy guide for stale-while-revalidate (SWR) caching of Grap
 
 1. [One-Time Setup](#1-one-time-setup) — **CRITICAL**
    - 1.1 [Implement the Decorators as Method Wrappers with Stable Names](#11-implement-the-decorators-as-method-wrappers-with-stable-names)
-   - 1.2 [Use a Deduplicating Engine, and Count TTL in Seconds](#12-use-a-deduplicating-engine-and-count-ttl-in-seconds)
-   - 1.3 [Fail Open, and Never Cache Errors](#13-fail-open-and-never-cache-errors)
-   - 1.4 [Place the Capability by Who Imports It](#14-place-the-capability-by-who-imports-it)
-   - 1.5 [Read the Caller from AsyncLocalStorage, Not Scope.REQUEST](#15-read-the-caller-from-asynclocalstorage-not-scoperequest)
-   - 1.6 [Wire the Cache Module Once with forRootAsync](#16-wire-the-cache-module-once-with-forrootasync)
-   - 1.7 [Enable Invalidation and Set referencesTTL and GC](#17-enable-invalidation-and-set-referencesttl-and-gc)
+   - 1.2 [Ship One Config Switch That Bypasses the Service-Level Cache](#12-ship-one-config-switch-that-bypasses-the-service-level-cache)
+   - 1.3 [Use a Deduplicating Engine, and Count TTL in Seconds](#13-use-a-deduplicating-engine-and-count-ttl-in-seconds)
+   - 1.4 [Fail Open, and Never Cache Errors](#14-fail-open-and-never-cache-errors)
+   - 1.5 [Place the Capability by Who Imports It](#15-place-the-capability-by-who-imports-it)
+   - 1.6 [Read the Caller from AsyncLocalStorage, Not Scope.REQUEST](#16-read-the-caller-from-asynclocalstorage-not-scoperequest)
+   - 1.7 [Wire the Cache Module Once with forRootAsync](#17-wire-the-cache-module-once-with-forrootasync)
+   - 1.8 [Enable Invalidation and Set referencesTTL and GC](#18-enable-invalidation-and-set-referencesttl-and-gc)
 2. [Cache Policy](#2-cache-policy) — **CRITICAL**
    - 2.1 [Know the Five Knobs](#21-know-the-five-knobs)
    - 2.2 [Derive the Key Automatically, Never with JSON.stringify](#22-derive-the-key-automatically-never-with-jsonstringify)
@@ -256,7 +257,129 @@ Reference: [NestJS Custom decorators](https://docs.nestjs.com/custom-decorators)
 
 ---
 
-### 1.2 Use a Deduplicating Engine, and Count TTL in Seconds
+### 1.2 Ship One Config Switch That Bypasses the Service-Level Cache
+
+**Impact: MEDIUM-HIGH** — an off switch that does not break the file-layout boundary or lean on ttl: 0
+
+You need to turn caching off without deleting annotations: local development (a warm cache hides the
+stale-data bug you are hunting), CI (exercise the uncached path), and an incident (the cache is serving
+something wrong and you want out now). One flag covers all three — `cache.enabled` (env
+`CACHE_ENABLED`, default `true`). When it is `false`, a decorated call is a **full bypass**: no read, no
+write, no dedupe, no tag purge. The method runs exactly as it would with no cache at all.
+
+Implement it by **swapping the `CACHE_CLIENT` implementation at the composition root**, not by teaching
+the decorators about the flag. The wrapper in `setup-decorator-runtime` reaches the cache only through
+the injected `this.cache`, so a passthrough client needs **zero** changes to the decorators — and
+`common/` never has to import `infra/`, which `setup-file-placement` forbids.
+
+**Incorrect (the flag read where the decorator lives, or `ttl: 0` mistaken for "off"):**
+
+```typescript
+// common/decorators/cache.decorators.ts
+import { cacheEnabled } from '../../infra/cache/cache.config';  // common -> infra: violates the boundary
+...
+if (!cacheEnabled()) return original.apply(this, args);         // a boot-time flag on every call's hot path
+
+// or, treating a zero TTL as the off switch:
+createCache({ ttl: 0 });   // dedupe-only (setup-engine-choice): storage + references stay wired, and
+                           // concurrent identical reads still collapse into one call
+```
+
+Why it is wrong: the import inverts the one boundary the file layout exists to enforce, the flag is
+re-read on every call, and `ttl: 0` is not "off" — it is "store nothing but still dedupe", so dev sees
+collapsed calls it would never see uncached.
+
+**Correct (the switch swaps the provider; nothing above it branches on the flag):**
+
+```typescript
+// infra/cache/cache.types.ts — the flag is part of the module options
+export interface CacheModuleOptions {
+  enabled: boolean; // OFF -> every @Cacheable/@InvalidateTags call bypasses to the source
+  driver: 'memory' | 'redis';
+  redisUrl?: string;
+  ttl: number;      // seconds
+  swr: number;      // seconds
+}
+
+// infra/cache/cache.providers.ts
+// The passthrough satisfies the same port the engine does, so no caller tests `enabled`:
+//   define(name, options, fn) + client[name](arg)   -> the decorators (setup-decorator-runtime)
+//   invalidateAll(tags)                             -> @InvalidateTags
+//   get / set / clear                               -> the CacheService (policy-service-escape-hatch)
+export function createNoopCache(): Cache {
+  const client: any = {
+    define(name: string, _options: unknown, fn: (...a: any[]) => Promise<unknown>) {
+      client[name] = (...args: unknown[]) => fn(...args); // the same lazy registration point the engine uses
+    },
+    async invalidateAll() {},                 // nothing is stored -> nothing to purge
+    async clear() {},
+    async get() { return undefined; },        // every read is a miss...
+    async set() {},
+  };
+  return client as Cache;
+}
+
+export function buildCacheClient(opts: CacheModuleOptions, logger: Logger): Cache {
+  if (!opts.enabled) {
+    // one boot-time tripwire: a disabled cache must be loud, never mistaken for a cold cache
+    logger.warn('caching DISABLED (cache.enabled=false) — every cached call bypasses to the source');
+    return createNoopCache();                 // no redis connection, no storage, no GC timers
+  }
+  return createCache(buildCacheOptions(opts)); // redis + references + GC only when enabled
+}
+
+// infra/cache/cache.providers.ts — the provider is the one place the flag is read
+{
+  provide: CACHE_CLIENT,
+  inject: [MODULE_OPTIONS_TOKEN],
+  useFactory: (opts: CacheModuleOptions) => buildCacheClient(opts, new Logger('CacheModule')),
+}
+```
+
+Why it is right: the decorators, `@CacheTag`, `@InvalidateTags`, and the `common/`–`infra/` boundary
+stay untouched; the switch is one typed value in the module options (`setup-module-wiring`); and the
+disabled path also skips the Redis client and the GC timers (`setup-storage-and-invalidation`), so dev
+needs no Redis at all.
+
+**Resolve it once, at boot.** `cache.enabled` comes from typed config like every other option:
+
+```typescript
+// config/cache.config.ts
+export default registerAs('cache', () => ({
+  enabled: process.env.CACHE_ENABLED !== 'false', // default ON; .env.development sets it false
+  // …driver, redisUrl, ttl, swr
+}));
+```
+
+- **Boot-time, not per-request.** A dev/ops switch is a deployment decision. A per-request toggle is a
+  different feature and belongs to the layer that supports it — Envelop's `enabled`, mercurius' `skip`.
+- **Default on, but refuse in production.** Assert `enabled === true` when `NODE_ENV === 'production'`
+  (a validation-schema rule, or an explicit throw) rather than letting a stray `CACHE_ENABLED=false`
+  quietly disable a production cache.
+- **`NODE_ENV === 'test'`** is a legitimate place to default it off so unit tests exercise the uncached
+  path — make that a deliberate, visible line in config, not an implicit magic default.
+
+**This switch covers the service-level layer only.** The opt-in extras are gated where they are
+configured, and must be turned off separately: do not register Apollo's `responseCachePlugin`
+(`driver-apollo-response-cache`), pass `enabled: () => false` to Envelop
+(`driver-envelop-response-cache`), `skip: () => true` on `mercurius-cache` policies
+(`driver-mercurius-cache`), and omit the CDN `Cache-Control` SWR directives (`driver-cdn-transport`).
+
+**Observability while disabled.** The engine never runs, so it emits no `hit`/`miss`/`dedupe` events.
+The boot-time warning above is the signal; the per-request trace reports `BYPASS` from the flag rather
+than from an empty event list (`observability-per-request-trace`).
+
+**Cost, stated plainly.** With the cache off you no longer exercise key derivation, `@CacheTag`, or
+`@InvalidateTags` — a tag typo that only misbehaves when the cache is live will not surface in dev. If
+you want the dedupe/`references` code paths kept warm during development, that is what a zero `ttl`
+gives you (dedupe-only, `setup-engine-choice`); use it deliberately, and keep `enabled` as the only
+thing called "off".
+
+Reference: [NestJS Dynamic modules](https://docs.nestjs.com/fundamentals/dynamic-modules) | [NestJS Custom providers](https://docs.nestjs.com/fundamentals/custom-providers)
+
+---
+
+### 1.3 Use a Deduplicating Engine, and Count TTL in Seconds
 
 **Impact: CRITICAL** — SWR without reimplementing single-flight, and no 1000x TTL bug
 
@@ -275,6 +398,10 @@ And one default that silently disables caching: **`ttl` defaults to `0`**, which
 as *"the function will be only the deduped"* — nothing is stored and every call reaches the source. So
 `@Cacheable({ swr: 300 })` with no `ttl` caches **nothing**. Always set `ttl` explicitly; an omitted
 one is the same class of silent no-op as a renamed library option (see `driver-version-pinning`).
+
+A zero `ttl` is **dedupe-only, not an off switch**: concurrent identical calls still collapse and
+storage and references are still wired. To disable the service-level cache entirely — dev, CI, or an
+incident — use the module flag, which swaps in a passthrough client (see `setup-disable-switch`).
 
 **Incorrect (hand-rolled envelope + millisecond TTLs):**
 
@@ -312,7 +439,7 @@ Reference: [async-cache-dedupe](https://github.com/mcollina/async-cache-dedupe) 
 
 ---
 
-### 1.3 Fail Open, and Never Cache Errors
+### 1.4 Fail Open, and Never Cache Errors
 
 **Impact: CRITICAL** — a cache/Redis outage must degrade to slow, not to 500
 
@@ -369,7 +496,7 @@ Reference: [async-cache-dedupe](https://github.com/mcollina/async-cache-dedupe) 
 
 ---
 
-### 1.4 Place the Capability by Who Imports It
+### 1.5 Place the Capability by Who Imports It
 
 **Impact: CRITICAL** — keeps infrastructure out of features and decorators feature-importable
 
@@ -444,7 +571,7 @@ Reference: [NestJS Modules](https://docs.nestjs.com/modules#shared-modules)
 
 ---
 
-### 1.5 Read the Caller from AsyncLocalStorage, Not Scope.REQUEST
+### 1.6 Read the Caller from AsyncLocalStorage, Not Scope.REQUEST
 
 **Impact: CRITICAL** — per-user keying without bubbling request scope through the graph
 
@@ -504,7 +631,7 @@ Reference: [NestJS Async Local Storage](https://docs.nestjs.com/recipes/async-lo
 
 ---
 
-### 1.6 Wire the Cache Module Once with forRootAsync
+### 1.7 Wire the Cache Module Once with forRootAsync
 
 **Impact: CRITICAL** — one configurable module, one client token, registered one time
 
@@ -528,6 +655,7 @@ and the driver leaks into business code.
 ```typescript
 // infra/cache/cache.types.ts
 export interface CacheModuleOptions {
+  enabled: boolean; // OFF -> full bypass: no read, no write, no dedupe, no purge (setup-disable-switch)
   driver: 'memory' | 'redis';
   redisUrl?: string;
   ttl: number;    // default fresh window, SECONDS
@@ -557,7 +685,7 @@ const { ConfigurableModuleClass, MODULE_OPTIONS_TOKEN } =
       provide: CACHE_CLIENT,
       inject: [MODULE_OPTIONS_TOKEN],
       useFactory: (opts: CacheModuleOptions): Cache =>
-        createCache(buildCacheOptions(opts)),
+        buildCacheClient(opts),   // real engine, or a passthrough when enabled=false (setup-disable-switch)
     },
     { provide: CACHE_SERVICE, useClass: CacheService },
   ],
@@ -572,6 +700,7 @@ export class CacheModule extends ConfigurableModuleClass {}
     CacheModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (c: ConfigService): CacheModuleOptions => ({
+        enabled: c.get('cache.enabled'), // the one flag that turns the whole capability off
         driver: c.get('cache.driver'),
         redisUrl: c.get('cache.redisUrl'),
         ttl: c.get('cache.ttl'),   // seconds
@@ -586,11 +715,15 @@ export class AppModule {}
 Why it is right: one configurable module, one client token built from validated typed config, and
 the composition root is the only place that knows the driver exists.
 
+The options also carry `enabled` — the one flag that turns the capability off, as a passthrough client
+rather than a zero TTL. Because it is resolved here, at boot, nothing below the provider ever branches
+on it (see `setup-disable-switch`).
+
 Reference: [NestJS Dynamic modules](https://docs.nestjs.com/fundamentals/dynamic-modules) | [NestJS Custom providers](https://docs.nestjs.com/fundamentals/custom-providers)
 
 ---
 
-### 1.7 Enable Invalidation and Set referencesTTL and GC
+### 1.8 Enable Invalidation and Set referencesTTL and GC
 
 **Impact: CRITICAL** — tag invalidation is OFF by default and silently misses without this
 
@@ -1457,6 +1590,9 @@ callbacks give you hit / miss / dedupe / error, and nothing about staleness or e
   has no stale callback and no entry age, so those values would read as zero forever (see
   `observability-limits-of-events`). Add them only once you wrap the client with your own
   `{ value, writtenAt }` record.
+- **When `cache.enabled` is false** (`setup-disable-switch`), the engine never runs and emits **no**
+  events. Report `X-Cache: BYPASS` from the config flag — an empty event list must not read as a clean
+  "no cached reads" summary, which is indistinguishable from a cache that is switched off.
 - The event **collection** works in both an HTTP request and a BullMQ job because it uses CLS, not
   the request object. The **header** is HTTP-only — a job has no response to write to, so a job reads
   the collected events instead.
@@ -1465,14 +1601,19 @@ callbacks give you hit / miss / dedupe / error, and nothing about staleness or e
 // common/interceptors/cache-trace.interceptor.ts — APP_INTERCEPTOR
 @Injectable()
 export class CacheTraceInterceptor implements NestInterceptor {
-  constructor(private readonly cls: ClsService) {}
+  constructor(
+    private readonly cls: ClsService,
+    private readonly config: ConfigService,   // cache.enabled — see setup-disable-switch
+  ) {}
 
   intercept(ctx: ExecutionContext, next: CallHandler): Observable<unknown> {
     return next.handle().pipe(tap(() => {
       const events = this.cls.get<CacheEvent[]>('cacheEvents') ?? [];
       const summary = summarize(events); // worst outcome wins: MISS > DEDUPE > HIT
       const res = ctx.switchToHttp().getResponse?.();
-      if (res?.setHeader) res.setHeader('X-Cache', summary.outcome);
+      // a disabled cache emits no events -> report it from the flag, not from `summarize([])`
+      const enabled = this.config.get<boolean>('cache.enabled') ?? true;
+      if (res?.setHeader) res.setHeader('X-Cache', enabled ? summary.outcome : 'BYPASS');
       // Age exists ONLY if you wrapped the client (see observability-limits-of-events):
       // if (res?.setHeader && summary.ageMs) res.setHeader('Age', Math.round(summary.ageMs / 1000));
       if (!isProd) this.cls.set('cacheTrace', events);
@@ -1494,6 +1635,7 @@ logging.
 
 ```text
 X-Cache: DEDUPE
+# cache disabled (cache.enabled=false): X-Cache: BYPASS
 # with your own { value, writtenAt } wrapper: X-Cache: STALE, Age: 12
 # dev GraphQL: extensions.cache = [ {key:'TitlesService.getTitle:{"a":[42]}', outcome:'dedupe', deduped:true, ...} ]
 ```

@@ -25,6 +25,10 @@ as *"the function will be only the deduped"* — nothing is stored and every cal
 `@Cacheable({ swr: 300 })` with no `ttl` caches **nothing**. Always set `ttl` explicitly; an omitted
 one is the same class of silent no-op as a renamed library option (see `driver-version-pinning`).
 
+A zero `ttl` is **dedupe-only, not an off switch**: concurrent identical calls still collapse and
+storage and references are still wired. To disable the service-level cache entirely — dev, CI, or an
+incident — use the module flag, which swaps in a passthrough client (see `setup-disable-switch`).
+
 **Incorrect (hand-rolled envelope + millisecond TTLs):**
 
 ```typescript

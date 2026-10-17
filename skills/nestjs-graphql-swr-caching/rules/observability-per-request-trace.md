@@ -19,6 +19,9 @@ callbacks give you hit / miss / dedupe / error, and nothing about staleness or e
   has no stale callback and no entry age, so those values would read as zero forever (see
   `observability-limits-of-events`). Add them only once you wrap the client with your own
   `{ value, writtenAt }` record.
+- **When `cache.enabled` is false** (`setup-disable-switch`), the engine never runs and emits **no**
+  events. Report `X-Cache: BYPASS` from the config flag — an empty event list must not read as a clean
+  "no cached reads" summary, which is indistinguishable from a cache that is switched off.
 - The event **collection** works in both an HTTP request and a BullMQ job because it uses CLS, not
   the request object. The **header** is HTTP-only — a job has no response to write to, so a job reads
   the collected events instead.
@@ -27,14 +30,19 @@ callbacks give you hit / miss / dedupe / error, and nothing about staleness or e
 // common/interceptors/cache-trace.interceptor.ts — APP_INTERCEPTOR
 @Injectable()
 export class CacheTraceInterceptor implements NestInterceptor {
-  constructor(private readonly cls: ClsService) {}
+  constructor(
+    private readonly cls: ClsService,
+    private readonly config: ConfigService,   // cache.enabled — see setup-disable-switch
+  ) {}
 
   intercept(ctx: ExecutionContext, next: CallHandler): Observable<unknown> {
     return next.handle().pipe(tap(() => {
       const events = this.cls.get<CacheEvent[]>('cacheEvents') ?? [];
       const summary = summarize(events); // worst outcome wins: MISS > DEDUPE > HIT
       const res = ctx.switchToHttp().getResponse?.();
-      if (res?.setHeader) res.setHeader('X-Cache', summary.outcome);
+      // a disabled cache emits no events -> report it from the flag, not from `summarize([])`
+      const enabled = this.config.get<boolean>('cache.enabled') ?? true;
+      if (res?.setHeader) res.setHeader('X-Cache', enabled ? summary.outcome : 'BYPASS');
       // Age exists ONLY if you wrapped the client (see observability-limits-of-events):
       // if (res?.setHeader && summary.ageMs) res.setHeader('Age', Math.round(summary.ageMs / 1000));
       if (!isProd) this.cls.set('cacheTrace', events);
@@ -56,6 +64,7 @@ logging.
 
 ```text
 X-Cache: DEDUPE
+# cache disabled (cache.enabled=false): X-Cache: BYPASS
 # with your own { value, writtenAt } wrapper: X-Cache: STALE, Age: 12
 # dev GraphQL: extensions.cache = [ {key:'TitlesService.getTitle:{"a":[42]}', outcome:'dedupe', deduped:true, ...} ]
 ```

@@ -29,6 +29,7 @@ and the driver leaks into business code.
 ```typescript
 // infra/cache/cache.types.ts
 export interface CacheModuleOptions {
+  enabled: boolean; // OFF -> full bypass: no read, no write, no dedupe, no purge (setup-disable-switch)
   driver: 'memory' | 'redis';
   redisUrl?: string;
   ttl: number;    // default fresh window, SECONDS
@@ -58,7 +59,7 @@ const { ConfigurableModuleClass, MODULE_OPTIONS_TOKEN } =
       provide: CACHE_CLIENT,
       inject: [MODULE_OPTIONS_TOKEN],
       useFactory: (opts: CacheModuleOptions): Cache =>
-        createCache(buildCacheOptions(opts)),
+        buildCacheClient(opts),   // real engine, or a passthrough when enabled=false (setup-disable-switch)
     },
     { provide: CACHE_SERVICE, useClass: CacheService },
   ],
@@ -73,6 +74,7 @@ export class CacheModule extends ConfigurableModuleClass {}
     CacheModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (c: ConfigService): CacheModuleOptions => ({
+        enabled: c.get('cache.enabled'), // the one flag that turns the whole capability off
         driver: c.get('cache.driver'),
         redisUrl: c.get('cache.redisUrl'),
         ttl: c.get('cache.ttl'),   // seconds
@@ -86,5 +88,9 @@ export class AppModule {}
 
 Why it is right: one configurable module, one client token built from validated typed config, and
 the composition root is the only place that knows the driver exists.
+
+The options also carry `enabled` — the one flag that turns the capability off, as a passthrough client
+rather than a zero TTL. Because it is resolved here, at boot, nothing below the provider ever branches
+on it (see `setup-disable-switch`).
 
 Reference: [NestJS Dynamic modules](https://docs.nestjs.com/fundamentals/dynamic-modules) | [NestJS Custom providers](https://docs.nestjs.com/fundamentals/custom-providers)
