@@ -52,8 +52,14 @@ export class MongoFallbackBackend implements SearchBackend {
   async ensureIndex(): Promise<void> {}
   async bulkIndex(): Promise<void> {}
   async deleteOne(): Promise<void> {}
+  async refresh(): Promise<void> {} // nothing to make visible
   ping(): Promise<boolean> {
     return this.connection.db.admin().ping().then(() => true);
+  }
+
+  // explain is an Elasticsearch affordance; there is no engine DSL to show here
+  async explain(): Promise<SearchExplain> {
+    throw new Error('explain is only available with the Elasticsearch backend');
   }
 
   async searchIds(req: SearchRequest): Promise<SearchPage> {

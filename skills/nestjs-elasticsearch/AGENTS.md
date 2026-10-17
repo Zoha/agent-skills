@@ -1,6 +1,6 @@
 # NestJS Elasticsearch
 
-**Version 1.1.1**
+**Version 1.1.2**
 NestJS Elasticsearch
 October 2026
 
@@ -113,8 +113,8 @@ export abstract class SearchRepository<Doc extends { id: string }> {
 
   async enqueueIndex(id: string): Promise<void> { /* jobId dedupe + delay */ }
   async enqueueMany(ids: string[]): Promise<void> { /* one batched job */ }
-  async deleteOne(id: string): Promise<void> { /* immediate delete */ }
-  async bulkIndex(docs: Doc[], index?: string): Promise<void> { /* one _bulk; defaults to the alias */ }
+  async deleteOne(id: string): Promise<void> { /* delegates an immediate delete to the backend */ }
+  async bulkIndex(docs: Doc[], index?: string): Promise<void> { /* delegates one batched write to the backend */ }
   async searchIds(query: object, sort: object[], limit = 20, cursor?: string) { /* backend.searchIds({ alias: this.index, ... }); _source:false */ }
 
   abstract loadByIds(ids: string[]): Promise<Doc[]>;
@@ -418,12 +418,17 @@ refresh, so a large reindex is orders of magnitude slower than it needs to be.
 **Correct (one bulk request per batch, one refresh at the end):**
 
 ```typescript
-// common/search/search.repository.ts (base)
+// common/search/search.repository.ts (base) — policy only; the engine call is behind the seam
 async bulkIndex(docs: Doc[], index: string = this.index): Promise<void> {
   if (!docs.length) return;
+  await this.backend.bulkIndex(index, docs); // the ONE _bulk implementation lives in the backend
+}
+
+// infra/elasticsearch/elasticsearch.backend.ts — the only place _bulk is issued
+async bulkIndex(index: string, docs: unknown[]): Promise<void> {
   const res = await this.es.bulk({
     operations: docs.flatMap((d) => [
-      { index: { _index: index, _id: d.id } }, // the target index, not necessarily the alias
+      { index: { _index: index, _id: (d as { id: string }).id } }, // the target index, not necessarily the alias
       d,
     ]),
     refresh: false, // never refresh per batch
@@ -431,8 +436,12 @@ async bulkIndex(docs: Doc[], index: string = this.index): Promise<void> {
   this.assertBulkClean(res, docs); // HTTP 200 does not mean every document landed
 }
 
+async refresh(index: string): Promise<void> {
+  await this.es.indices.refresh({ index }); // one refresh per run, not per batch
+}
+
 // a partial bulk is a failed bulk: 429-class failures retry, mapping errors fail the job
-private assertBulkClean(res: BulkResponse, docs: Doc[]): void {
+private assertBulkClean(res: BulkResponse, docs: unknown[]): void {
   if (!res.errors) return;
 
   // `items` is in submitted order, so items[i] belongs to docs[i]
@@ -462,7 +471,7 @@ for (;;) {
   cursor = page.nextCursor;
   if (!cursor) break;
 }
-await this.es.indices.refresh({ index: target }); // one refresh for the whole run
+await this.backend.refresh(target); // one refresh for the whole run, through the seam
 ```
 
 Why it is right: documents travel in batches, `refresh: false` avoids a segment refresh per batch,
@@ -552,11 +561,16 @@ it) or leaves a dangling hit that surfaces in results.
 **Correct (immediate delete, 404 ignored; indexer deletes when the source is gone):**
 
 ```typescript
-// common/search/search.repository.ts (base)
+// common/search/search.repository.ts (base) — policy only
 async deleteOne(id: string): Promise<void> {
+  await this.backend.deleteOne(this.index, id); // the engine owns the refresh and the 404 handling
+}
+
+// infra/elasticsearch/elasticsearch.backend.ts
+async deleteOne(index: string, id: string): Promise<void> {
   // deletes are low-frequency, so refresh here: a stale hit is worse than a missing one.
   // This is the deliberate exception to "never refresh per batch" (see sync-bulk-index).
-  await this.es.delete({ index: this.index, id }, { ignore: [404], refresh: true }); // idempotent
+  await this.es.delete({ index, id }, { ignore: [404], refresh: true }); // idempotent
 }
 
 // modules/users/search/users.search-indexer.ts
@@ -605,6 +619,8 @@ fail a write, and retries are handled by the queue.
 async create(input: CreateUserInput): Promise<User> {
   const user = await this.usersRepository.create(input);
   // The request now blocks on the search cluster; if it is slow or down, this throws.
+  // (A service cannot inject the client at all — the engine stays behind the seam — which is the
+  // other reason the write path must enqueue instead; see cfg-search-backend-seam.)
   await this.es.index({ index: 'users', id: user._id.toString(), document: toDoc(user) });
   return user;
 }
@@ -682,7 +698,7 @@ for (;;) {
   cursor = page.nextCursor;
   if (!cursor) break;                      // last page
 }
-await this.es.indices.refresh({ index: target });
+await this.backend.refresh(target);        // one refresh for the whole run, through the seam
 await this.swapAlias(alias, target);       // reached only when every batch was clean
 
 // infra/elasticsearch/alias.ts — the one place an alias is mutated
@@ -1121,6 +1137,7 @@ an opaque cursor. For a consistent snapshot across a deep traversal, add a point
 **Incorrect (offset pagination that breaks past the cap):**
 
 ```typescript
+// infra/elasticsearch/elasticsearch.backend.ts — offset pagination (the anti-pattern)
 const res = await this.es.search({
   index: 'users',
   from: page * limit,   // from + size must stay under index.max_result_window (10,000)
@@ -1136,22 +1153,11 @@ sort `from + size` documents, so deep pages get progressively slower.
 **Correct (carry sort values forward as a cursor):**
 
 ```typescript
-// common/search/search.repository.ts (base)
-const searchAfter = cursor ? decodeCursor(cursor) : undefined;
-const res = await this.es.search({
-  index: this.index,
-  _source: false,
-  size: limit,
-  query,
-  sort,                                          // must be identical on every page
-  ...(searchAfter ? { search_after: searchAfter } : {}),
-});
-
-const last = res.hits.hits.at(-1);
-return {
-  ids: res.hits.hits.map((h) => h._id),
-  nextCursor: res.hits.hits.length === limit && last ? encodeCursor(last.sort!) : null,
-};
+// common/search/search.repository.ts (base) — policy only; the engine call is behind the seam.
+// The cursor travels in the request and comes back out; the base never names an engine.
+async searchIds(term: string | undefined, sort: object[], limit: number, cursor?: string) {
+  return this.backend.searchIds({ alias: this.index, term, sort, limit, cursor });
+}
 ```
 
 ```typescript
@@ -1164,6 +1170,11 @@ export const decodeCursor = (cursor: string): unknown[] =>
 
 Why it is right: the cursor is just the last hit's sort values, so paging is O(page) regardless of
 depth and works past 10,000 results.
+
+The `search_after` mechanics live in the Elasticsearch backend, because that is the only layer that
+may name the client: it decodes the cursor, passes `search_after`, and encodes the last hit's sort
+values back into `nextCursor` (see `query-ids-only-search`). The base repository and every feature
+repository only pass the cursor through, so both backends stay interchangeable.
 
 The `query` and `sort` must be identical on every page, and the sort must be deterministic (a unique
 tiebreaker) — see `query-sort-tiebreaker`. For a consistent snapshot during a deep traversal, open a
@@ -1307,6 +1318,7 @@ document id — as the final sort key.
 **Incorrect (a non-unique sort with ties):**
 
 ```typescript
+// infra/elasticsearch/elasticsearch.backend.ts — a non-unique sort (the anti-pattern)
 const sort = [{ createdAt: 'desc' }]; // many documents share a millisecond
 const res = await this.es.search({ index: 'users', sort, size: limit, search_after });
 // Ties between pages: some documents are skipped, others appear twice.
@@ -1581,15 +1593,14 @@ Why it is wrong: the query is only visible if someone remembers to add a log, an
 **Correct (a dev-only explain that returns the DSL and the response):**
 
 ```typescript
-// modules/users/search/users.search-repository.ts
-async explain(args: FindUsersArgs): Promise<SearchExplain> {
-  const query = this.buildQuery(args);
-  const sort = [{ createdAt: 'desc' }, { _id: 'asc' }];
-
+// infra/elasticsearch/elasticsearch.backend.ts — explain names the client, so it lives in the
+// backend behind the seam; no feature repository ever injects ElasticsearchService.
+async explain(req: SearchRequest): Promise<SearchExplain> {
+  const query = this.buildQuery(req.term);
   const res = await this.es.search({
-    index: this.index,
+    index: req.alias,
     query,
-    sort,
+    sort: req.sort,
     size: 5,
     _source: ['authorName', 'likeCount'], // inspect ES-only fields here
   });
@@ -1601,6 +1612,16 @@ async explain(args: FindUsersArgs): Promise<SearchExplain> {
   };
 }
 
+// modules/users/search/users.search-repository.ts — the feature repo delegates; it names no client
+explain(args: FindUsersArgs): Promise<SearchExplain> {
+  return this.backend.explain({
+    alias: this.index,
+    term: args.search,
+    sort: [{ createdAt: 'desc' }, { _id: 'asc' }],
+    limit: 5,
+  });
+}
+
 // modules/users/resolvers/users.query.resolver.ts — development-only query
 @Query(() => String, { nullable: true })
 async searchExplain(@Args() args: FindUsersArgs): Promise<string> {
@@ -1610,7 +1631,9 @@ async searchExplain(@Args() args: FindUsersArgs): Promise<string> {
 ```
 
 Why it is right: the exact DSL, the score, the timing, and the Elasticsearch-only fields are
-available on demand, and the query can be reproduced verbatim in Kibana or with the `_explain` API.
+available on demand, the query can be reproduced verbatim in Kibana or with the `_explain` API, and
+the engine stays behind the seam. With `SEARCH_BACKEND=mongo` the fallback backend refuses the call
+rather than pretending to explain a query that does not exist (see `cfg-mongo-fallback-backend`).
 
 Gate the hook behind a non-production environment check; it exposes internal query shapes and
 Elasticsearch-only fields. The same DSL is what the request/response logger records in production
@@ -1896,8 +1919,14 @@ export class MongoFallbackBackend implements SearchBackend {
   async ensureIndex(): Promise<void> {}
   async bulkIndex(): Promise<void> {}
   async deleteOne(): Promise<void> {}
+  async refresh(): Promise<void> {} // nothing to make visible
   ping(): Promise<boolean> {
     return this.connection.db.admin().ping().then(() => true);
+  }
+
+  // explain is an Elasticsearch affordance; there is no engine DSL to show here
+  async explain(): Promise<SearchExplain> {
+    throw new Error('explain is only available with the Elasticsearch backend');
   }
 
   async searchIds(req: SearchRequest): Promise<SearchPage> {
@@ -1999,7 +2028,9 @@ export interface SearchBackend {
   ensureIndex(def: SearchIndexDef<unknown>): Promise<void>;
   bulkIndex(index: string, docs: unknown[]): Promise<void>;
   deleteOne(index: string, id: string): Promise<void>;
+  refresh(index: string): Promise<void>; // make writes visible; a no-op on a non-ES backend
   searchIds(req: SearchRequest): Promise<SearchPage>; // { ids, total, totalIsExact, nextCursor }
+  explain(req: SearchRequest): Promise<SearchExplain>; // dev-only introspection; ES-only
   ping(): Promise<boolean>;
 }
 

@@ -17,6 +17,7 @@ an opaque cursor. For a consistent snapshot across a deep traversal, add a point
 **Incorrect (offset pagination that breaks past the cap):**
 
 ```typescript
+// infra/elasticsearch/elasticsearch.backend.ts — offset pagination (the anti-pattern)
 const res = await this.es.search({
   index: 'users',
   from: page * limit,   // from + size must stay under index.max_result_window (10,000)
@@ -32,22 +33,11 @@ sort `from + size` documents, so deep pages get progressively slower.
 **Correct (carry sort values forward as a cursor):**
 
 ```typescript
-// common/search/search.repository.ts (base)
-const searchAfter = cursor ? decodeCursor(cursor) : undefined;
-const res = await this.es.search({
-  index: this.index,
-  _source: false,
-  size: limit,
-  query,
-  sort,                                          // must be identical on every page
-  ...(searchAfter ? { search_after: searchAfter } : {}),
-});
-
-const last = res.hits.hits.at(-1);
-return {
-  ids: res.hits.hits.map((h) => h._id),
-  nextCursor: res.hits.hits.length === limit && last ? encodeCursor(last.sort!) : null,
-};
+// common/search/search.repository.ts (base) — policy only; the engine call is behind the seam.
+// The cursor travels in the request and comes back out; the base never names an engine.
+async searchIds(term: string | undefined, sort: object[], limit: number, cursor?: string) {
+  return this.backend.searchIds({ alias: this.index, term, sort, limit, cursor });
+}
 ```
 
 ```typescript
@@ -60,6 +50,11 @@ export const decodeCursor = (cursor: string): unknown[] =>
 
 Why it is right: the cursor is just the last hit's sort values, so paging is O(page) regardless of
 depth and works past 10,000 results.
+
+The `search_after` mechanics live in the Elasticsearch backend, because that is the only layer that
+may name the client: it decodes the cursor, passes `search_after`, and encodes the last hit's sort
+values back into `nextCursor` (see `query-ids-only-search`). The base repository and every feature
+repository only pass the cursor through, so both backends stay interchangeable.
 
 The `query` and `sort` must be identical on every page, and the sort must be deterministic (a unique
 tiebreaker) — see `query-sort-tiebreaker`. For a consistent snapshot during a deep traversal, open a

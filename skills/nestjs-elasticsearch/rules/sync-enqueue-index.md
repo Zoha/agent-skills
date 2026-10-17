@@ -20,6 +20,8 @@ fail a write, and retries are handled by the queue.
 async create(input: CreateUserInput): Promise<User> {
   const user = await this.usersRepository.create(input);
   // The request now blocks on the search cluster; if it is slow or down, this throws.
+  // (A service cannot inject the client at all — the engine stays behind the seam — which is the
+  // other reason the write path must enqueue instead; see cfg-search-backend-seam.)
   await this.es.index({ index: 'users', id: user._id.toString(), document: toDoc(user) });
   return user;
 }

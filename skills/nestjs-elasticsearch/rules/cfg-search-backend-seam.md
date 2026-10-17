@@ -52,7 +52,9 @@ export interface SearchBackend {
   ensureIndex(def: SearchIndexDef<unknown>): Promise<void>;
   bulkIndex(index: string, docs: unknown[]): Promise<void>;
   deleteOne(index: string, id: string): Promise<void>;
+  refresh(index: string): Promise<void>; // make writes visible; a no-op on a non-ES backend
   searchIds(req: SearchRequest): Promise<SearchPage>; // { ids, total, totalIsExact, nextCursor }
+  explain(req: SearchRequest): Promise<SearchExplain>; // dev-only introspection; ES-only
   ping(): Promise<boolean>;
 }
 

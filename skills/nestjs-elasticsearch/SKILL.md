@@ -4,7 +4,7 @@ description: Use when adding or maintaining Elasticsearch full-text search in a 
 license: MIT
 metadata:
   author: Zoha
-  version: "1.1.1"
+  version: "1.1.2"
 ---
 
 # NestJS Elasticsearch

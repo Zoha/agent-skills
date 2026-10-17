@@ -30,15 +30,14 @@ Why it is wrong: the query is only visible if someone remembers to add a log, an
 **Correct (a dev-only explain that returns the DSL and the response):**
 
 ```typescript
-// modules/users/search/users.search-repository.ts
-async explain(args: FindUsersArgs): Promise<SearchExplain> {
-  const query = this.buildQuery(args);
-  const sort = [{ createdAt: 'desc' }, { _id: 'asc' }];
-
+// infra/elasticsearch/elasticsearch.backend.ts — explain names the client, so it lives in the
+// backend behind the seam; no feature repository ever injects ElasticsearchService.
+async explain(req: SearchRequest): Promise<SearchExplain> {
+  const query = this.buildQuery(req.term);
   const res = await this.es.search({
-    index: this.index,
+    index: req.alias,
     query,
-    sort,
+    sort: req.sort,
     size: 5,
     _source: ['authorName', 'likeCount'], // inspect ES-only fields here
   });
@@ -50,6 +49,16 @@ async explain(args: FindUsersArgs): Promise<SearchExplain> {
   };
 }
 
+// modules/users/search/users.search-repository.ts — the feature repo delegates; it names no client
+explain(args: FindUsersArgs): Promise<SearchExplain> {
+  return this.backend.explain({
+    alias: this.index,
+    term: args.search,
+    sort: [{ createdAt: 'desc' }, { _id: 'asc' }],
+    limit: 5,
+  });
+}
+
 // modules/users/resolvers/users.query.resolver.ts — development-only query
 @Query(() => String, { nullable: true })
 async searchExplain(@Args() args: FindUsersArgs): Promise<string> {
@@ -59,7 +68,9 @@ async searchExplain(@Args() args: FindUsersArgs): Promise<string> {
 ```
 
 Why it is right: the exact DSL, the score, the timing, and the Elasticsearch-only fields are
-available on demand, and the query can be reproduced verbatim in Kibana or with the `_explain` API.
+available on demand, the query can be reproduced verbatim in Kibana or with the `_explain` API, and
+the engine stays behind the seam. With `SEARCH_BACKEND=mongo` the fallback backend refuses the call
+rather than pretending to explain a query that does not exist (see `cfg-mongo-fallback-backend`).
 
 Gate the hook behind a non-production environment check; it exposes internal query shapes and
 Elasticsearch-only fields. The same DSL is what the request/response logger records in production

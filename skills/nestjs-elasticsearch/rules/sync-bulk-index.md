@@ -28,12 +28,17 @@ refresh, so a large reindex is orders of magnitude slower than it needs to be.
 **Correct (one bulk request per batch, one refresh at the end):**
 
 ```typescript
-// common/search/search.repository.ts (base)
+// common/search/search.repository.ts (base) — policy only; the engine call is behind the seam
 async bulkIndex(docs: Doc[], index: string = this.index): Promise<void> {
   if (!docs.length) return;
+  await this.backend.bulkIndex(index, docs); // the ONE _bulk implementation lives in the backend
+}
+
+// infra/elasticsearch/elasticsearch.backend.ts — the only place _bulk is issued
+async bulkIndex(index: string, docs: unknown[]): Promise<void> {
   const res = await this.es.bulk({
     operations: docs.flatMap((d) => [
-      { index: { _index: index, _id: d.id } }, // the target index, not necessarily the alias
+      { index: { _index: index, _id: (d as { id: string }).id } }, // the target index, not necessarily the alias
       d,
     ]),
     refresh: false, // never refresh per batch
@@ -41,8 +46,12 @@ async bulkIndex(docs: Doc[], index: string = this.index): Promise<void> {
   this.assertBulkClean(res, docs); // HTTP 200 does not mean every document landed
 }
 
+async refresh(index: string): Promise<void> {
+  await this.es.indices.refresh({ index }); // one refresh per run, not per batch
+}
+
 // a partial bulk is a failed bulk: 429-class failures retry, mapping errors fail the job
-private assertBulkClean(res: BulkResponse, docs: Doc[]): void {
+private assertBulkClean(res: BulkResponse, docs: unknown[]): void {
   if (!res.errors) return;
 
   // `items` is in submitted order, so items[i] belongs to docs[i]
@@ -72,7 +81,7 @@ for (;;) {
   cursor = page.nextCursor;
   if (!cursor) break;
 }
-await this.es.indices.refresh({ index: target }); // one refresh for the whole run
+await this.backend.refresh(target); // one refresh for the whole run, through the seam
 ```
 
 Why it is right: documents travel in batches, `refresh: false` avoids a segment refresh per batch,

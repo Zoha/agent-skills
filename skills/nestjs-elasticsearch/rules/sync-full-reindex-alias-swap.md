@@ -41,7 +41,7 @@ for (;;) {
   cursor = page.nextCursor;
   if (!cursor) break;                      // last page
 }
-await this.es.indices.refresh({ index: target });
+await this.backend.refresh(target);        // one refresh for the whole run, through the seam
 await this.swapAlias(alias, target);       // reached only when every batch was clean
 
 // infra/elasticsearch/alias.ts — the one place an alias is mutated

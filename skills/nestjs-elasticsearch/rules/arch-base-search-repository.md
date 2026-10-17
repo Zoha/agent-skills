@@ -54,8 +54,8 @@ export abstract class SearchRepository<Doc extends { id: string }> {
 
   async enqueueIndex(id: string): Promise<void> { /* jobId dedupe + delay */ }
   async enqueueMany(ids: string[]): Promise<void> { /* one batched job */ }
-  async deleteOne(id: string): Promise<void> { /* immediate delete */ }
-  async bulkIndex(docs: Doc[], index?: string): Promise<void> { /* one _bulk; defaults to the alias */ }
+  async deleteOne(id: string): Promise<void> { /* delegates an immediate delete to the backend */ }
+  async bulkIndex(docs: Doc[], index?: string): Promise<void> { /* delegates one batched write to the backend */ }
   async searchIds(query: object, sort: object[], limit = 20, cursor?: string) { /* backend.searchIds({ alias: this.index, ... }); _source:false */ }
 
   abstract loadByIds(ids: string[]): Promise<Doc[]>;

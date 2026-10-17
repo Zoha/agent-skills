@@ -31,11 +31,16 @@ it) or leaves a dangling hit that surfaces in results.
 **Correct (immediate delete, 404 ignored; indexer deletes when the source is gone):**
 
 ```typescript
-// common/search/search.repository.ts (base)
+// common/search/search.repository.ts (base) — policy only
 async deleteOne(id: string): Promise<void> {
+  await this.backend.deleteOne(this.index, id); // the engine owns the refresh and the 404 handling
+}
+
+// infra/elasticsearch/elasticsearch.backend.ts
+async deleteOne(index: string, id: string): Promise<void> {
   // deletes are low-frequency, so refresh here: a stale hit is worse than a missing one.
   // This is the deliberate exception to "never refresh per batch" (see sync-bulk-index).
-  await this.es.delete({ index: this.index, id }, { ignore: [404], refresh: true }); // idempotent
+  await this.es.delete({ index, id }, { ignore: [404], refresh: true }); // idempotent
 }
 
 // modules/users/search/users.search-indexer.ts

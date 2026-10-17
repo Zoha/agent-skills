@@ -17,6 +17,7 @@ document id — as the final sort key.
 **Incorrect (a non-unique sort with ties):**
 
 ```typescript
+// infra/elasticsearch/elasticsearch.backend.ts — a non-unique sort (the anti-pattern)
 const sort = [{ createdAt: 'desc' }]; // many documents share a millisecond
 const res = await this.es.search({ index: 'users', sort, size: limit, search_after });
 // Ties between pages: some documents are skipped, others appear twice.

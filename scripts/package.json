@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "type": "module",
   "description": "Build scripts for the agent-skills repo",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "tsx build-agents.ts",
     "build:watch": "tsx watch build-agents.ts",
