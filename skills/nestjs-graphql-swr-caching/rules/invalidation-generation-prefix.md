@@ -26,7 +26,7 @@ Why it is wrong: a cluster-wide `SCAN` is expensive, per-node, and races with co
 
 ```typescript
 // read site — the generation is part of the key
-@Cacheable({
+@Cacheable<[string]>({
   ttl: 3600,
   swr: 300,
   key: async (args, ctx) => ['catalog', args[0], await ctx.gen('catalog')],
@@ -38,14 +38,16 @@ await redis.incr('gen:catalog');
 ```
 
 ```text
-before:  catalog:books:g4:...
-after INCR: catalog:books:g5:...   (g4 keys expire untouched)
+before:      getCatalog:{"a":["books"],"k":["catalog","books",4]}
+after INCR:  getCatalog:{"a":["books"],"k":["catalog","books",5]}   (generation-4 keys expire untouched)
 ```
 
 Why it is right: invalidation is O(1) and cluster-safe, and stale keys are reclaimed by their TTL
 rather than by a scan.
 
-Pair the generation with a **short hard TTL** so the old generation's keys self-clear, and cache the
-counter value briefly (it is read on every key build) to avoid a Redis round-trip per call.
+`ctx.gen(name)` is the read side of this counter; it is assembled with the rest of `ctx` in
+`buildCacheContext` (`setup-decorator-runtime`). Pair the generation with a **short hard TTL** so the old
+generation's keys self-clear, and cache the counter value briefly (it is read on every key build) to
+avoid a Redis round-trip per call.
 
 Reference: [Redis INCR](https://redis.io/commands/incr)

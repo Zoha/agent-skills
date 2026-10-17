@@ -17,6 +17,9 @@ Before any cached read merges, confirm every line:
 - [ ] Never cache errors (a rejected loader leaves the cache untouched).
 - [ ] Negative results (`null` / "not found") are a deliberate decision — cache them only with a
       short TTL, or a bad id hammers the source on every request.
+- [ ] Tags are **`string[]`** (never a bare string) and derived from the same value as the matching
+      `@InvalidateTags`, so the write purges exactly the string the read attached (see
+      `invalidation-tags-purge-only`).
 - [ ] Tag index has a **cardinality ceiling**; purge atomically (`SMEMBERS`+`UNLINK` in one Lua script),
       never `KEYS`/unbounded `SCAN`.
 - [ ] `referencesTTL` ≥ longest `ttl + swr`, and references are garbage-collected.
@@ -38,9 +41,11 @@ negative behaviour) and nothing in the code says so.
 **Correct (the checklist is satisfied visibly in the annotation):**
 
 ```typescript
+// no arguments, so the id can only come from `result` — the write that changes this account must
+// purge the identical `account:<id>` string (see invalidation-tags-purge-only)
 @Cacheable({ ttl: 300, swr: 300, key: (args, ctx) => ['account', ctx.tenantId] })
 @CacheScope('perUser')
-@CacheTag((r) => `account:${r.id}`)
+@CacheTag((r) => [`account:${r.id}`])
 getAccount() { return this.repo.for(this.cls.get('userId')); }
 ```
 

@@ -30,8 +30,8 @@ between methods so nothing is scannable.
 
 ```typescript
 // public (default) — one entry shared by every caller
-@Cacheable({ ttl: 60, swr: 300, key: (args) => ['title', args[0]] })
-@CacheTag((r) => `title:${r.id}`)   // invalidation refs (stackable); (result, args) => string[]
+@Cacheable<[string]>({ ttl: 60, swr: 300, key: (args) => ['title', args[0]] })
+@CacheTag((r, a) => [`title:${a[0]}`])   // (result, args) => string[]; same source as the purge below
 getTitle(id: string) {}
 
 // caller-scoped — explicit, because the result varies per caller
@@ -50,6 +50,9 @@ and every method uses the same three shapes.
 Rules:
 
 - `@Cacheable` takes only `key`, `ttl`, `swr`. Never put `scope` or `tags` inside it.
+- `@CacheTag(result, args)` returns `string[] | null` — never a bare string — and must be derived from
+  the same value the matching `@InvalidateTags` uses, so the write purges exactly the string the read
+  attached (see `invalidation-tags-purge-only`).
 - `@InvalidateTags` fires **after success** only (see `invalidation-after-success`).
 - Tags are optional — use them when you need revocation, otherwise let `ttl` expire the entry.
 

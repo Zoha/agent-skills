@@ -4,7 +4,7 @@ description: Use when caching GraphQL reads in a NestJS (code-first) app — wir
 license: MIT
 metadata:
   author: Zoha
-  version: "2.0.0"
+  version: "2.1.0"
 ---
 
 # GraphQL SWR Caching (NestJS, code-first)
@@ -31,6 +31,30 @@ Three hard truths that shape every decision:
 
 - You are already behind a CDN doing response caching for public GET/APQ traffic — start there.
 - Write/mutation paths, or per-user data with no reuse and low read amplification (caching adds risk for little gain).
+
+## The Callback Contract
+
+`key`, `@CacheTag`, and `@InvalidateTags` take functions. Get their arguments right or the cache
+silently misses and the tags silently fail to purge.
+
+| Callback | Signature | What `args` is |
+|---|---|---|
+| `key` | `(args, ctx) => unknown[] \| Promise<unknown[]>` | the method's **argument list, in call order** — `args[0]`, never `args.id` |
+| `@CacheTag` | `(result, args) => string[] \| null` | the same list; `result` is the method's return value |
+| `@InvalidateTags` | `(result, args) => string[]` | the same list; `result` is the write's return value |
+
+- **Positional, not named.** For `getTitle(id: string)`, the id is `args[0]`.
+- **Result comes first** on both tag callbacks. The raw engine's own `references` is
+  `(args, key, result)` — different order, different first argument (see `driver-async-cache-dedupe`).
+- **`ctx`** (`userId`, `tenantId`, `locale`, plus `gen`) is request-derived and assembled by
+  `buildCacheContext`; it is empty outside a request, so a job passes what it needs as an argument.
+- **Typing**: the defaults are `unknown[]` / `unknown` — annotate the tuple
+  (`@Cacheable<[string]>`, `@CacheTag<[string]>`) or the callback bodies will not compile.
+- **Field level is different**: there `args` is the resolver's named-argument object and `ctx` is the
+  GraphQL context (`driver-mercurius-cache`).
+
+Full contract, the key bundle `{ a, k, u }`, and the serialization edge cases:
+`policy-key-derivation`. Runtime implementation: `setup-decorator-runtime`.
 
 ## Rule Categories by Priority
 

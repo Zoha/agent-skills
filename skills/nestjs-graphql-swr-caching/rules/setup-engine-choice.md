@@ -47,7 +47,10 @@ const client = createCache({
 });
 
 // single-flight is built in: concurrent misses for one key -> one loader call
-client.define('TitlesService.getTitle', { references: (args, key, result) => [`title:${result.id}`] },
+// raw engine: `references` returns string[] (or null), and its first argument is what the defined fn
+// was called with — here the bare `id`, not the method's argument list (see driver-async-cache-dedupe)
+client.define('TitlesService.getTitle',
+  { references: (args, key, result) => (result ? [`title:${result.id}`] : null) },
   (id: string) => this.repo.findById(id));
 ```
 

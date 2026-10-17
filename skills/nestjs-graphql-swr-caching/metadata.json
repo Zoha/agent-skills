@@ -1,11 +1,11 @@
 {
   "title": "NestJS GraphQL SWR Caching",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "organization": "NestJS GraphQL SWR Caching",
   "author": "Zoha",
   "license": "MIT",
   "date": "October 2026",
-  "abstract": "Implementation and policy guide for stale-while-revalidate (SWR) caching of GraphQL reads in NestJS (code-first) applications, designed for AI agents and LLMs. Covers the one-time module wiring (a forRootAsync cache module, its tokens, storage, invalidation, and context), the five knobs (key, tag, scope, ttl, swr), the @Cacheable/@CacheTag/@CacheScope/@InvalidateTags decorator surface, where to mount caching (service, field, operation, transport), leak safety (default-public scope, per-caller key dimensions, the no-leak checklist), tag-invalidation mechanics (referencesTTL, atomic purge, cardinality, generation prefixes), observability (structured events, per-request trace, metrics), and the driver reality check across async-cache-dedupe, mercurius-cache, Apollo responseCachePlugin, Envelop, and CDN/APQ.",
+  "abstract": "Implementation and policy guide for stale-while-revalidate (SWR) caching of GraphQL reads in NestJS (code-first) applications, designed for AI agents and LLMs. Covers the one-time module wiring (a forRootAsync cache module, its tokens, storage, invalidation, and context), the five knobs (key, tag, scope, ttl, swr), the callback contract for key/tag derivation, the @Cacheable/@CacheTag/@CacheScope/@InvalidateTags decorator surface, where to mount caching (service, field, operation, transport), leak safety (default-public scope, per-caller key dimensions, the no-leak checklist), tag-invalidation mechanics (referencesTTL, atomic purge, cardinality, generation prefixes), observability (structured events, per-request trace, metrics), and the driver reality check across async-cache-dedupe, mercurius-cache, Apollo responseCachePlugin, Envelop, and CDN/APQ.",
   "references": [
     "https://docs.nestjs.com/techniques/caching",
     "https://docs.nestjs.com/fundamentals/dynamic-modules",

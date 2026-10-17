@@ -54,7 +54,7 @@ fresh hit from a stale one.
 **Correct (one typed event per decision, carried in request context):**
 
 ```typescript
-emit({ layer: 'service', key: 'TitlesService.getTitle:{id:42}', outcome: 'hit',
+emit({ layer: 'service', key: 'TitlesService.getTitle:{"a":[42]}', outcome: 'hit',
        scope: 'public', freshMs: 60_000, swrMs: 300_000, durationMs: 3, requestId });
 ```
 

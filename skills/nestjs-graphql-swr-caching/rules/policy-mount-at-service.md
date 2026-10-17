@@ -23,6 +23,13 @@ tags: layers, service, resolver, operation, cdn
 - **Operation/transport layers don't exist at service level.** Apollo's response cache and CDN
   headers are transport concerns, and neither supports tag invalidation.
 
+The **callback signatures are not** identical. At service level `args` is the method's positional
+argument list (`args[0]`, and `(result, args)` on the tag callbacks — see `policy-key-derivation`). At
+field level the driver hands you the resolver's **named-argument object** and the **GraphQL context** —
+`extendKey: (self, args, ctx)` with `args.id`, not `args[0]`, and `ctx.userId`/`ctx.user` rather than
+the skill's `CacheContext`. Do not copy a service-level callback into a field-level policy unchanged
+(see `driver-mercurius-cache`).
+
 **Incorrect (starting at the operation layer, and losing dedupe):**
 
 ```typescript
@@ -38,8 +45,8 @@ way to invalidate on write.
 ```typescript
 @Injectable()
 export class TitlesService {
-  @Cacheable({ ttl: 60, swr: 300 })
-  @CacheTag((r) => `title:${r.id}`)
+  @Cacheable<[string]>({ ttl: 60, swr: 300 })
+  @CacheTag((r, a) => [`title:${a[0]}`])   // same source as the write's purge (invalidation-tags-purge-only)
   getTitle(id: string) { return this.repo.findById(id); } // the expensive unit, cached once
 }
 ```

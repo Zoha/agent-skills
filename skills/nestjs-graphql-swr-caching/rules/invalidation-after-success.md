@@ -44,4 +44,8 @@ Also: a durable write + a non-durable purge can desync (write commits, purge fai
 `ttl + swr`). If that window is unacceptable, either make the purge retryable or treat the hard TTL as
 the backstop by design.
 
+Also: the string you purge must be the string the read attached — derive both from the same value
+(`args` when the id is an argument, `result` otherwise) and match the type (see
+`invalidation-tags-purge-only`).
+
 Reference: [NestJS Events](https://docs.nestjs.com/techniques/events)

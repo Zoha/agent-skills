@@ -27,8 +27,9 @@ key→value association.
 
 ```typescript
 // read — attach tags that describe what would invalidate this value
-@Cacheable({ ttl: 60, swr: 300 })
-@CacheTag((r) => [`title:${r.id}`, 'titles:popular'])
+// (result, args) => string[] | null — NEVER a bare string
+@Cacheable<[string]>({ ttl: 60, swr: 300 })
+@CacheTag((r, a) => [`title:${a[0]}`, 'titles:popular'])
 getTitle(id: string) {}
 
 // write — purge every entry carrying the tag, after success
@@ -37,11 +38,18 @@ updateTitle(id: string, dto: Dto) {}
 ```
 
 ```text
-lookup:   by key   -> cache:TitlesService.getTitle:{id:42}
+lookup:   by key   -> getTitle:{"a":[42]}
 purge:    by tag   -> SMEMBERS title:42 -> UNLINK each key
 ```
 
-Why it is right: the value is found by its key, and the tag is used only to find which keys to
-delete when the underlying data changes.
+**Derive the read's tag and the write's purge tag from the same value.** Here both use `args[0]`, so the
+strings are identical by construction. When the read has no argument carrying the id (a
+`getViewerDashboard()`-style method), the read must fall back to `result.id` — then the write has to
+produce that same string, including its type: `title:${42}` and `title:${'42'}` are different tags, and
+a number/ObjectId `id` on one side against a string on the other is a purge that silently misses.
+
+Why it is right: the value is found by its key, the tag is a `string[]` the engine can index, and the
+purge tag is derived from the same value as the attach tag, so a write cannot leave a stale entry
+behind.
 
 Reference: [mercurius-cache references](https://github.com/mercurius-js/cache)

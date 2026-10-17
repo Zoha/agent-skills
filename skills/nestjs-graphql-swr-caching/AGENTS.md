@@ -1,6 +1,6 @@
 # NestJS GraphQL SWR Caching
 
-**Version 2.0.0**
+**Version 2.1.0**
 NestJS GraphQL SWR Caching
 October 2026
 
@@ -13,7 +13,7 @@ October 2026
 
 ## Abstract
 
-Implementation and policy guide for stale-while-revalidate (SWR) caching of GraphQL reads in NestJS (code-first) applications, designed for AI agents and LLMs. Covers the one-time module wiring (a forRootAsync cache module, its tokens, storage, invalidation, and context), the five knobs (key, tag, scope, ttl, swr), the @Cacheable/@CacheTag/@CacheScope/@InvalidateTags decorator surface, where to mount caching (service, field, operation, transport), leak safety (default-public scope, per-caller key dimensions, the no-leak checklist), tag-invalidation mechanics (referencesTTL, atomic purge, cardinality, generation prefixes), observability (structured events, per-request trace, metrics), and the driver reality check across async-cache-dedupe, mercurius-cache, Apollo responseCachePlugin, Envelop, and CDN/APQ.
+Implementation and policy guide for stale-while-revalidate (SWR) caching of GraphQL reads in NestJS (code-first) applications, designed for AI agents and LLMs. Covers the one-time module wiring (a forRootAsync cache module, its tokens, storage, invalidation, and context), the five knobs (key, tag, scope, ttl, swr), the callback contract for key/tag derivation, the @Cacheable/@CacheTag/@CacheScope/@InvalidateTags decorator surface, where to mount caching (service, field, operation, transport), leak safety (default-public scope, per-caller key dimensions, the no-leak checklist), tag-invalidation mechanics (referencesTTL, atomic purge, cardinality, generation prefixes), observability (structured events, per-request trace, metrics), and the driver reality check across async-cache-dedupe, mercurius-cache, Apollo responseCachePlugin, Envelop, and CDN/APQ.
 
 ---
 
@@ -81,12 +81,14 @@ Five things break naive implementations:
 3. **Registration race** — register `client.define(name, …)` lazily and once; a second decorator
    running later must not re-wrap or re-define.
 4. **Context** — the wrapper must preserve `this`/`async` and read the caller from CLS (see
-   `setup-identity-context`), never assume a request. Read CLS **only** for a `perUser` entry, and
-   wrap the read so a missing context degrades to the source instead of throwing (see
+   `setup-identity-context`), never assume a request. Read the **user identity** from CLS only for a
+   `perUser` entry; read the other request dimensions (`tenantId`, `locale`) whenever a `key` override
+   needs them. Wrap every CLS read so a missing context degrades to the source instead of throwing (see
    `setup-fail-open`).
-5. **Callback contract** — `key`, `@CacheTag` and `@InvalidateTags` all receive the method's
-   **argument list** as their `args`, in call order. An example that reads `a.id` off a method whose
-   first parameter is a bare `id` silently produces `undefined` key parts.
+5. **Callback contract** — `key` receives `(args, ctx)` with `args` the method's **argument list**, in
+   call order; `@CacheTag` / `@InvalidateTags` receive `(result, args)` — **result first**. The list is
+   positional, so reading `args.id` off a method whose first parameter is a bare `id` produces
+   `undefined` key parts. The contract is canonical in `policy-key-derivation`.
 
 **Incorrect (unstable key + overwritten metadata):**
 
@@ -103,29 +105,56 @@ one method's entries to another.
 ```typescript
 // common/decorators/cache.decorators.ts
 //
-// One callback contract for the whole skill:
+// One callback contract for the whole skill (canonical copy: policy-key-derivation):
 //   key              = (args, ctx) => unknown[] | Promise<unknown[]>   args = the method's argument list, in call order
-//   @CacheTag        = (result, args) => string[] | null
-//   @InvalidateTags  = (result, args) => string[]
+//   @CacheTag        = (result, args) => string[] | null               result = the method's return value
+//   @InvalidateTags  = (result, args) => string[]                      both tag callbacks are SYNCHRONOUS
 // `ctx` carries request-derived dimensions; it is empty outside a request, so a job must pass what
-// it needs as an argument (see setup-identity-context).
+// it needs as an argument (see setup-identity-context). Annotate the argument tuple per method
+// (`@Cacheable<[string]>`), or the default `unknown[]` will not type-check.
 export const CACHE_META = Symbol('CACHE_META');
 const WRAPPED = Symbol('CACHE_WRAPPED');
 
 export interface CacheContext {
   userId?: string; tenantId?: string; locale?: string;
-  gen(name: string): Promise<number>;
+  pricingCohort?: string;              // add any other request-derived dimension here…
+  gen(name: string): Promise<number>;  // …and set it in buildCacheContext below
 }
-export type CacheKeyFn = (args: unknown[], ctx: CacheContext) => unknown[] | Promise<unknown[]>;
-type ArgsFn = (result: unknown, args: unknown[]) => string[] | null;
+export type CacheKeyFn<TArgs extends unknown[] = unknown[]> =
+  (args: TArgs, ctx: CacheContext) => unknown[] | Promise<unknown[]>;
+export type TagFn<TArgs extends unknown[] = unknown[], TResult = unknown> =
+  (result: TResult, args: TArgs) => string[] | null;
 
 interface CacheMeta {
   name?: string; ttl?: number; swr?: number;
-  keyFn?: CacheKeyFn; tagsFn?: ArgsFn; scope?: 'public' | 'perUser';
+  keyFn?: CacheKeyFn<any>; tagsFn?: TagFn<any, any>; scope?: 'public' | 'perUser';
 }
 
-export interface CacheableOptions { name?: string; ttl?: number; swr?: number; key?: CacheKeyFn }
+export interface CacheableOptions<TArgs extends unknown[] = unknown[]> {
+  name?: string; ttl?: number; swr?: number; key?: CacheKeyFn<TArgs>;
+}
 // NOTE: no `scope` and no `tags` — those are their own decorators (see policy-one-writing-pattern).
+
+// The ONE place `ctx` is assembled. Everything here comes from CLS, so outside a request (a job or a
+// subscription) each field is undefined and the caller must pass the value as an argument instead.
+// `gen` is the generation counter (see invalidation-generation-prefix) — cache its value briefly, it
+// is read on every key build.
+function buildCacheContext(userId?: string): CacheContext {
+  const read = <T>(key: string): T | undefined => {
+    try {
+      return ClsServiceManager.getClsService().get<T>(key) ?? undefined;
+    } catch {
+      return undefined;                  // no active context — a key build must never throw
+    }
+  };
+  return {
+    userId,
+    tenantId: read<string>('tenantId'),
+    locale: read<string>('locale'),
+    pricingCohort: read<string>('pricingCohort'),
+    gen: (name) => generationCounter(name),   // a briefly-cached redis INCR (invalidation-generation-prefix)
+  };
+}
 
 function merge(target: object, key: string | symbol, patch: Partial<CacheMeta>) {
   const current = Reflect.getMetadata(CACHE_META, target, key) ?? {};
@@ -142,7 +171,7 @@ function wrapOnce(target: any, propertyKey: string | symbol, descriptor: Propert
     if (!meta?.name) return original.apply(this, args);
     const scope = meta.scope ?? 'public';
 
-    // Read CLS only for a caller-scoped entry, and never let a missing context fail the request.
+    // Read the CLS identity only for a caller-scoped entry, and never let a missing context fail the request.
     let userId: string | undefined;
     if (scope === 'perUser') {
       try {
@@ -154,10 +183,11 @@ function wrapOnce(target: any, propertyKey: string | symbol, descriptor: Propert
     }
 
     const client = this.cache as Cache;
-    const ctx = buildCacheContext(userId);                   // { userId, tenantId, locale, gen }
-    // `await` so an async key (e.g. one that reads a generation counter) resolves before the
-    // argument bundle is serialized into the key; `await undefined` is harmless for a sync key.
-    const arg = { a: args, k: await meta.keyFn?.(args, ctx), u: userId };
+    // Build `ctx` only when a key override needs it — a CLS read is pointless otherwise. `await` so an
+    // async key (e.g. one that reads a generation counter) resolves before the argument bundle is
+    // serialized; `await undefined` is harmless for a sync key.
+    const k = meta.keyFn ? await meta.keyFn(args, buildCacheContext(userId)) : undefined;
+    const arg = { a: args, k, u: userId };   // the stored key is the name plus this whole bundle
 
     if (!(client as any)[meta.name]) {
       client.define(meta.name, {
@@ -175,7 +205,9 @@ function wrapOnce(target: any, propertyKey: string | symbol, descriptor: Propert
   return descriptor;
 }
 
-export function Cacheable(opts: CacheableOptions = {}): MethodDecorator {
+export function Cacheable<TArgs extends unknown[] = unknown[]>(
+  opts: CacheableOptions<TArgs> = {},
+): MethodDecorator {
   return (target, propertyKey, descriptor: PropertyDescriptor) => {
     // Prefer an explicit `name`. The fallback is the class name, which minification can change or
     // collide — always pass `name` when you ship a bundled/minified build (see point 1 above).
@@ -187,7 +219,9 @@ export function Cacheable(opts: CacheableOptions = {}): MethodDecorator {
 }
 
 // These record metadata only, so their position relative to @Cacheable does not matter.
-export const CacheTag = (tagsFn: ArgsFn): MethodDecorator =>
+export const CacheTag = <TArgs extends unknown[] = unknown[], TResult = unknown>(
+  tagsFn: TagFn<TArgs, TResult>,
+): MethodDecorator =>
   (target, propertyKey, descriptor: PropertyDescriptor) => {
     merge(target, propertyKey, { tagsFn });
     return wrapOnce(target, propertyKey, descriptor);
@@ -199,7 +233,9 @@ export const CacheScope = (scope: 'public' | 'perUser'): MethodDecorator =>
     return wrapOnce(target, propertyKey, descriptor);
   };
 
-export const InvalidateTags = (tagsFn: ArgsFn): MethodDecorator =>
+export const InvalidateTags = <TArgs extends unknown[] = unknown[], TResult = unknown>(
+  tagsFn: TagFn<TArgs, TResult>,
+): MethodDecorator =>
   (target, propertyKey, descriptor: PropertyDescriptor) => {
     const original = descriptor.value as (...a: unknown[]) => Promise<unknown>;
     descriptor.value = async function (this: any, ...args: unknown[]) {
@@ -262,7 +298,10 @@ const client = createCache({
 });
 
 // single-flight is built in: concurrent misses for one key -> one loader call
-client.define('TitlesService.getTitle', { references: (args, key, result) => [`title:${result.id}`] },
+// raw engine: `references` returns string[] (or null), and its first argument is what the defined fn
+// was called with — here the bare `id`, not the method's argument list (see driver-async-cache-dedupe)
+client.define('TitlesService.getTitle',
+  { references: (args, key, result) => (result ? [`title:${result.id}`] : null) },
   (id: string) => this.repo.findById(id));
 ```
 
@@ -704,36 +743,82 @@ fragment.
 ```typescript
 // default — the wrapper passes the method's arguments through unchanged, so the stored key is the
 // name plus that bundle:  TitlesService.getTitle:{"a":[42]}
-@Cacheable({ ttl: 60, swr: 300 })
+@Cacheable<[string]>({ ttl: 60, swr: 300 })
 getTitle(id: string) {}
 
 // override ONLY to add a dimension the args do not carry (locale, tenant, or a job with no request)
-@Cacheable({ ttl: 60, swr: 300, key: (args, ctx) => ['title', args[0], ctx.locale] })
+@Cacheable<[string]>({ ttl: 60, swr: 300, key: (args, ctx) => ['title', args[0], ctx.locale] })
 getTitle(id: string) {}
 ```
 
-**The callback contract** — one shape, everywhere in this skill:
+**The callback contract** — canonical: every other rule in this skill refers here.
 
 ```typescript
-type CacheKeyFn = (args: unknown[], ctx: CacheContext) => unknown[] | Promise<unknown[]>;
+type CacheKeyFn<TArgs extends unknown[] = unknown[]> =
+  (args: TArgs, ctx: CacheContext) => unknown[] | Promise<unknown[]>;
+
+type TagFn<TArgs extends unknown[] = unknown[], TResult = unknown> =
+  (result: TResult, args: TArgs) => string[] | null;
 
 interface CacheContext {
-  userId?: string; tenantId?: string; locale?: string;   // from CLS, per request
-  gen(name: string): Promise<number>;                     // generation counter (see invalidation-generation-prefix)
+  userId?: string; tenantId?: string; locale?: string;   // from CLS, built per call (see setup-decorator-runtime)
+  pricingCohort?: string;                                // …and any other request-derived dimension
+  gen(name: string): Promise<number>;                    // generation counter (see invalidation-generation-prefix)
 }
 ```
 
-- `args` is the method's **argument list, in call order**, so `args[0]` is the first parameter.
-  `@CacheTag` and `@InvalidateTags` receive the same list as their second argument. An example that
-  reads `a.id` off a method taking a bare `id` is wrong — it yields `undefined`.
+**What each parameter is, and where it comes from:**
+
+| Callback | Receives | What builds it |
+|---|---|---|
+| `key(args, ctx)` | `args` = the method's **argument list, in call order**; `ctx` = request-derived dimensions | `args` is the wrapper's rest-parameter array; `ctx` comes from `buildCacheContext` (`setup-decorator-runtime`) |
+| `@CacheTag(result, args)` | `result` = the method's **return value**; `args` = that same argument list | the resolved value the engine is about to store |
+| `@InvalidateTags(result, args)` | same shape as `@CacheTag` — **result first** | the write's return value, after it resolves |
+
+- `args[0]` is the first parameter — the list is positional, never a property. Reading `args.id` off a
+  method whose first parameter is a bare `id` yields `undefined`.
 - `ctx` carries the request-derived dimensions a positional argument cannot hold. It is empty outside
   a request, so a job or subscription must pass the value it needs as an argument instead (see
   `setup-identity-context`).
 - Return an **array of primitives** (or a promise of one, for a key that needs `ctx.gen`). It becomes
   the `k` part of the stored bundle, so the final key stays stable and readable in events.
 
+**Typing the callbacks.** The defaults are `unknown[]` / `unknown`, so a template literal like
+`` `title:${a[0]}` `` does not type-check. Annotate the argument tuple once, per method — the first
+type argument is always the tuple, so the decorators line up:
+
+```typescript
+@Cacheable<[string]>({ ttl: 60, swr: 300, key: (args) => ['title', args[0]] }) // args[0]: string
+@CacheTag<[string]>((r, a) => [`title:${a[0]}`])                              // a[0]: string
+getTitle(id: string) {}
+```
+
+**How the stored key is assembled.** The wrapper always keys on the whole bundle
+`{ a: args, k: keyParts, u: userId }`, so a `key` override is **additive** — the raw arguments stay in
+`a` even when you pass an override:
+
+```text
+TitlesService.getTitle:{"a":[42]}                           ← no override
+TitlesService.getTitle:{"a":[42],"k":["title",42,"en-US"]}  ← with key: (args, ctx) => ['title', args[0], ctx.locale]
+```
+
+An override may repeat the arguments in `k` (readable in events) or return only the extra dimensions;
+either way `a` is present. Confirm the real key from an event (`observability-structured-events`)
+instead of guessing from a diagram.
+
+**Serialization edge cases (they change the key):**
+
+- `args` is serialized as-is, so `getTitle(42)` and `getTitle(42, undefined)` produce **different**
+  keys (`[42]` vs `[42,null]`). Call the method the same way everywhere, or normalize in the override.
+- An argument that is not plain data (a `Date`, an `ObjectId`, a document/DTO instance) is serialized by
+  its own shape. Pass the id, not the entity.
+- `key` may be **async** (for `ctx.gen`); `@CacheTag` / `@InvalidateTags` are **synchronous** — they
+  return `string[] | null`, never a promise.
+
 Why it is right: the default key is stable and named after the method, an override is a visible,
-reviewable decision rather than the norm, and the callback shape is the same everywhere.
+reviewable decision rather than the norm, and the service-level callback shape is the same everywhere.
+At the **field/resolver** layer the driver supplies its own signatures — there `args` is the resolver's
+named-argument object and `ctx` is the GraphQL context (see `driver-mercurius-cache`).
 
 Also: the key must be **readable in events, not hashed** (see `observability-structured-events`), and
 must never contain secrets.
@@ -760,6 +845,13 @@ Reference: [safe-stable-stringify](https://github.com/BridgeAR/safe-stable-strin
 - **Operation/transport layers don't exist at service level.** Apollo's response cache and CDN
   headers are transport concerns, and neither supports tag invalidation.
 
+The **callback signatures are not** identical. At service level `args` is the method's positional
+argument list (`args[0]`, and `(result, args)` on the tag callbacks — see `policy-key-derivation`). At
+field level the driver hands you the resolver's **named-argument object** and the **GraphQL context** —
+`extendKey: (self, args, ctx)` with `args.id`, not `args[0]`, and `ctx.userId`/`ctx.user` rather than
+the skill's `CacheContext`. Do not copy a service-level callback into a field-level policy unchanged
+(see `driver-mercurius-cache`).
+
 **Incorrect (starting at the operation layer, and losing dedupe):**
 
 ```typescript
@@ -775,8 +867,8 @@ way to invalidate on write.
 ```typescript
 @Injectable()
 export class TitlesService {
-  @Cacheable({ ttl: 60, swr: 300 })
-  @CacheTag((r) => `title:${r.id}`)
+  @Cacheable<[string]>({ ttl: 60, swr: 300 })
+  @CacheTag((r, a) => [`title:${a[0]}`])   // same source as the write's purge (invalidation-tags-purge-only)
   getTitle(id: string) { return this.repo.findById(id); } // the expensive unit, cached once
 }
 ```
@@ -813,8 +905,8 @@ between methods so nothing is scannable.
 
 ```typescript
 // public (default) — one entry shared by every caller
-@Cacheable({ ttl: 60, swr: 300, key: (args) => ['title', args[0]] })
-@CacheTag((r) => `title:${r.id}`)   // invalidation refs (stackable); (result, args) => string[]
+@Cacheable<[string]>({ ttl: 60, swr: 300, key: (args) => ['title', args[0]] })
+@CacheTag((r, a) => [`title:${a[0]}`])   // (result, args) => string[]; same source as the purge below
 getTitle(id: string) {}
 
 // caller-scoped — explicit, because the result varies per caller
@@ -833,6 +925,9 @@ and every method uses the same three shapes.
 Rules:
 
 - `@Cacheable` takes only `key`, `ttl`, `swr`. Never put `scope` or `tags` inside it.
+- `@CacheTag(result, args)` returns `string[] | null` — never a bare string — and must be derived from
+  the same value the matching `@InvalidateTags` uses, so the write purges exactly the string the read
+  attached (see `invalidation-tags-purge-only`).
 - `@InvalidateTags` fires **after success** only (see `invalidation-after-success`).
 - Tags are optional — use them when you need revocation, otherwise let `ttl` expire the entry.
 
@@ -852,7 +947,7 @@ writing pattern: the decorators are the one way, and they are always preferred f
 
 ```typescript
 async getTitle(id: string) {
-  return this.cache.wrap({ key: `title:${id}`, ttl: 60, swr: 300, load: () => this.repo.find(id) });
+  return this.cache.wrap({ key: ['title', id], ttl: 60, swr: 300, load: () => this.repo.find(id) });
 }
 ```
 
@@ -868,6 +963,7 @@ getTitle(id: string) {}
 // escape hatch: the TTL genuinely depends on a runtime decision
 async getFeed(segment: string) {
   const policy = await this.policies.forSegment(segment); // runtime-computed
+  // the same key parts a `key` override would return: an array of primitives, never a hand-built string
   return this.cache.wrap({ key: ['feed', segment], ...policy, load: () => this.repo.feed(segment) });
 }
 ```
@@ -954,7 +1050,7 @@ Why it is wrong: user 123 has the same key in every tenant, so tenant A's row is
 **Correct (user via scope; every other dimension as an explicit key part):**
 
 ```typescript
-@Cacheable({
+@Cacheable<[string]>({
   ttl: 60,
   swr: 300,
   key: (args, ctx) => ['title', args[0], ctx.tenantId, ctx.locale, ctx.pricingCohort],
@@ -962,9 +1058,14 @@ Why it is wrong: user 123 has the same key in every tenant, so tenant A's row is
 @CacheScope('perUser')
 getTitle(id: string) {}
 
-// key parts ['title', 42, 'acme', 'en-US', 'B'] plus the perUser segment, so tenant A's row can
-// never be served in tenant B
+// stored key: getTitle:{"a":[42],"k":["title",42,"acme","en-US","B"],"u":123} — every dimension
+// except the user is in `k`; the user is in `u` (see policy-key-derivation for the bundle)
 ```
+
+A new dimension is added in **two** places, because `ctx` is a plain object assembled per call: the
+field on `CacheContext` **and** the matching CLS read in `buildCacheContext` (both in
+`setup-decorator-runtime`). `pricingCohort` above is exactly such a field — it is not magic, it is a CLS
+key you set once and read here.
 
 Why it is right: scope handles *who*, the key handles *everything else*, so two different tenants (or
 locales, or flag cohorts) can never share an entry.
@@ -988,6 +1089,9 @@ Before any cached read merges, confirm every line:
 - [ ] Never cache errors (a rejected loader leaves the cache untouched).
 - [ ] Negative results (`null` / "not found") are a deliberate decision — cache them only with a
       short TTL, or a bad id hammers the source on every request.
+- [ ] Tags are **`string[]`** (never a bare string) and derived from the same value as the matching
+      `@InvalidateTags`, so the write purges exactly the string the read attached (see
+      `invalidation-tags-purge-only`).
 - [ ] Tag index has a **cardinality ceiling**; purge atomically (`SMEMBERS`+`UNLINK` in one Lua script),
       never `KEYS`/unbounded `SCAN`.
 - [ ] `referencesTTL` ≥ longest `ttl + swr`, and references are garbage-collected.
@@ -1009,9 +1113,11 @@ negative behaviour) and nothing in the code says so.
 **Correct (the checklist is satisfied visibly in the annotation):**
 
 ```typescript
+// no arguments, so the id can only come from `result` — the write that changes this account must
+// purge the identical `account:<id>` string (see invalidation-tags-purge-only)
 @Cacheable({ ttl: 300, swr: 300, key: (args, ctx) => ['account', ctx.tenantId] })
 @CacheScope('perUser')
-@CacheTag((r) => `account:${r.id}`)
+@CacheTag((r) => [`account:${r.id}`])
 getAccount() { return this.repo.for(this.cls.get('userId')); }
 ```
 
@@ -1064,6 +1170,10 @@ changes the data.
 Also: a durable write + a non-durable purge can desync (write commits, purge fails → stale until
 `ttl + swr`). If that window is unacceptable, either make the purge retryable or treat the hard TTL as
 the backstop by design.
+
+Also: the string you purge must be the string the read attached — derive both from the same value
+(`args` when the id is an argument, `result` otherwise) and match the type (see
+`invalidation-tags-purge-only`).
 
 Reference: [NestJS Events](https://docs.nestjs.com/techniques/events)
 
@@ -1150,7 +1260,7 @@ Why it is wrong: a cluster-wide `SCAN` is expensive, per-node, and races with co
 
 ```typescript
 // read site — the generation is part of the key
-@Cacheable({
+@Cacheable<[string]>({
   ttl: 3600,
   swr: 300,
   key: async (args, ctx) => ['catalog', args[0], await ctx.gen('catalog')],
@@ -1162,15 +1272,17 @@ await redis.incr('gen:catalog');
 ```
 
 ```text
-before:  catalog:books:g4:...
-after INCR: catalog:books:g5:...   (g4 keys expire untouched)
+before:      getCatalog:{"a":["books"],"k":["catalog","books",4]}
+after INCR:  getCatalog:{"a":["books"],"k":["catalog","books",5]}   (generation-4 keys expire untouched)
 ```
 
 Why it is right: invalidation is O(1) and cluster-safe, and stale keys are reclaimed by their TTL
 rather than by a scan.
 
-Pair the generation with a **short hard TTL** so the old generation's keys self-clear, and cache the
-counter value briefly (it is read on every key build) to avoid a Redis round-trip per call.
+`ctx.gen(name)` is the read side of this counter; it is assembled with the rest of `ctx` in
+`buildCacheContext` (`setup-decorator-runtime`). Pair the generation with a **short hard TTL** so the old
+generation's keys self-clear, and cache the counter value briefly (it is read on every key build) to
+avoid a Redis round-trip per call.
 
 Reference: [Redis INCR](https://redis.io/commands/incr)
 
@@ -1198,8 +1310,9 @@ key→value association.
 
 ```typescript
 // read — attach tags that describe what would invalidate this value
-@Cacheable({ ttl: 60, swr: 300 })
-@CacheTag((r) => [`title:${r.id}`, 'titles:popular'])
+// (result, args) => string[] | null — NEVER a bare string
+@Cacheable<[string]>({ ttl: 60, swr: 300 })
+@CacheTag((r, a) => [`title:${a[0]}`, 'titles:popular'])
 getTitle(id: string) {}
 
 // write — purge every entry carrying the tag, after success
@@ -1208,12 +1321,19 @@ updateTitle(id: string, dto: Dto) {}
 ```
 
 ```text
-lookup:   by key   -> cache:TitlesService.getTitle:{id:42}
+lookup:   by key   -> getTitle:{"a":[42]}
 purge:    by tag   -> SMEMBERS title:42 -> UNLINK each key
 ```
 
-Why it is right: the value is found by its key, and the tag is used only to find which keys to
-delete when the underlying data changes.
+**Derive the read's tag and the write's purge tag from the same value.** Here both use `args[0]`, so the
+strings are identical by construction. When the read has no argument carrying the id (a
+`getViewerDashboard()`-style method), the read must fall back to `result.id` — then the write has to
+produce that same string, including its type: `title:${42}` and `title:${'42'}` are different tags, and
+a number/ObjectId `id` on one side against a string on the other is a purge that silently misses.
+
+Why it is right: the value is found by its key, the tag is a `string[]` the engine can index, and the
+purge tag is derived from the same value as the attach tag, so a write cannot leave a stale entry
+behind.
 
 Reference: [mercurius-cache references](https://github.com/mercurius-js/cache)
 
@@ -1434,7 +1554,7 @@ fresh hit from a stale one.
 **Correct (one typed event per decision, carried in request context):**
 
 ```typescript
-emit({ layer: 'service', key: 'TitlesService.getTitle:{id:42}', outcome: 'hit',
+emit({ layer: 'service', key: 'TitlesService.getTitle:{"a":[42]}', outcome: 'hit',
        scope: 'public', freshMs: 60_000, swrMs: 300_000, durationMs: 3, requestId });
 ```
 
@@ -1580,6 +1700,8 @@ Why it is wrong: nothing links the entry to the user it came from, so an update 
 cache.define('getUser', {
   ttl: 60,
   stale: 300,
+  // raw engine: here `args` is the single value passed to the defined fn (the id), NOT the method's
+  // argument list — the decorator wrapper in setup-decorator-runtime passes a `{ a, k, u }` bundle
   references: (args, key, result) => (result ? [`user:${result.id}`] : null),
 }, (id: string) => db.user(id));
 
@@ -1721,15 +1843,25 @@ Only first-class option that caches **per resolver field** with a real SWR windo
 - Global: `ttl`, `stale`, `all`, `storage: { type: 'memory'|'redis' }`
 - Per-policy (`policy: { Type: { field: {...} } }`):
   - `ttl`, `stale` (per-field)
-  - `references: (args, key, result) => string[]` — tag invalidation
+  - `references: (info, key, result) => string[]` — tag invalidation; `result` is the **third**
+    argument and `info` is the resolver bundle `{ source, args, context, info }`
   - `extendKey: (self, args, ctx) => string` — per-user keying (the no-leak control)
   - `skip: (self, args, ctx) => boolean` — bypass for auth/admin
-  - `key` — custom serializer; `storage` — per-policy memory vs redis
+  - `key` — custom serializer; at field level it must return a **string**, not an array
+  - `storage` — per-policy memory vs redis
 - Invalidate: `app.graphql.cache.invalidate(['product:42'])`
 - Built on `async-cache-dedupe` → dedupe + `gc` for reference integrity.
 - NestJS wiring: `plugins: [{ plugin: mercuriusCache, options: { ... } }]`.
 
 ⚠️ **Default key is global.** Without `extendKey`/`skip`, private fields leak.
+
+⚠️ **Field level is not service level.** Here `args` is the resolver's **named-argument object**
+(`args.id`, not `args[0]`), `ctx` is the **GraphQL context** (`ctx.userId`, `ctx.user`), and `self` is
+the parent resolver's value. The service-level callback contract in `policy-key-derivation` does not
+apply to these callbacks — only the five knobs do. mercurius-cache's own docs show `references` in two
+shapes (`(args, key, result)` and `({ source, args, context, info }, key, result)`); confirm which your
+pinned version calls (see `driver-version-pinning`), but in **both** `result` is a positional argument —
+never a property of the first one.
 
 **Incorrect (global key on a viewer field):**
 
@@ -1749,7 +1881,10 @@ policy: {
       stale: 300,
       extendKey: (self, args, ctx) => (ctx.userId ? `user:${ctx.userId}` : undefined),
       skip: (self, args, ctx) => !!ctx.user?.isAdmin,
-      references: ({ args, result }) => (result ? [`viewer:${result.id}`] : null),
+      // info first, key second, result THIRD — destructuring `result` off the first argument yields
+      // undefined and attaches no references at all
+      references: ({ source, args, context, info }, key, result) =>
+        (result ? [`viewer:${result.id}`] : null),
     },
   },
 }

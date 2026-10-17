@@ -33,6 +33,8 @@ Why it is wrong: nothing links the entry to the user it came from, so an update 
 cache.define('getUser', {
   ttl: 60,
   stale: 300,
+  // raw engine: here `args` is the single value passed to the defined fn (the id), NOT the method's
+  // argument list — the decorator wrapper in setup-decorator-runtime passes a `{ a, k, u }` bundle
   references: (args, key, result) => (result ? [`user:${result.id}`] : null),
 }, (id: string) => db.user(id));
 

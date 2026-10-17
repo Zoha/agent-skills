@@ -17,7 +17,7 @@ writing pattern: the decorators are the one way, and they are always preferred f
 
 ```typescript
 async getTitle(id: string) {
-  return this.cache.wrap({ key: `title:${id}`, ttl: 60, swr: 300, load: () => this.repo.find(id) });
+  return this.cache.wrap({ key: ['title', id], ttl: 60, swr: 300, load: () => this.repo.find(id) });
 }
 ```
 
@@ -33,6 +33,7 @@ getTitle(id: string) {}
 // escape hatch: the TTL genuinely depends on a runtime decision
 async getFeed(segment: string) {
   const policy = await this.policies.forSegment(segment); // runtime-computed
+  // the same key parts a `key` override would return: an array of primitives, never a hand-built string
   return this.cache.wrap({ key: ['feed', segment], ...policy, load: () => this.repo.feed(segment) });
 }
 ```

@@ -31,7 +31,7 @@ Why it is wrong: user 123 has the same key in every tenant, so tenant A's row is
 **Correct (user via scope; every other dimension as an explicit key part):**
 
 ```typescript
-@Cacheable({
+@Cacheable<[string]>({
   ttl: 60,
   swr: 300,
   key: (args, ctx) => ['title', args[0], ctx.tenantId, ctx.locale, ctx.pricingCohort],
@@ -39,9 +39,14 @@ Why it is wrong: user 123 has the same key in every tenant, so tenant A's row is
 @CacheScope('perUser')
 getTitle(id: string) {}
 
-// key parts ['title', 42, 'acme', 'en-US', 'B'] plus the perUser segment, so tenant A's row can
-// never be served in tenant B
+// stored key: getTitle:{"a":[42],"k":["title",42,"acme","en-US","B"],"u":123} — every dimension
+// except the user is in `k`; the user is in `u` (see policy-key-derivation for the bundle)
 ```
+
+A new dimension is added in **two** places, because `ctx` is a plain object assembled per call: the
+field on `CacheContext` **and** the matching CLS read in `buildCacheContext` (both in
+`setup-decorator-runtime`). `pricingCohort` above is exactly such a field — it is not magic, it is a CLS
+key you set once and read here.
 
 Why it is right: scope handles *who*, the key handles *everything else*, so two different tenants (or
 locales, or flag cohorts) can never share an entry.
