@@ -22,6 +22,7 @@ skills/             # one folder per skill
 ```bash
 cd scripts
 npm install
+npm run typecheck
 npm run build
 npm test
 ```
@@ -29,11 +30,12 @@ npm test
 The generator discovers every skill under `skills/`, compiles its rules, and writes
 `skills/<name>/AGENTS.md` plus the `GENERATED` marker sections of `skills/<name>/SKILL.md`.
 
-`npm test` runs the guards that keep the generated output honest: a fresh build must match the
-committed `AGENTS.md`/`SKILL.md` byte for byte, every rule reference must resolve, and every rule
-file must survive the build (no silent skips). CI runs `npm ci`, `npm run build`, a
-`git status` drift check, and `npm test` on every push and pull request, so rebuild before you
-commit.
+`npm run typecheck` runs `tsc --noEmit` over the generator and its tests (`strict`, plus unused
+locals/parameters). `npm test` runs the guards that keep the generated output honest: a fresh build
+must match the committed `AGENTS.md`/`SKILL.md` byte for byte, every rule reference must resolve,
+and every rule file must survive the build (no silent skips). CI runs `npm ci`, `npm run typecheck`,
+`npm run build`, a `git status` drift check, and `npm test` on every push and pull request, so
+rebuild before you commit.
 
 ## Adding a Rule
 

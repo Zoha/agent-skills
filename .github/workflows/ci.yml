@@ -28,6 +28,10 @@ jobs:
         working-directory: scripts
         run: npm ci
 
+      - name: Typecheck
+        working-directory: scripts
+        run: npm run typecheck
+
       - name: Rebuild generated output
         working-directory: scripts
         run: npm run build

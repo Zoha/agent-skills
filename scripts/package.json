@@ -9,9 +9,11 @@
   "scripts": {
     "build": "tsx build-agents.ts",
     "build:watch": "tsx watch build-agents.ts",
+    "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test \"test/*.test.ts\""
   },
   "devDependencies": {
+    "@types/node": "^26.6.5",
     "tsx": "^4.0.0",
     "typescript": "^5.0.0"
   }
