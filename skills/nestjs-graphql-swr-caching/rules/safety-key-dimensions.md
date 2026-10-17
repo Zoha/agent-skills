@@ -1,0 +1,51 @@
+---
+title: Scope Covers the User Only — Every Other Dimension Goes in the Key
+impact: CRITICAL
+impactDescription: scope is not a substitute for key dimensions
+tags: key, scope, tenant, locale, roles
+---
+
+## Scope Covers the User Only — Every Other Dimension Goes in the Key
+
+**Impact: CRITICAL (scope is not a substitute for key dimensions)**
+
+`@CacheScope` answers exactly one question: **may callers share this entry?** It selects between
+`public` and *the requesting user's* segment. It does **not** encode tenant, locale, role/scope,
+currency, feature-flag cohort, or any other dimension the result varies by.
+
+Confusing "scope" with "which identity segments enter the key" is how a `perUser` entry still leaks
+across tenants. Every result-varying dimension — user **and** everything else — must be present in the
+final key: the user via `@CacheScope('perUser')`, the rest via `@Cacheable({ key })`.
+
+**Incorrect (perUser, but tenant/locale missing from the key):**
+
+```typescript
+// two tenants share cache:TitlesService.getTitle:u:123:{id:42}
+@Cacheable({ ttl: 60, swr: 300 })
+@CacheScope('perUser')
+getTitle(id: string) { return this.repo.findById(id); } // tenant-scoped in the DB, not in the key
+```
+
+Why it is wrong: user 123 has the same key in every tenant, so tenant A's row is served in tenant B.
+
+**Correct (user via scope; every other dimension as an explicit key part):**
+
+```typescript
+@Cacheable({
+  ttl: 60,
+  swr: 300,
+  key: (a, ctx) => ['title', a.id, ctx.tenantId, ctx.locale, ctx.pricingCohort],
+})
+@CacheScope('perUser')
+getTitle(id: string) {}
+
+// -> cache:TitlesService.getTitle:u:123:t:acme:l:en-US:cohort:B:{id:42}
+```
+
+Why it is right: scope handles *who*, the key handles *everything else*, so two different tenants (or
+locales, or flag cohorts) can never share an entry.
+
+Rule of thumb: after writing any `@Cacheable`, list every input that can change the result — user,
+tenant, locale, role/scope, currency, flag cohort — and confirm each is in the scope **or** the key.
+
+Reference: [NestJS GraphQL Resolvers](https://docs.nestjs.com/graphql/resolvers)
