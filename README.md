@@ -2,6 +2,17 @@
 
 A structured repository of agent skills (rule-based coding guidelines) with a build generator.
 
+## Included Skills
+
+| Skill | What it covers |
+|-------|----------------|
+| `nestjs-best-practices` | Framework behaviour: architecture, DI, error handling, security, performance, testing, microservices, DevOps. |
+| `nestjs-graphql-structure` | File placement and anatomy for a feature-first, code-first GraphQL app, plus module-resolution rules. |
+| `nestjs-elasticsearch` | Elasticsearch-backed search: index ownership, sync and reindex, ID-only queries with MongoDB hydration, cursor pagination, the optional-backend seam. |
+| `nestjs-graphql-swr-caching` | Stale-while-revalidate caching of GraphQL reads: module wiring, the five knobs, leak safety, tag invalidation, observability, driver reality. |
+
+The last three cross-reference `nestjs-best-practices` for behavioural depth.
+
 ## Structure
 
 ```
