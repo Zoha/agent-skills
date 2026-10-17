@@ -48,7 +48,7 @@ export class UsersSearchIndexRegistration implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    this.registry.register(USERS_INDEX, this.repo); // alias -> repository
+    this.registry.register(USERS_INDEX, this.repo, User.name); // alias -> { repository, model }
     await this.registry.ensure(this.es, USERS_INDEX); // idempotent create
   }
 }
@@ -67,10 +67,11 @@ export class AppModule {}
 ```
 
 Why it is right: each feature owns and registers its own index, the registry maps alias →
-repository for the shared processor, and neither `AppModule` nor infra knows a feature name.
+repository and model for the shared processor, and neither `AppModule` nor infra knows a feature name.
 
-The registry stores `alias -> { definition, repository }`, which is what lets the single shared
-reindex processor resolve a feature's repository without importing the feature.
+The registry stores `alias -> { definition, repository, model }`, which is what lets the single shared
+reindex processor resolve a feature's repository without importing the feature, and what lets the
+MongoDB fallback resolve a feature's model by alias (see `cfg-mongo-fallback-backend`).
 
 `register` runs before `ensure` so the shared processor can resolve the alias the moment it starts.
 `ensure` is the network call, and it must never abort bootstrap: an unreachable cluster defers to

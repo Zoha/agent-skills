@@ -37,6 +37,16 @@ shared layer and every feature.
 
 ```typescript
 // common/search/search.backend.ts — the seam
+// One backend is provided app-wide, so every request names the alias it targets. That is what
+// lets a single backend serve every feature's index.
+export interface SearchRequest {
+  alias: string;           // the feature's index alias (see arch-feature-owned-index)
+  term?: string;           // the user's search text; each engine builds its own query from it
+  sort: object[];          // the requested sort, then the unique tiebreaker
+  limit: number;
+  cursor?: string | null;  // opaque cursor over the sort values
+}
+
 export interface SearchBackend {
   readonly enabled: boolean; // false -> the write path and ensure are skipped
   ensureIndex(def: SearchIndexDef<unknown>): Promise<void>;

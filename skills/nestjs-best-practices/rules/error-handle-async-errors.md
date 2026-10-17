@@ -42,6 +42,7 @@ export class OrdersService {
 }
 
 // Missing try-catch in scheduled tasks
+// (@Cron fires inside every replica — see micro-use-queues for fleet-wide scheduling.)
 @Cron('0 0 * * *')
 async dailyCleanup(): Promise<void> {
   await this.cleanupService.run();

@@ -1,6 +1,6 @@
 # NestJS Best Practices
 
-**Version 1.3.0**
+**Version 1.4.0**
 NestJS Best Practices
 October 2026
 
@@ -13,7 +13,7 @@ October 2026
 
 ## Abstract
 
-Comprehensive best practices and architecture guide for NestJS applications, designed for AI agents and LLMs. Contains 41 rules across 10 categories, prioritized by impact from critical (architecture, dependency injection) to incremental (DevOps patterns). Each rule includes detailed explanations, real-world examples comparing incorrect vs. correct implementations, and specific impact metrics to guide automated refactoring and code generation.
+Comprehensive best practices and architecture guide for NestJS applications, designed for AI agents and LLMs. Rules are prioritized by impact from critical (architecture, dependency injection) to incremental (DevOps patterns). Each rule includes detailed explanations, real-world examples comparing incorrect vs. correct implementations, and specific impact metrics to guide automated refactoring and code generation.
 
 ---
 
@@ -1630,6 +1630,7 @@ export class OrdersService {
 }
 
 // Missing try-catch in scheduled tasks
+// (@Cron fires inside every replica — see micro-use-queues for fleet-wide scheduling.)
 @Cron('0 0 * * *')
 async dailyCleanup(): Promise<void> {
   await this.cleanupService.run();
@@ -2120,7 +2121,16 @@ Reference: [NestJS Authentication](https://docs.nestjs.com/security/authenticati
 
 **Impact: HIGH** — Protects against abuse and ensures fair resource usage
 
-Use `@nestjs/throttler` to limit request rates per resolver. Apply different limits for different resolvers - stricter for auth mutations, more relaxed for read queries. For GraphQL, also consider query complexity analysis to prevent expensive queries. Use Redis for distributed rate limiting in clustered deployments.
+Use `@nestjs/throttler` to limit request rates per resolver. Apply different limits for different resolvers - stricter for auth mutations, more relaxed for read queries. For GraphQL, also consider query complexity analysis to prevent expensive queries.
+
+**Clustered deployments need a shared store.** The built-in storage is an in-memory, per-process
+cache, so with N replicas each process counts independently and every limit is effectively
+multiplied by N. Set a Redis-backed storage so all replicas share one counter.
+
+**Version pairing.** The community Redis store used below
+(`@nest-lab/throttler-storage-redis`) declares `@nestjs/throttler >= 6` as a peer dependency. On
+throttler v5 either upgrade, or implement the `ThrottlerStorage` interface over your existing Redis
+client (its atomic `increment` is the only method that matters).
 
 **Incorrect (no rate limiting on sensitive resolvers):**
 
@@ -2156,28 +2166,26 @@ export class QueryResolver {
 **Correct (configured throttler with resolver-specific limits):**
 
 ```typescript
-// Configure throttler globally with multiple limits
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+// Configure throttler globally with multiple limits and a shared (Redis) store
+import { ThrottlerModule, ThrottlerGuard, seconds } from '@nestjs/throttler';
+import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 
 @Module({
   imports: [
-    ThrottlerModule.forRoot([
-      {
-        name: 'short',
-        ttl: 1000, // 1 second
-        limit: 3, // 3 requests per second
-      },
-      {
-        name: 'medium',
-        ttl: 10000, // 10 seconds
-        limit: 20, // 20 requests per 10 seconds
-      },
-      {
-        name: 'long',
-        ttl: 60000, // 1 minute
-        limit: 100, // 100 requests per minute
-      },
-    ]),
+    ThrottlerModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        // ttl is in MILLISECONDS in throttler v5+; `seconds(...)` keeps it readable
+        throttlers: [
+          { name: 'short', ttl: seconds(1), limit: 3 },
+          { name: 'medium', ttl: seconds(10), limit: 20 },
+          { name: 'long', ttl: seconds(60), limit: 100 },
+        ],
+        // REQUIRED in a clustered deployment. With the default storage each replica keeps its own
+        // counter, so N replicas allow N x the limit. One shared Redis store enforces it globally.
+        storage: new ThrottlerStorageRedisService(config.get<string>('redis.url')),
+      }),
+    }),
   ],
   providers: [
     {
@@ -2847,9 +2855,10 @@ export class ModulePreloader implements OnApplicationBootstrap {
   constructor(private lazyModuleLoader: LazyModuleLoader) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    // `.unref()` so a pending preload never holds the process open during shutdown
     setTimeout(async () => {
       await this.preloadModule(() => import('./reports/reports.module'));
-    }, 5000); // 5 seconds after startup
+    }, 5000).unref(); // 5 seconds after startup
   }
 
   private async preloadModule(importFn: () => Promise<any>): Promise<void> {
@@ -3053,25 +3062,25 @@ export class ProductsService {
   }
 }
 
-// Decorator-based caching for GraphQL. Define GraphQLCacheInterceptor once in
+// Decorator-based caching for GraphQL. GraphQLCacheInterceptor is defined ONCE, in
 // common/interceptors/ (see use-interceptors) — the GraphQL-aware version derives its
 // key from the field and its args, so findOne(id: 'a') and findOne(id: 'b') never
 // share an entry (unlike a static @CacheKey).
 
-// Apply it per resolver; @SetMetadata('cacheTTL', ...) sets the TTL
+// Apply it per resolver; @SetMetadata('cacheTtlMs', ...) sets the TTL in MILLISECONDS
 @Resolver(() => Category)
 @UseInterceptors(GraphQLCacheInterceptor)
 export class CategoriesQueryResolver {
   constructor(private readonly categoriesService: CategoriesService) {}
 
   @Query(() => [Category])
-  @SetMetadata('cacheTTL', 30 * 60 * 1000) // 30 minutes - categories rarely change
+  @SetMetadata('cacheTtlMs', 30 * 60 * 1000) // 30 minutes - categories rarely change
   findAll(): Promise<Category[]> {
     return this.categoriesService.findAll();
   }
 
   @Query(() => Category)
-  @SetMetadata('cacheTTL', 60 * 1000) // 1 minute - keyed per id
+  @SetMetadata('cacheTtlMs', 60 * 1000) // 1 minute - keyed per id
   findOne(@Args('id', ParseObjectIdPipe) id: string): Promise<Category> {
     return this.categoriesService.findOne(id);
   }
@@ -3092,6 +3101,10 @@ export class CategoriesController {
 }
 
 // Event-based cache invalidation
+//
+// LIMITATION: @nestjs/event-emitter is IN-PROCESS. With more than one replica the event fires only
+// inside the process that emitted it, so every other replica keeps serving the stale entry until its
+// TTL. This form is correct ONLY for a single-instance deployment.
 @Injectable()
 export class CacheInvalidationService {
   constructor(@Inject(CACHE_MANAGER) private cache: Cache) {}
@@ -3106,6 +3119,36 @@ export class CacheInvalidationService {
     ]);
   }
 }
+
+// Multi-instance: the purge has to reach EVERY replica. Enqueue one job onto a shared queue and let
+// whichever worker picks it up do the purge, so invalidation is not tied to the emitting process.
+@Injectable()
+export class ProductEventsPublisher {
+  constructor(@InjectQueue('cache-invalidation') private readonly queue: Queue) {}
+
+  @OnEvent('product.updated')
+  @OnEvent('product.deleted')
+  async enqueueInvalidation(event: ProductEvent): Promise<void> {
+    await this.queue.add('invalidate-product', { productId: event.productId });
+  }
+}
+
+// consumer — one worker anywhere in the fleet purges the shared store
+@Processor('cache-invalidation')
+export class CacheInvalidationProcessor {
+  constructor(@Inject(CACHE_MANAGER) private cache: Cache) {}
+
+  @Process('invalidate-product')
+  async invalidate(job: Job<{ productId: string }>): Promise<void> {
+    await Promise.all([
+      this.cache.del('products:popular'),
+      this.cache.del(`product:${job.data.productId}`),
+    ]);
+  }
+}
+
+// Alternative: let the cache layer own invalidation with tags, which is keyed in the shared store
+// rather than in a process (see the nestjs-graphql-swr-caching skill's @InvalidateTags).
 ```
 
 Reference: [NestJS Caching](https://docs.nestjs.com/techniques/caching)
@@ -4128,9 +4171,12 @@ export class UsersQueryResolver {
   }
 }
 
-// Custom cache interceptor with TTL
+// common/interceptors/graphql-cache.interceptor.ts — the ONE definition of this interceptor.
+// The metadata key names its unit: `cacheTtlMs` is MILLISECONDS (see the version note below).
 @Injectable()
 export class GraphQLCacheInterceptor implements NestInterceptor {
+  private static readonly DEFAULT_TTL_MS = 60_000;
+
   constructor(
     private cacheManager: Cache,
     private reflector: Reflector,
@@ -4138,7 +4184,9 @@ export class GraphQLCacheInterceptor implements NestInterceptor {
 
   async intercept(context: ExecutionContext, next: CallHandler): Promise<Observable<any>> {
     const cacheKey = this.generateKey(context);
-    const ttl = this.reflector.get<number>('cacheTTL', context.getHandler()) || 300;
+    const ttlMs =
+      this.reflector.get<number>('cacheTtlMs', context.getHandler()) ??
+      GraphQLCacheInterceptor.DEFAULT_TTL_MS;
 
     const cached = await this.cacheManager.get(cacheKey);
     if (cached) {
@@ -4147,25 +4195,48 @@ export class GraphQLCacheInterceptor implements NestInterceptor {
 
     return next.handle().pipe(
       tap((response) => {
-        this.cacheManager.set(cacheKey, response, ttl);
+        // a cache write failure must never surface as an unhandled rejection
+        void this.cacheManager.set(cacheKey, response, ttlMs).catch(() => undefined);
       }),
     );
   }
 
   private generateKey(context: ExecutionContext): string {
     const info = GqlExecutionContext.create(context).getInfo();
-    return `gql:${info.parentType.name}.${info.fieldName}:${JSON.stringify(context.getArgByIndex(1))}`;
+    const args = (context.getArgByIndex(1) ?? {}) as Record<string, unknown>;
+    // Stable serialization: key order must not change the key. `JSON.stringify` on a plain object
+    // follows insertion order, so `{a,b}` and `{b,a}` would produce different keys and silently
+    // miss. Sort the keys before serializing; for nested arguments use `safe-stable-stringify`.
+    const stable = JSON.stringify(
+      Object.keys(args)
+        .sort()
+        .map((k) => [k, args[k]]),
+    );
+    return `gql:${info.parentType.name}.${info.fieldName}:${stable}`;
   }
 }
 
-// Usage with custom TTL
+// Usage with an explicit TTL in MILLISECONDS
 @Query(() => [User])
 @UseInterceptors(GraphQLCacheInterceptor)
-@SetMetadata('cacheTTL', 600)
+@SetMetadata('cacheTtlMs', 60_000)
 async users(): Promise<User[]> {
   return this.usersService.findAll();
 }
 ```
+
+**Unit, once:** `@nestjs/cache-manager` v5 (Keyv) takes `ttl` in **milliseconds**; v4 took **seconds**.
+A user who upgrades and keeps `ttl: 300` silently gets 300 ms instead of 5 minutes. That is why the
+metadata key is named `cacheTtlMs` and never renamed: the unit is visible at every call site.
+If you already ship `cacheTTL`, it was milliseconds there too; rename the key next time you touch
+the file rather than leaving two names for one unit in the codebase.
+
+**When a static TTL is not enough**, use the `nestjs-graphql-swr-caching` skill's `@Cacheable`
+surface instead. It gives real stale-while-revalidate, single-flight dedupe, and tag invalidation,
+none of which a response interceptor can express.
+
+**One definition, one home.** This interceptor is defined here and nowhere else. Other rules
+(`perf-use-caching`) set the metadata and assume this file; do not fork a second copy.
 
 Apply interceptors at the resolver class level:
 ```typescript
@@ -4783,6 +4854,10 @@ export class NotificationsService {
 }
 
 // modules/reports/jobs/reports.job.ts — scheduled work lives in jobs/, not via setInterval
+//
+// CAVEAT: @Cron and @Interval run inside EVERY application process. With N replicas the job fires
+// N times, so this is only safe for work that is idempotent and cheap to duplicate. For work that
+// must run once per interval across the fleet, schedule it on the queue instead (below).
 @Injectable()
 export class ReportsJob {
   constructor(private readonly reportsService: ReportsService) {}
@@ -4793,6 +4868,29 @@ export class ReportsJob {
   }
 
   @Cron('0 * * * *')
+  async sendDigest(): Promise<void> {
+    await this.reportsService.sendDigest();
+  }
+}
+
+// Fleet-wide scheduling: the job lives in Redis and exactly ONE worker processes each run.
+// Register it once at boot; `upsertJobScheduler` is idempotent across restarts and replicas.
+@Injectable()
+export class DigestScheduler implements OnModuleInit {
+  constructor(@InjectQueue('reports') private readonly queue: Queue) {}
+
+  async onModuleInit(): Promise<void> {
+    await this.queue.upsertJobScheduler('reports:digest', { pattern: '0 * * * *' }, {
+      name: 'send-digest',
+    });
+  }
+}
+
+@Processor('reports')
+export class DigestProcessor {
+  constructor(private readonly reportsService: ReportsService) {}
+
+  @Process('send-digest')
   async sendDigest(): Promise<void> {
     await this.reportsService.sendDigest();
   }
@@ -5725,4 +5823,4 @@ Reference: [NestJS Logger](https://docs.nestjs.com/techniques/logger)
 
 ---
 
-*Generated by build-agents.ts on 2026-10-17*
+*Generated by build-agents.ts from `rules/` — edit the rules, not this file.*

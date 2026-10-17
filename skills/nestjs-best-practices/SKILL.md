@@ -4,12 +4,12 @@ description: Use when writing, reviewing, or refactoring NestJS GraphQL code —
 license: MIT
 metadata:
   author: Kadajett
-  version: "1.3.0"
+  version: "1.4.0"
 ---
 
 # NestJS Best Practices
 
-Comprehensive best practices guide for NestJS GraphQL applications. Contains 41 rules across 10 categories, prioritized by impact to guide automated refactoring and code generation. 16 rules include GraphQL-specific examples (resolvers, input/args types, `GraphQLError`, `GqlExecutionContext`); the remaining 25 are framework-level rules that apply equally to REST and GraphQL.
+Comprehensive best practices guide for NestJS GraphQL applications, prioritized by impact to guide automated refactoring and code generation. Many rules include GraphQL-specific examples (resolvers, input/args types, `GraphQLError`, `GqlExecutionContext`); the rest are framework-level and apply equally to REST and GraphQL.
 
 ## When to Apply
 
@@ -98,7 +98,7 @@ Reference these guidelines when:
 
 - `use-interceptors` - Use Interceptors for Cross-Cutting Concerns
 - `use-pipes` - Use Pipes for Input Transformation
-- `use-types-serialization` - Control Response Exposure with GraphQL Types
+- `use-response-exposure` - Control Response Exposure with GraphQL Types
 
 ### 9. Microservices (MEDIUM)
 

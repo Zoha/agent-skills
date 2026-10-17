@@ -40,9 +40,12 @@ fix to one does not reach the others and each feature can drift.
 **Correct (one base owns the pipeline; a feature supplies only its mapper and query):**
 
 ```typescript
-// common/search/search.repository.ts — the shared pipeline
+// common/search/search.repository.ts — the shared pipeline.
+// @Injectable() is required on the base: a subclass that declares no constructor inherits these
+// parameter types, and a subclass that adds its own constructor MUST call super(...)
+@Injectable()
 export abstract class SearchRepository<Doc extends { id: string }> {
-  abstract readonly index: string; // the alias
+  abstract readonly index: string; // the alias — sent with every backend call (the backend is app-wide)
 
   constructor(
     @Inject(SEARCH_BACKEND) protected readonly backend: SearchBackend, // the seam, not the client
@@ -53,7 +56,7 @@ export abstract class SearchRepository<Doc extends { id: string }> {
   async enqueueMany(ids: string[]): Promise<void> { /* one batched job */ }
   async deleteOne(id: string): Promise<void> { /* immediate delete */ }
   async bulkIndex(docs: Doc[], index?: string): Promise<void> { /* one _bulk; defaults to the alias */ }
-  async searchIds(query: object, sort: object[], limit = 20, cursor?: string) { /* _source:false */ }
+  async searchIds(query: object, sort: object[], limit = 20, cursor?: string) { /* backend.searchIds({ alias: this.index, ... }); _source:false */ }
 
   abstract loadByIds(ids: string[]): Promise<Doc[]>;
   abstract loadBatch(cursor?: string, size?: number): Promise<{ docs: Doc[]; nextCursor?: string }>;

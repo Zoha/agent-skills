@@ -4,7 +4,7 @@ description: Application structure and file-placement guide for NestJS GraphQL (
 license: MIT
 metadata:
   author: Zoha
-  version: "1.4.0"
+  version: "1.4.1"
 ---
 
 # NestJS GraphQL Structure

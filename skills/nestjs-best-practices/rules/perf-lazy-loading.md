@@ -101,9 +101,10 @@ export class ModulePreloader implements OnApplicationBootstrap {
   constructor(private lazyModuleLoader: LazyModuleLoader) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    // `.unref()` so a pending preload never holds the process open during shutdown
     setTimeout(async () => {
       await this.preloadModule(() => import('./reports/reports.module'));
-    }, 5000); // 5 seconds after startup
+    }, 5000).unref(); // 5 seconds after startup
   }
 
   private async preloadModule(importFn: () => Promise<any>): Promise<void> {

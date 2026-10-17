@@ -54,6 +54,10 @@ private assertBulkClean(res: BulkResponse, docs: Doc[]): void {
   const retryable = failed.filter((f) => [429, 502, 503, 504].includes(f.status));
   const fatal = failed.filter((f) => ![429, 502, 503, 504].includes(f.status));
 
+  // `errors: true` with no item matching the expected shape: fail loudly. Throwing an empty
+  // retryable error would make the queue retry forever with no progress.
+  if (!failed.length) throw new Error('bulk reported errors with no per-item error');
+
   // both are plain Error subclasses the queue treats as retryable and non-retryable
   if (fatal.length) throw new BulkIndexError(fatal); // will fail again on every retry
   throw new RetryableBulkError(retryable);           // let the queue retry with backoff

@@ -7,7 +7,16 @@ tags: graphql, rate-limiting, throttler, protection
 
 ## Implement Rate Limiting
 
-Use `@nestjs/throttler` to limit request rates per resolver. Apply different limits for different resolvers - stricter for auth mutations, more relaxed for read queries. For GraphQL, also consider query complexity analysis to prevent expensive queries. Use Redis for distributed rate limiting in clustered deployments.
+Use `@nestjs/throttler` to limit request rates per resolver. Apply different limits for different resolvers - stricter for auth mutations, more relaxed for read queries. For GraphQL, also consider query complexity analysis to prevent expensive queries.
+
+**Clustered deployments need a shared store.** The built-in storage is an in-memory, per-process
+cache, so with N replicas each process counts independently and every limit is effectively
+multiplied by N. Set a Redis-backed storage so all replicas share one counter.
+
+**Version pairing.** The community Redis store used below
+(`@nest-lab/throttler-storage-redis`) declares `@nestjs/throttler >= 6` as a peer dependency. On
+throttler v5 either upgrade, or implement the `ThrottlerStorage` interface over your existing Redis
+client (its atomic `increment` is the only method that matters).
 
 **Incorrect (no rate limiting on sensitive resolvers):**
 
@@ -43,28 +52,26 @@ export class QueryResolver {
 **Correct (configured throttler with resolver-specific limits):**
 
 ```typescript
-// Configure throttler globally with multiple limits
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+// Configure throttler globally with multiple limits and a shared (Redis) store
+import { ThrottlerModule, ThrottlerGuard, seconds } from '@nestjs/throttler';
+import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 
 @Module({
   imports: [
-    ThrottlerModule.forRoot([
-      {
-        name: 'short',
-        ttl: 1000, // 1 second
-        limit: 3, // 3 requests per second
-      },
-      {
-        name: 'medium',
-        ttl: 10000, // 10 seconds
-        limit: 20, // 20 requests per 10 seconds
-      },
-      {
-        name: 'long',
-        ttl: 60000, // 1 minute
-        limit: 100, // 100 requests per minute
-      },
-    ]),
+    ThrottlerModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        // ttl is in MILLISECONDS in throttler v5+; `seconds(...)` keeps it readable
+        throttlers: [
+          { name: 'short', ttl: seconds(1), limit: 3 },
+          { name: 'medium', ttl: seconds(10), limit: 20 },
+          { name: 'long', ttl: seconds(60), limit: 100 },
+        ],
+        // REQUIRED in a clustered deployment. With the default storage each replica keeps its own
+        // counter, so N replicas allow N x the limit. One shared Redis store enforces it globally.
+        storage: new ThrottlerStorageRedisService(config.get<string>('redis.url')),
+      }),
+    }),
   ],
   providers: [
     {

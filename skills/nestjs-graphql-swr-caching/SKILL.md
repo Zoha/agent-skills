@@ -4,7 +4,7 @@ description: Use when caching GraphQL reads in a NestJS (code-first) app — wir
 license: MIT
 metadata:
   author: Zoha
-  version: "2.2.0"
+  version: "2.2.1"
 ---
 
 # GraphQL SWR Caching (NestJS, code-first)

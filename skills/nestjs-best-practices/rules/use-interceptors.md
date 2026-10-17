@@ -103,9 +103,12 @@ export class UsersQueryResolver {
   }
 }
 
-// Custom cache interceptor with TTL
+// common/interceptors/graphql-cache.interceptor.ts — the ONE definition of this interceptor.
+// The metadata key names its unit: `cacheTtlMs` is MILLISECONDS (see the version note below).
 @Injectable()
 export class GraphQLCacheInterceptor implements NestInterceptor {
+  private static readonly DEFAULT_TTL_MS = 60_000;
+
   constructor(
     private cacheManager: Cache,
     private reflector: Reflector,
@@ -113,7 +116,9 @@ export class GraphQLCacheInterceptor implements NestInterceptor {
 
   async intercept(context: ExecutionContext, next: CallHandler): Promise<Observable<any>> {
     const cacheKey = this.generateKey(context);
-    const ttl = this.reflector.get<number>('cacheTTL', context.getHandler()) || 300;
+    const ttlMs =
+      this.reflector.get<number>('cacheTtlMs', context.getHandler()) ??
+      GraphQLCacheInterceptor.DEFAULT_TTL_MS;
 
     const cached = await this.cacheManager.get(cacheKey);
     if (cached) {
@@ -122,25 +127,48 @@ export class GraphQLCacheInterceptor implements NestInterceptor {
 
     return next.handle().pipe(
       tap((response) => {
-        this.cacheManager.set(cacheKey, response, ttl);
+        // a cache write failure must never surface as an unhandled rejection
+        void this.cacheManager.set(cacheKey, response, ttlMs).catch(() => undefined);
       }),
     );
   }
 
   private generateKey(context: ExecutionContext): string {
     const info = GqlExecutionContext.create(context).getInfo();
-    return `gql:${info.parentType.name}.${info.fieldName}:${JSON.stringify(context.getArgByIndex(1))}`;
+    const args = (context.getArgByIndex(1) ?? {}) as Record<string, unknown>;
+    // Stable serialization: key order must not change the key. `JSON.stringify` on a plain object
+    // follows insertion order, so `{a,b}` and `{b,a}` would produce different keys and silently
+    // miss. Sort the keys before serializing; for nested arguments use `safe-stable-stringify`.
+    const stable = JSON.stringify(
+      Object.keys(args)
+        .sort()
+        .map((k) => [k, args[k]]),
+    );
+    return `gql:${info.parentType.name}.${info.fieldName}:${stable}`;
   }
 }
 
-// Usage with custom TTL
+// Usage with an explicit TTL in MILLISECONDS
 @Query(() => [User])
 @UseInterceptors(GraphQLCacheInterceptor)
-@SetMetadata('cacheTTL', 600)
+@SetMetadata('cacheTtlMs', 60_000)
 async users(): Promise<User[]> {
   return this.usersService.findAll();
 }
 ```
+
+**Unit, once:** `@nestjs/cache-manager` v5 (Keyv) takes `ttl` in **milliseconds**; v4 took **seconds**.
+A user who upgrades and keeps `ttl: 300` silently gets 300 ms instead of 5 minutes. That is why the
+metadata key is named `cacheTtlMs` and never renamed: the unit is visible at every call site.
+If you already ship `cacheTTL`, it was milliseconds there too; rename the key next time you touch
+the file rather than leaving two names for one unit in the codebase.
+
+**When a static TTL is not enough**, use the `nestjs-graphql-swr-caching` skill's `@Cacheable`
+surface instead. It gives real stale-while-revalidate, single-flight dedupe, and tag invalidation,
+none of which a response interceptor can express.
+
+**One definition, one home.** This interceptor is defined here and nowhere else. Other rules
+(`perf-use-caching`) set the metadata and assume this file; do not fork a second copy.
 
 Apply interceptors at the resolver class level:
 ```typescript

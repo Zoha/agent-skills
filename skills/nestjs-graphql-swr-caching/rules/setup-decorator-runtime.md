@@ -179,6 +179,10 @@ export const InvalidateTags = <TArgs extends unknown[] = unknown[], TResult = un
   tagsFn: TagFn<TArgs, TResult>,
 ): MethodDecorator =>
   (target, propertyKey, descriptor: PropertyDescriptor) => {
+    // A write method may carry ONLY @InvalidateTags, so the client has to be injected here too:
+    // without this line `this.cache` is undefined and the purge throws AFTER the write commits,
+    // so the write succeeds and the invalidation silently never happens.
+    Inject(CACHE_CLIENT)(target, 'cache');
     const original = descriptor.value as (...a: unknown[]) => Promise<unknown>;
     descriptor.value = async function (this: any, ...args: unknown[]) {
       const result = await original.apply(this, args);        // purge ONLY after the write succeeds

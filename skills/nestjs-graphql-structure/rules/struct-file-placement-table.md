@@ -17,6 +17,10 @@ full tree, and the linked rule gives the file's purpose and examples.
 `<f>` is the feature's module/folder name, plural (for example `users`); `<entity>` is the
 feature's primary domain noun, singular (for example `user`). See `conventions-naming`.
 
+Two invariants keep this index honest: every name in the Rule column must resolve to a real rule
+(the reference test enforces that), and adding a file kind to `struct-canonical-layout` means
+adding its row here in the same change. The table and the tree are two views of one layout.
+
 | File kind | Location | Rule |
 |-----------|----------|------|
 | Feature module | `modules/<f>/<f>.module.ts` | `module-feature-module` |

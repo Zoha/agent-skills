@@ -76,7 +76,7 @@ test('buildAll generates AGENTS.md + SKILL.md, skips bad rules, isolates failure
       'demo/metadata.json': demoMetadata,
       'demo/rules/_sections.md': demoSections,
       'demo/rules/arch-alpha.md': rule('Alpha Rule', 'HIGH'),
-      'demo/rules/arch-beta.md': rule('Beta Rule', 'LOW'),
+      'demo/rules/arch-beta.md': rule('Beta Rule', 'LOW-MEDIUM'),
       'demo/rules/xyz-unknown.md': rule('Unknown Rule', 'MEDIUM'),
       'demo/rules/arch-no-impact.md': '---\ntitle: No Impact Rule\n---\n\n## No Impact Rule\n\nbody\n',
       'demo/rules/broken.md': 'no frontmatter here',
@@ -180,6 +180,51 @@ test('buildAll fails a skill whose _sections.md parses to zero sections', () => 
     assert.deepEqual(result.built, []);
     assert.deepEqual(result.failed, [path.join(root, 'no-sections')]);
     assert.ok(!fs.existsSync(path.join(root, 'no-sections', 'AGENTS.md')));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('buildAll fails a skill whose rule declares an invalid impact level', () => {
+  // A wrong impact level would be compiled into AGENTS.md and mislead every reader, so the skill
+  // must fail loudly rather than skip the rule silently.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-skills-impact-'));
+  try {
+    writeFiles(root, {
+      'demo/SKILL.md': demoSKill,
+      'demo/metadata.json': demoMetadata,
+      'demo/rules/_sections.md': demoSections,
+      'demo/rules/arch-alpha.md': rule('Alpha Rule', 'SUPER-HIGH'),
+    });
+
+    const result = buildAll(root);
+    assert.deepEqual(result.built, []);
+    assert.deepEqual(result.failed, [path.join(root, 'demo')]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('buildSkill warns about an empty section and a duplicate rule title', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-skills-audit-'));
+  try {
+    writeFiles(root, {
+      'demo/SKILL.md': demoSKill,
+      'demo/metadata.json': demoMetadata,
+      'demo/rules/_sections.md': demoSections,
+      'demo/rules/arch-alpha.md': rule('Same Title', 'HIGH'),
+      'demo/rules/arch-beta.md': rule('Same Title', 'LOW-MEDIUM'),
+    });
+
+    const { warnings } = buildSkill(path.join(root, 'demo'));
+    assert.ok(
+      warnings.some((w) => w.includes('section 2 (extra-) has no rules')),
+      `expected an empty-section warning, got: ${warnings.join('; ')}`,
+    );
+    assert.ok(
+      warnings.some((w) => w.includes('duplicate title "Same Title"')),
+      `expected a duplicate-title warning, got: ${warnings.join('; ')}`,
+    );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

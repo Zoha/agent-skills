@@ -152,6 +152,10 @@ export class NotificationsService {
 }
 
 // modules/reports/jobs/reports.job.ts — scheduled work lives in jobs/, not via setInterval
+//
+// CAVEAT: @Cron and @Interval run inside EVERY application process. With N replicas the job fires
+// N times, so this is only safe for work that is idempotent and cheap to duplicate. For work that
+// must run once per interval across the fleet, schedule it on the queue instead (below).
 @Injectable()
 export class ReportsJob {
   constructor(private readonly reportsService: ReportsService) {}
@@ -162,6 +166,29 @@ export class ReportsJob {
   }
 
   @Cron('0 * * * *')
+  async sendDigest(): Promise<void> {
+    await this.reportsService.sendDigest();
+  }
+}
+
+// Fleet-wide scheduling: the job lives in Redis and exactly ONE worker processes each run.
+// Register it once at boot; `upsertJobScheduler` is idempotent across restarts and replicas.
+@Injectable()
+export class DigestScheduler implements OnModuleInit {
+  constructor(@InjectQueue('reports') private readonly queue: Queue) {}
+
+  async onModuleInit(): Promise<void> {
+    await this.queue.upsertJobScheduler('reports:digest', { pattern: '0 * * * *' }, {
+      name: 'send-digest',
+    });
+  }
+}
+
+@Processor('reports')
+export class DigestProcessor {
+  constructor(private readonly reportsService: ReportsService) {}
+
+  @Process('send-digest')
   async sendDigest(): Promise<void> {
     await this.reportsService.sendDigest();
   }

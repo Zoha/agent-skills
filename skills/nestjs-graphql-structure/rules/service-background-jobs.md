@@ -33,6 +33,9 @@ producer/consumer split clean and the processors unit-testable.
 - Do long-running work inline in a resolver or on the request path.
 - Process a feature's jobs from an unrelated module or from `infra/`.
 - Register the queue connection per feature.
+- Schedule fleet-wide work with `@Cron`/`@Interval`: those fire inside **every** replica, so the job
+  runs N times. Use a queue job scheduler (one worker runs each occurrence) — see
+  `nestjs-best-practices` -> `micro-use-queues`.
 
 **Incorrect (a minutes-long job inline in the request):**
 

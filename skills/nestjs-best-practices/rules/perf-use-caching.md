@@ -90,25 +90,25 @@ export class ProductsService {
   }
 }
 
-// Decorator-based caching for GraphQL. Define GraphQLCacheInterceptor once in
+// Decorator-based caching for GraphQL. GraphQLCacheInterceptor is defined ONCE, in
 // common/interceptors/ (see use-interceptors) — the GraphQL-aware version derives its
 // key from the field and its args, so findOne(id: 'a') and findOne(id: 'b') never
 // share an entry (unlike a static @CacheKey).
 
-// Apply it per resolver; @SetMetadata('cacheTTL', ...) sets the TTL
+// Apply it per resolver; @SetMetadata('cacheTtlMs', ...) sets the TTL in MILLISECONDS
 @Resolver(() => Category)
 @UseInterceptors(GraphQLCacheInterceptor)
 export class CategoriesQueryResolver {
   constructor(private readonly categoriesService: CategoriesService) {}
 
   @Query(() => [Category])
-  @SetMetadata('cacheTTL', 30 * 60 * 1000) // 30 minutes - categories rarely change
+  @SetMetadata('cacheTtlMs', 30 * 60 * 1000) // 30 minutes - categories rarely change
   findAll(): Promise<Category[]> {
     return this.categoriesService.findAll();
   }
 
   @Query(() => Category)
-  @SetMetadata('cacheTTL', 60 * 1000) // 1 minute - keyed per id
+  @SetMetadata('cacheTtlMs', 60 * 1000) // 1 minute - keyed per id
   findOne(@Args('id', ParseObjectIdPipe) id: string): Promise<Category> {
     return this.categoriesService.findOne(id);
   }
@@ -129,6 +129,10 @@ export class CategoriesController {
 }
 
 // Event-based cache invalidation
+//
+// LIMITATION: @nestjs/event-emitter is IN-PROCESS. With more than one replica the event fires only
+// inside the process that emitted it, so every other replica keeps serving the stale entry until its
+// TTL. This form is correct ONLY for a single-instance deployment.
 @Injectable()
 export class CacheInvalidationService {
   constructor(@Inject(CACHE_MANAGER) private cache: Cache) {}
@@ -143,6 +147,36 @@ export class CacheInvalidationService {
     ]);
   }
 }
+
+// Multi-instance: the purge has to reach EVERY replica. Enqueue one job onto a shared queue and let
+// whichever worker picks it up do the purge, so invalidation is not tied to the emitting process.
+@Injectable()
+export class ProductEventsPublisher {
+  constructor(@InjectQueue('cache-invalidation') private readonly queue: Queue) {}
+
+  @OnEvent('product.updated')
+  @OnEvent('product.deleted')
+  async enqueueInvalidation(event: ProductEvent): Promise<void> {
+    await this.queue.add('invalidate-product', { productId: event.productId });
+  }
+}
+
+// consumer — one worker anywhere in the fleet purges the shared store
+@Processor('cache-invalidation')
+export class CacheInvalidationProcessor {
+  constructor(@Inject(CACHE_MANAGER) private cache: Cache) {}
+
+  @Process('invalidate-product')
+  async invalidate(job: Job<{ productId: string }>): Promise<void> {
+    await Promise.all([
+      this.cache.del('products:popular'),
+      this.cache.del(`product:${job.data.productId}`),
+    ]);
+  }
+}
+
+// Alternative: let the cache layer own invalidation with tags, which is keyed in the shared store
+// rather than in a process (see the nestjs-graphql-swr-caching skill's @InvalidateTags).
 ```
 
 Reference: [NestJS Caching](https://docs.nestjs.com/techniques/caching)

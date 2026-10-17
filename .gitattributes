@@ -1,0 +1,6 @@
+# Normalize line endings: the generator writes LF, so the repo must not flip them on checkout.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary

@@ -43,17 +43,23 @@ user sees results that do not answer their query.
 export class MongoFallbackBackend implements SearchBackend {
   readonly enabled = true; // the backend is active; only the engine differs
 
-  constructor(private readonly model: Model<unknown>) {}
+  constructor(
+    @InjectConnection() private readonly connection: Connection, // one connection, many models
+    private readonly registry: SearchIndexRegistry,              // alias -> { repository, model }
+  ) {}
 
   // no index work: MongoDB already holds the truth, so these are no-ops
   async ensureIndex(): Promise<void> {}
   async bulkIndex(): Promise<void> {}
   async deleteOne(): Promise<void> {}
   ping(): Promise<boolean> {
-    return this.model.db.admin().ping().then(() => true);
+    return this.connection.db.admin().ping().then(() => true);
   }
 
   async searchIds(req: SearchRequest): Promise<SearchPage> {
+    // resolve the feature's model BY ALIAS: one backend serves every feature's index
+    const model = this.connection.model(this.registry.model(req.alias));
+
     const after = req.cursor ? decodeCursor(req.cursor) : null;
     const filter = {
       ...this.termFilter(req.term),
@@ -63,12 +69,12 @@ export class MongoFallbackBackend implements SearchBackend {
     };
 
     // the same total sort the Elasticsearch path uses: the requested sort, then a unique tiebreaker
-    const docs = await this.model.find(filter).sort({ createdAt: -1, _id: 1 }).limit(req.limit).lean();
+    const docs = await model.find(filter).sort({ createdAt: -1, _id: 1 }).limit(req.limit).lean();
     const last = docs.at(-1);
 
     return {
       ids: docs.map((d) => d._id.toString()),
-      total: await this.model.countDocuments(this.termFilter(req.term)),
+      total: await model.countDocuments(this.termFilter(req.term)),
       totalIsExact: true, // MongoDB counts are exact, unlike a capped hits.total
       nextCursor:
         docs.length === req.limit && last ? encodeCursor([last.createdAt, last._id.toString()]) : null,
@@ -84,6 +90,12 @@ export class MongoFallbackBackend implements SearchBackend {
 Why it is right: the fallback returns real identifiers in a stable order, the shared hydration and
 ordering code is untouched, and the cursor carries the same two sort values (the requested sort then
 the unique `_id`) that `query-sort-tiebreaker` requires.
+
+**One connection, many models.** `@InjectConnection()` gives the fallback the single Mongoose
+connection the application already opens, and the alias resolves to its model through the registry
+each feature registers into (see `arch-feature-owned-index`). This is what makes one backend work for
+every feature's index. A single injected `Model<unknown>` cannot: Nest cannot resolve a bare model
+type (a model needs `@InjectModel(Name)`), and one model could only ever answer for one feature.
 
 Two honest limits. There is no relevance ranking in this mode, so it is for development, tests, and
 small deployments rather than a replacement for search quality; the ordering is newest-first unless

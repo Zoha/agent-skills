@@ -1,10 +1,10 @@
 ---
 name: nestjs-elasticsearch
-description: Use when adding or maintaining Elasticsearch full-text search in a NestJS backend — client and module wiring, MongoDB-to-Elasticsearch sync and reindexing, index mappings and the search projection, ID-only queries with MongoDB hydration, cursor pagination, cross-entity derived fields, making search optional through a configurable backend seam, and testing search with a mocked seam or a real throwaway cluster.
+description: Use when adding or maintaining Elasticsearch full-text search in a NestJS GraphQL + MongoDB application — client and module wiring, MongoDB-to-Elasticsearch sync and reindexing, index mappings and the search projection, ID-only queries with MongoDB hydration, cursor pagination, cross-entity derived fields, making search optional through a configurable backend seam, and testing search with a mocked seam or a real throwaway cluster.
 license: MIT
 metadata:
   author: Zoha
-  version: "1.1.0"
+  version: "1.1.1"
 ---
 
 # NestJS Elasticsearch

@@ -1,5 +1,10 @@
 # NestJS GraphQL Structure Skill Implementation Plan
 
+> **Superseded (kept for the record).** This plan describes v1.0.0 with 24 rules and sections
+> ordered Services (3) / Relations (7). The shipped skill is at v1.4.x with 52 rules, sections
+> ordered Relations (3) / Services (4), and `relations-owning-module` in place of
+> `relations-cross-module-service`. Treat the shipped rules as the source of truth, not this plan.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add the `nestjs-graphql-structure` skill — an index (`SKILL.md`) plus a `rules/` folder with one base-structure map rule and per-file anatomy rules — to this repo, buildable with the existing generator.

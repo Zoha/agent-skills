@@ -1,6 +1,6 @@
 # NestJS Elasticsearch
 
-**Version 1.1.0**
+**Version 1.1.1**
 NestJS Elasticsearch
 October 2026
 
@@ -99,9 +99,12 @@ fix to one does not reach the others and each feature can drift.
 **Correct (one base owns the pipeline; a feature supplies only its mapper and query):**
 
 ```typescript
-// common/search/search.repository.ts — the shared pipeline
+// common/search/search.repository.ts — the shared pipeline.
+// @Injectable() is required on the base: a subclass that declares no constructor inherits these
+// parameter types, and a subclass that adds its own constructor MUST call super(...)
+@Injectable()
 export abstract class SearchRepository<Doc extends { id: string }> {
-  abstract readonly index: string; // the alias
+  abstract readonly index: string; // the alias — sent with every backend call (the backend is app-wide)
 
   constructor(
     @Inject(SEARCH_BACKEND) protected readonly backend: SearchBackend, // the seam, not the client
@@ -112,7 +115,7 @@ export abstract class SearchRepository<Doc extends { id: string }> {
   async enqueueMany(ids: string[]): Promise<void> { /* one batched job */ }
   async deleteOne(id: string): Promise<void> { /* immediate delete */ }
   async bulkIndex(docs: Doc[], index?: string): Promise<void> { /* one _bulk; defaults to the alias */ }
-  async searchIds(query: object, sort: object[], limit = 20, cursor?: string) { /* _source:false */ }
+  async searchIds(query: object, sort: object[], limit = 20, cursor?: string) { /* backend.searchIds({ alias: this.index, ... }); _source:false */ }
 
   abstract loadByIds(ids: string[]): Promise<Doc[]>;
   abstract loadBatch(cursor?: string, size?: number): Promise<{ docs: Doc[]; nextCursor?: string }>;
@@ -274,7 +277,7 @@ export class UsersSearchIndexRegistration implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    this.registry.register(USERS_INDEX, this.repo); // alias -> repository
+    this.registry.register(USERS_INDEX, this.repo, User.name); // alias -> { repository, model }
     await this.registry.ensure(this.es, USERS_INDEX); // idempotent create
   }
 }
@@ -293,10 +296,11 @@ export class AppModule {}
 ```
 
 Why it is right: each feature owns and registers its own index, the registry maps alias →
-repository for the shared processor, and neither `AppModule` nor infra knows a feature name.
+repository and model for the shared processor, and neither `AppModule` nor infra knows a feature name.
 
-The registry stores `alias -> { definition, repository }`, which is what lets the single shared
-reindex processor resolve a feature's repository without importing the feature.
+The registry stores `alias -> { definition, repository, model }`, which is what lets the single shared
+reindex processor resolve a feature's repository without importing the feature, and what lets the
+MongoDB fallback resolve a feature's model by alias (see `cfg-mongo-fallback-backend`).
 
 `register` runs before `ensure` so the shared processor can resolve the alias the moment it starts.
 `ensure` is the network call, and it must never abort bootstrap: an unreachable cluster defers to
@@ -439,6 +443,10 @@ private assertBulkClean(res: BulkResponse, docs: Doc[]): void {
 
   const retryable = failed.filter((f) => [429, 502, 503, 504].includes(f.status));
   const fatal = failed.filter((f) => ![429, 502, 503, 504].includes(f.status));
+
+  // `errors: true` with no item matching the expected shape: fail loudly. Throwing an empty
+  // retryable error would make the queue retry forever with no progress.
+  if (!failed.length) throw new Error('bulk reported errors with no per-item error');
 
   // both are plain Error subclasses the queue treats as retryable and non-retryable
   if (fatal.length) throw new BulkIndexError(fatal); // will fail again on every retry
@@ -1241,9 +1249,13 @@ Why it is wrong: the response is the indexed copy, which can lag MongoDB, and ev
 **Correct (IDs and sort values only; `_source` disabled):**
 
 ```typescript
-// infra/elasticsearch/elasticsearch.backend.ts — the Elasticsearch implementation of the seam
+// infra/elasticsearch/elasticsearch.backend.ts — the Elasticsearch implementation of the seam.
+// `req` is a SearchRequest: the alias names the index, because one backend serves every feature.
+const { alias, limit, sort, term, cursor } = req;
+const query = buildQuery(term);                                  // the engine builds its own DSL
+const searchAfter = cursor ? decodeCursor(cursor) : undefined;
 const res = await this.es.search({
-  index: this.index,
+  index: alias,
   _source: false,                 // no field data in the response
   size: limit,
   query,
@@ -1482,20 +1494,32 @@ that checks the live index and enqueues a job **only when the index is empty**, 
 // infra/elasticsearch/search.cli.ts
 #!/usr/bin/env tsx
 async function main(): Promise<void> {
-  const app = await NestFactory.createApplicationContext(AppModule);
-  const args = process.argv.slice(2);
+  const [command, alias, version] = process.argv.slice(2);
 
-  switch (args[0]) {
+  // Every command targets ONE feature's index. Never act on an undefined alias:
+  // a missing argument would otherwise swap an alias named "undefined" (or "undefined_v1").
+  if (!command || !alias) {
+    console.error('usage: search.cli.ts <migrate|reindex|mapping> <alias> [version]');
+    process.exit(1);
+  }
+
+  const app = await NestFactory.createApplicationContext(AppModule);
+
+  switch (command) {
     case 'migrate':
-      await app.get(SearchMigrationService).migrate(args[1]); // create + reindex + swap alias
+      await app.get(SearchMigrationService).migrate(alias); // create + reindex + swap alias
       break;
     case 'reindex':
-      await app.get(SearchReindexEngine).enqueueFull(args[1], args[2] ?? `${args[1]}_v1`);
+      await app.get(SearchReindexEngine).enqueueFull(alias, version ?? `${alias}_v1`);
       break;
     case 'mapping':
       // print the live mapping, and expose _analyze for a field/value
-      console.log(JSON.stringify(await app.get(SearchInspector).mapping(args[1]), null, 2));
+      console.log(JSON.stringify(await app.get(SearchInspector).mapping(alias), null, 2));
       break;
+    default:
+      console.error(`unknown command: ${command}`);
+      await app.close();
+      process.exit(1);
   }
   await app.close();
 }
@@ -1515,6 +1539,10 @@ void main();
 
 Why it is right: reindexing and migration are explicit, observable, repeatable steps, and they run
 through the same engine the background worker uses.
+
+The alias is a required argument because every command acts on exactly one index. npm forwards
+anything after `--`, so the invocation is `npm run search:reindex -- users`; a bare
+`npm run search:reindex` exits with a usage error instead of acting on an undefined alias.
 
 The three triggers for the shared full-reindex job are: this CLI (a deliberate migration), a
 boot-time enqueue when the current index is empty, and a nightly reconcile. All three enqueue the
@@ -1859,17 +1887,23 @@ user sees results that do not answer their query.
 export class MongoFallbackBackend implements SearchBackend {
   readonly enabled = true; // the backend is active; only the engine differs
 
-  constructor(private readonly model: Model<unknown>) {}
+  constructor(
+    @InjectConnection() private readonly connection: Connection, // one connection, many models
+    private readonly registry: SearchIndexRegistry,              // alias -> { repository, model }
+  ) {}
 
   // no index work: MongoDB already holds the truth, so these are no-ops
   async ensureIndex(): Promise<void> {}
   async bulkIndex(): Promise<void> {}
   async deleteOne(): Promise<void> {}
   ping(): Promise<boolean> {
-    return this.model.db.admin().ping().then(() => true);
+    return this.connection.db.admin().ping().then(() => true);
   }
 
   async searchIds(req: SearchRequest): Promise<SearchPage> {
+    // resolve the feature's model BY ALIAS: one backend serves every feature's index
+    const model = this.connection.model(this.registry.model(req.alias));
+
     const after = req.cursor ? decodeCursor(req.cursor) : null;
     const filter = {
       ...this.termFilter(req.term),
@@ -1879,12 +1913,12 @@ export class MongoFallbackBackend implements SearchBackend {
     };
 
     // the same total sort the Elasticsearch path uses: the requested sort, then a unique tiebreaker
-    const docs = await this.model.find(filter).sort({ createdAt: -1, _id: 1 }).limit(req.limit).lean();
+    const docs = await model.find(filter).sort({ createdAt: -1, _id: 1 }).limit(req.limit).lean();
     const last = docs.at(-1);
 
     return {
       ids: docs.map((d) => d._id.toString()),
-      total: await this.model.countDocuments(this.termFilter(req.term)),
+      total: await model.countDocuments(this.termFilter(req.term)),
       totalIsExact: true, // MongoDB counts are exact, unlike a capped hits.total
       nextCursor:
         docs.length === req.limit && last ? encodeCursor([last.createdAt, last._id.toString()]) : null,
@@ -1900,6 +1934,12 @@ export class MongoFallbackBackend implements SearchBackend {
 Why it is right: the fallback returns real identifiers in a stable order, the shared hydration and
 ordering code is untouched, and the cursor carries the same two sort values (the requested sort then
 the unique `_id`) that `query-sort-tiebreaker` requires.
+
+**One connection, many models.** `@InjectConnection()` gives the fallback the single Mongoose
+connection the application already opens, and the alias resolves to its model through the registry
+each feature registers into (see `arch-feature-owned-index`). This is what makes one backend work for
+every feature's index. A single injected `Model<unknown>` cannot: Nest cannot resolve a bare model
+type (a model needs `@InjectModel(Name)`), and one model could only ever answer for one feature.
 
 Two honest limits. There is no relevance ranking in this mode, so it is for development, tests, and
 small deployments rather than a replacement for search quality; the ordering is newest-first unless
@@ -1944,6 +1984,16 @@ shared layer and every feature.
 
 ```typescript
 // common/search/search.backend.ts — the seam
+// One backend is provided app-wide, so every request names the alias it targets. That is what
+// lets a single backend serve every feature's index.
+export interface SearchRequest {
+  alias: string;           // the feature's index alias (see arch-feature-owned-index)
+  term?: string;           // the user's search text; each engine builds its own query from it
+  sort: object[];          // the requested sort, then the unique tiebreaker
+  limit: number;
+  cursor?: string | null;  // opaque cursor over the sort values
+}
+
 export interface SearchBackend {
   readonly enabled: boolean; // false -> the write path and ensure are skipped
   ensureIndex(def: SearchIndexDef<unknown>): Promise<void>;
@@ -2169,4 +2219,4 @@ Reference: [Testcontainers for Node.js](https://node.testcontainers.org/) | [@ne
 
 ---
 
-*Generated by build-agents.ts on 2026-10-17*
+*Generated by build-agents.ts from `rules/` — edit the rules, not this file.*

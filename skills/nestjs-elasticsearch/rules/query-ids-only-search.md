@@ -30,9 +30,13 @@ Why it is wrong: the response is the indexed copy, which can lag MongoDB, and ev
 **Correct (IDs and sort values only; `_source` disabled):**
 
 ```typescript
-// infra/elasticsearch/elasticsearch.backend.ts — the Elasticsearch implementation of the seam
+// infra/elasticsearch/elasticsearch.backend.ts — the Elasticsearch implementation of the seam.
+// `req` is a SearchRequest: the alias names the index, because one backend serves every feature.
+const { alias, limit, sort, term, cursor } = req;
+const query = buildQuery(term);                                  // the engine builds its own DSL
+const searchAfter = cursor ? decodeCursor(cursor) : undefined;
 const res = await this.es.search({
-  index: this.index,
+  index: alias,
   _source: false,                 // no field data in the response
   size: limit,
   query,
