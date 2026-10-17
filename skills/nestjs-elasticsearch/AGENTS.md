@@ -105,7 +105,7 @@ export abstract class SearchRepository<Doc extends { id: string }> {
   async enqueueIndex(id: string): Promise<void> { /* jobId dedupe + delay */ }
   async enqueueMany(ids: string[]): Promise<void> { /* one batched job */ }
   async deleteOne(id: string): Promise<void> { /* immediate delete */ }
-  async bulkIndex(docs: Doc[]): Promise<void> { /* one _bulk */ }
+  async bulkIndex(docs: Doc[], index?: string): Promise<void> { /* one _bulk; defaults to the alias */ }
   async searchIds(query: object, sort: object[], limit = 20, cursor?: string) { /* _source:false */ }
 
   abstract loadByIds(ids: string[]): Promise<Doc[]>;
@@ -132,6 +132,10 @@ export class UsersSearchRepository extends SearchRepository<UserSearchDocument> 
 
 Why it is right: the pipeline exists once, the shared processor can drive any feature through the
 base contract, and a feature is a mapper plus a query.
+
+`bulkIndex` takes an optional target index because a versioned reindex must fill the **new** index,
+never the alias the cluster is still serving — writing to the alias would fill the old index and
+then publish an empty one (see `sync-full-reindex-alias-swap`).
 
 Reference: [NestJS Custom Providers](https://docs.nestjs.com/fundamentals/custom-providers) | [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb)
 
@@ -262,6 +266,10 @@ repository for the shared processor, and neither `AppModule` nor infra knows a f
 The registry stores `alias -> { definition, repository }`, which is what lets the single shared
 reindex processor resolve a feature's repository without importing the feature.
 
+`register` runs before `ensure` so the shared processor can resolve the alias the moment it starts.
+`ensure` is the network call, and it must never abort bootstrap: an unreachable cluster defers to
+the next sweep, while a rejected mapping still fails loudly (see `sync-idempotent-index-creation`).
+
 Reference: [NestJS Modules](https://docs.nestjs.com/modules) | [NestJS Dynamic Modules](https://docs.nestjs.com/fundamentals/dynamic-modules)
 
 ---
@@ -370,15 +378,34 @@ refresh, so a large reindex is orders of magnitude slower than it needs to be.
 
 ```typescript
 // common/search/search.repository.ts (base)
-async bulkIndex(docs: Doc[]): Promise<void> {
+async bulkIndex(docs: Doc[], index: string = this.index): Promise<void> {
   if (!docs.length) return;
-  await this.es.bulk({
+  const res = await this.es.bulk({
     operations: docs.flatMap((d) => [
-      { index: { _index: this.index, _id: d.id } },
+      { index: { _index: index, _id: d.id } }, // the target index, not necessarily the alias
       d,
     ]),
     refresh: false, // never refresh per batch
   });
+  this.assertBulkClean(res, docs); // HTTP 200 does not mean every document landed
+}
+
+// a partial bulk is a failed bulk: 429-class failures retry, mapping errors fail the job
+private assertBulkClean(res: BulkResponse, docs: Doc[]): void {
+  if (!res.errors) return;
+
+  // `items` is in submitted order, so items[i] belongs to docs[i]
+  const failed = res.items.flatMap((item, i) => {
+    const result = Object.values(item)[0] as { status: number; error?: unknown };
+    return result.error ? [{ doc: docs[i], status: result.status, error: result.error }] : [];
+  });
+
+  const retryable = failed.filter((f) => [429, 502, 503, 504].includes(f.status));
+  const fatal = failed.filter((f) => ![429, 502, 503, 504].includes(f.status));
+
+  // both are plain Error subclasses the queue treats as retryable and non-retryable
+  if (fatal.length) throw new BulkIndexError(fatal); // will fail again on every retry
+  throw new RetryableBulkError(retryable);           // let the queue retry with backoff
 }
 
 // common/search/search-reindex.engine.ts — refresh once, after the loop
@@ -386,7 +413,7 @@ let cursor: string | undefined;
 for (;;) {
   const page = await repo.loadBatch(cursor, 500);
   if (!page.docs.length) break;
-  await repo.bulkIndex(page.docs);
+  await repo.bulkIndex(page.docs, target); // fill the NEW index, not the live alias
   cursor = page.nextCursor;
   if (!cursor) break;
 }
@@ -395,6 +422,11 @@ await this.es.indices.refresh({ index: target }); // one refresh for the whole r
 
 Why it is right: documents travel in batches, `refresh: false` avoids a segment refresh per batch,
 and a single refresh at the end makes the whole index visible at once.
+
+A bulk request answers HTTP 200 even when individual operations fail: the response carries
+`errors: true` and a per-item `error`, so a reindex can look successful while documents are missing
+from the index. `assertBulkClean` reads that response, retries 429-class backpressure and fails the
+job on a mapping error, so a partial index is never mistaken for a complete one.
 
 The `operations` array alternates an action line and a document line; a single `bulkIndex` covers
 both full and incremental paths, so there is one bulk implementation in the codebase.
@@ -589,32 +621,48 @@ nothing during the rebuild.
 export const USERS_INDEX = { alias: 'users', version: 'users_v1', mapping: USER_SEARCH_MAPPING } as const;
 // bump version -> 'users_v2' when the mapping changes
 
-// common/search/search-reindex.engine.ts — swap only after the loop completes
+// common/search/search-reindex.engine.ts — fill the new index, then swap after a clean loop
 let cursor: string | undefined;
 for (;;) {
   const page = await repo.loadBatch(cursor, 500);
   if (!page.docs.length) break;
-  await repo.bulkIndex(page.docs);
+  await repo.bulkIndex(page.docs, target); // the versioned index, NOT the live alias
   cursor = page.nextCursor;
-  if (!cursor) break;                    // last page
+  if (!cursor) break;                      // last page
 }
 await this.es.indices.refresh({ index: target });
-await this.swapAlias(alias, target);     // reached only on clean completion
+await this.swapAlias(alias, target);       // reached only when every batch was clean
 
-private async swapAlias(alias: string, target: string): Promise<void> {
-  const current = await this.es.indices.getAlias({ name: alias }, { ignore: [404] });
-  await this.es.indices.updateAliases({
+// infra/elasticsearch/alias.ts — the one place an alias is mutated
+export async function pointAliasAt(
+  es: ElasticsearchService,
+  alias: string,
+  target: string,
+): Promise<void> {
+  const current = await es.indices.getAlias({ name: alias }, { ignore: [404] });
+  const holders = Object.keys(current?.body ?? {});
+  if (holders.length === 1 && holders[0] === target) return;
+
+  await es.indices.updateAliases({
     actions: [
-      ...Object.keys(current?.body ?? {}).map((i) => ({ remove: { index: i, alias } })),
+      ...holders.filter((i) => i !== target).map((index) => ({ remove: { index, alias } })),
       { add: { index: target, alias } },   // one atomic call: never a gap
     ],
   });
 }
+
+// the engine delegates: private swapAlias = (alias, target) => pointAliasAt(this.es, alias, target)
 ```
 
 Why it is right: the new index is filled completely before the alias points at it, the swap is a
 single atomic cluster-state update, and if the reindex throws the alias still points at the old
 index, so search keeps working.
+
+The loop writes to `target`, not to `this.index`: `this.index` is the alias, which still resolves to
+the **old** index while the reindex runs, so writing through it would fill the live index and then
+publish an empty new one. `pointAliasAt` is the single alias mutator — `ensureIndex` uses it only
+when no version holds the alias yet (see `sync-idempotent-index-creation`), and this rule uses it to
+swap.
 
 Triggers are one worker: a CLI command for a deliberate migration, a boot-time enqueue when the
 current index is empty, and a nightly reconcile. The alias swap must never run on the enqueue path.
@@ -638,30 +686,68 @@ defeats this and produces one index per instance.
 ```typescript
 const name = `users_${Date.now()}`;   // two instances -> two different indices
 await this.es.indices.create({ index: name }); // throws on the second instance, crashing boot
+
+// and on a version bump, adding without removing leaves the alias on both versions
+await this.es.indices.updateAliases({
+  actions: [{ add: { index: 'users_v2', alias: 'users' } }], // alias spans users_v1 + users_v2
+});
 ```
 
 Why it is wrong: a non-deterministic name makes the creation non-idempotent — each instance creates
-its own index — and an unhandled create error fails application startup.
+its own index — and an unhandled create error fails application startup. An alias that spans two
+versions returns each document once per index and still matches fields the new mapping dropped.
 
 **Correct (deterministic name, idempotent create, ignored conflicts):**
 
 ```typescript
 // infra/elasticsearch/ensure-index.ts
+const MAPPING_ERRORS = ['illegal_argument_exception', 'mapper_parsing_exception'];
+
+function errorType(err: unknown): string | undefined {
+  return (err as { meta?: { body?: { error?: { type?: string } } } })?.meta?.body?.error?.type;
+}
+
 export async function ensureIndex(es: ElasticsearchService, def: SearchIndexDef<unknown>): Promise<void> {
-  await es.indices.create(
-    { index: def.version, mappings: { properties: def.mapping } },
-    { ignore: [400] },                      // already exists -> fine, race-safe
-  );
-  await es.indices.updateAliases(
-    { actions: [{ add: { index: def.version, alias: def.alias } }] },
-    { ignore: [400] },
-  );
+  try {
+    await createIndexIfAbsent(es, def);
+    await addAliasIfUnclaimed(es, def.alias, def.version);
+  } catch (err) {
+    if (MAPPING_ERRORS.includes(errorType(err) ?? '')) throw err; // broken mapping = broken deploy
+    logger.warn('search index ensure deferred', { alias: def.alias, err }); // cluster down: survive
+  }
+}
+
+// swallow ONLY the already-exists 400: a bad mapping or index name is also a 400
+async function createIndexIfAbsent(es: ElasticsearchService, def: SearchIndexDef<unknown>): Promise<void> {
+  try {
+    await es.indices.create({ index: def.version, mappings: { properties: def.mapping } });
+  } catch (err) {
+    if (errorType(err) === 'resource_already_exists_exception') return; // lost the race -> fine
+    throw err;
+  }
+}
+
+// claim the alias only when nobody holds it, so a version bump never spans two indices
+async function addAliasIfUnclaimed(es: ElasticsearchService, alias: string, target: string): Promise<void> {
+  const current = await es.indices.getAlias({ name: alias }, { ignore: [404] });
+  if (Object.keys(current?.body ?? {}).length === 0) {
+    await es.indices.updateAliases({ actions: [{ add: { index: target, alias } }] });
+  }
+  // a different version holds the alias: the deliberate search:migrate owns that swap
 }
 ```
 
-Why it is right: with a fixed name (`users_v1`) exactly one concurrent create wins and the others
-treat `400` as success, so every instance boots without crashing and they all converge on the same
-index.
+Why it is right: with a fixed name (`users_v1`) exactly one concurrent create wins, the losers match
+`resource_already_exists_exception` and continue, and every instance boots without crashing on the
+same index.
+
+Three details make that safe. The "already exists" case is identified by the error **type**, not by
+the status code: a malformed mapping or an illegal index name is also a `400`, and swallowing those
+hides a broken deploy. The alias is claimed only when **nobody** holds it — adding `users_v2` to an
+alias that already serves `users_v1` puts two indices behind one alias, so every search returns each
+document twice and fields the new mapping dropped still match through the old index. And an
+unreachable cluster **defers** instead of throwing, so the app still boots and serves writes; the
+next sweep retries the ensure.
 
 The same property answers "the app booted but migrations were not run": creation happens on boot
 regardless, so the app works with an empty index and returns no results until a reindex job fills
@@ -1560,9 +1646,9 @@ second whether or not there is work.
 
 ```typescript
 // SearchIndexRegistry.ensure() — idempotent across restarts and instances
-await this.queue.upsertJobScheduler(
-  `sweep:${def.alias}`,
-  { every: 120_000 },                          // every two minutes, per feature
+await this.queue.upsertJobScheduler(       // Redis only: register BEFORE the Elasticsearch-dependent
+  `sweep:${def.alias}`,                    // index ensure, so an instance that booted while the
+  { every: 120_000 },                      // cluster was down still gets swept and retries it
   { name: 'sweep-index', data: { alias: def.alias } },
 );
 
@@ -1578,7 +1664,9 @@ async sweep(job: Job<{ alias: string }>): Promise<void> {
 ```
 
 Why it is right: `upsertJobScheduler` is idempotent, the job lives in Redis and is fetched by one
-worker, and a sweep with nothing to do is one query, not a timer firing forever.
+worker, and a sweep with nothing to do is one query, not a timer firing forever. The scheduler is
+registered before the Elasticsearch-dependent index ensure, so an instance that booted while the
+cluster was down still gets its sweep — which retries the deferred ensure on the next tick.
 
 When a timer is genuinely local to one node — a cache warm-up with no shared state — `@Interval` is
 fine; anything that indexes shared data is not. The per-feature two-minute sweep is also the safety

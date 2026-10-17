@@ -29,15 +29,34 @@ refresh, so a large reindex is orders of magnitude slower than it needs to be.
 
 ```typescript
 // common/search/search.repository.ts (base)
-async bulkIndex(docs: Doc[]): Promise<void> {
+async bulkIndex(docs: Doc[], index: string = this.index): Promise<void> {
   if (!docs.length) return;
-  await this.es.bulk({
+  const res = await this.es.bulk({
     operations: docs.flatMap((d) => [
-      { index: { _index: this.index, _id: d.id } },
+      { index: { _index: index, _id: d.id } }, // the target index, not necessarily the alias
       d,
     ]),
     refresh: false, // never refresh per batch
   });
+  this.assertBulkClean(res, docs); // HTTP 200 does not mean every document landed
+}
+
+// a partial bulk is a failed bulk: 429-class failures retry, mapping errors fail the job
+private assertBulkClean(res: BulkResponse, docs: Doc[]): void {
+  if (!res.errors) return;
+
+  // `items` is in submitted order, so items[i] belongs to docs[i]
+  const failed = res.items.flatMap((item, i) => {
+    const result = Object.values(item)[0] as { status: number; error?: unknown };
+    return result.error ? [{ doc: docs[i], status: result.status, error: result.error }] : [];
+  });
+
+  const retryable = failed.filter((f) => [429, 502, 503, 504].includes(f.status));
+  const fatal = failed.filter((f) => ![429, 502, 503, 504].includes(f.status));
+
+  // both are plain Error subclasses the queue treats as retryable and non-retryable
+  if (fatal.length) throw new BulkIndexError(fatal); // will fail again on every retry
+  throw new RetryableBulkError(retryable);           // let the queue retry with backoff
 }
 
 // common/search/search-reindex.engine.ts — refresh once, after the loop
@@ -45,7 +64,7 @@ let cursor: string | undefined;
 for (;;) {
   const page = await repo.loadBatch(cursor, 500);
   if (!page.docs.length) break;
-  await repo.bulkIndex(page.docs);
+  await repo.bulkIndex(page.docs, target); // fill the NEW index, not the live alias
   cursor = page.nextCursor;
   if (!cursor) break;
 }
@@ -54,6 +73,11 @@ await this.es.indices.refresh({ index: target }); // one refresh for the whole r
 
 Why it is right: documents travel in batches, `refresh: false` avoids a segment refresh per batch,
 and a single refresh at the end makes the whole index visible at once.
+
+A bulk request answers HTTP 200 even when individual operations fail: the response carries
+`errors: true` and a per-item `error`, so a reindex can look successful while documents are missing
+from the index. `assertBulkClean` reads that response, retries 429-class backpressure and fails the
+job on a mapping error, so a partial index is never mistaken for a complete one.
 
 The `operations` array alternates an action line and a document line; a single `bulkIndex` covers
 both full and incremental paths, so there is one bulk implementation in the codebase.

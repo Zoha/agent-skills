@@ -32,32 +32,48 @@ nothing during the rebuild.
 export const USERS_INDEX = { alias: 'users', version: 'users_v1', mapping: USER_SEARCH_MAPPING } as const;
 // bump version -> 'users_v2' when the mapping changes
 
-// common/search/search-reindex.engine.ts — swap only after the loop completes
+// common/search/search-reindex.engine.ts — fill the new index, then swap after a clean loop
 let cursor: string | undefined;
 for (;;) {
   const page = await repo.loadBatch(cursor, 500);
   if (!page.docs.length) break;
-  await repo.bulkIndex(page.docs);
+  await repo.bulkIndex(page.docs, target); // the versioned index, NOT the live alias
   cursor = page.nextCursor;
-  if (!cursor) break;                    // last page
+  if (!cursor) break;                      // last page
 }
 await this.es.indices.refresh({ index: target });
-await this.swapAlias(alias, target);     // reached only on clean completion
+await this.swapAlias(alias, target);       // reached only when every batch was clean
 
-private async swapAlias(alias: string, target: string): Promise<void> {
-  const current = await this.es.indices.getAlias({ name: alias }, { ignore: [404] });
-  await this.es.indices.updateAliases({
+// infra/elasticsearch/alias.ts — the one place an alias is mutated
+export async function pointAliasAt(
+  es: ElasticsearchService,
+  alias: string,
+  target: string,
+): Promise<void> {
+  const current = await es.indices.getAlias({ name: alias }, { ignore: [404] });
+  const holders = Object.keys(current?.body ?? {});
+  if (holders.length === 1 && holders[0] === target) return;
+
+  await es.indices.updateAliases({
     actions: [
-      ...Object.keys(current?.body ?? {}).map((i) => ({ remove: { index: i, alias } })),
+      ...holders.filter((i) => i !== target).map((index) => ({ remove: { index, alias } })),
       { add: { index: target, alias } },   // one atomic call: never a gap
     ],
   });
 }
+
+// the engine delegates: private swapAlias = (alias, target) => pointAliasAt(this.es, alias, target)
 ```
 
 Why it is right: the new index is filled completely before the alias points at it, the swap is a
 single atomic cluster-state update, and if the reindex throws the alias still points at the old
 index, so search keeps working.
+
+The loop writes to `target`, not to `this.index`: `this.index` is the alias, which still resolves to
+the **old** index while the reindex runs, so writing through it would fill the live index and then
+publish an empty new one. `pointAliasAt` is the single alias mutator — `ensureIndex` uses it only
+when no version holds the alias yet (see `sync-idempotent-index-creation`), and this rule uses it to
+swap.
 
 Triggers are one worker: a CLI command for a deliberate migration, a boot-time enqueue when the
 current index is empty, and a nightly reconcile. The alias swap must never run on the enqueue path.

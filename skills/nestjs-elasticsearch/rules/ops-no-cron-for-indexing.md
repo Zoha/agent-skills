@@ -34,9 +34,9 @@ second whether or not there is work.
 
 ```typescript
 // SearchIndexRegistry.ensure() — idempotent across restarts and instances
-await this.queue.upsertJobScheduler(
-  `sweep:${def.alias}`,
-  { every: 120_000 },                          // every two minutes, per feature
+await this.queue.upsertJobScheduler(       // Redis only: register BEFORE the Elasticsearch-dependent
+  `sweep:${def.alias}`,                    // index ensure, so an instance that booted while the
+  { every: 120_000 },                      // cluster was down still gets swept and retries it
   { name: 'sweep-index', data: { alias: def.alias } },
 );
 
@@ -52,7 +52,9 @@ async sweep(job: Job<{ alias: string }>): Promise<void> {
 ```
 
 Why it is right: `upsertJobScheduler` is idempotent, the job lives in Redis and is fetched by one
-worker, and a sweep with nothing to do is one query, not a timer firing forever.
+worker, and a sweep with nothing to do is one query, not a timer firing forever. The scheduler is
+registered before the Elasticsearch-dependent index ensure, so an instance that booted while the
+cluster was down still gets its sweep — which retries the deferred ensure on the next tick.
 
 When a timer is genuinely local to one node — a cache warm-up with no shared state — `@Interval` is
 fine; anything that indexes shared data is not. The per-feature two-minute sweep is also the safety

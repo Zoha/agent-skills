@@ -52,7 +52,7 @@ export abstract class SearchRepository<Doc extends { id: string }> {
   async enqueueIndex(id: string): Promise<void> { /* jobId dedupe + delay */ }
   async enqueueMany(ids: string[]): Promise<void> { /* one batched job */ }
   async deleteOne(id: string): Promise<void> { /* immediate delete */ }
-  async bulkIndex(docs: Doc[]): Promise<void> { /* one _bulk */ }
+  async bulkIndex(docs: Doc[], index?: string): Promise<void> { /* one _bulk; defaults to the alias */ }
   async searchIds(query: object, sort: object[], limit = 20, cursor?: string) { /* _source:false */ }
 
   abstract loadByIds(ids: string[]): Promise<Doc[]>;
@@ -79,5 +79,9 @@ export class UsersSearchRepository extends SearchRepository<UserSearchDocument> 
 
 Why it is right: the pipeline exists once, the shared processor can drive any feature through the
 base contract, and a feature is a mapper plus a query.
+
+`bulkIndex` takes an optional target index because a versioned reindex must fill the **new** index,
+never the alias the cluster is still serving — writing to the alias would fill the old index and
+then publish an empty one (see `sync-full-reindex-alias-swap`).
 
 Reference: [NestJS Custom Providers](https://docs.nestjs.com/fundamentals/custom-providers) | [NestJS MongoDB](https://docs.nestjs.com/techniques/mongodb)

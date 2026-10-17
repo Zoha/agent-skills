@@ -72,4 +72,8 @@ repository for the shared processor, and neither `AppModule` nor infra knows a f
 The registry stores `alias -> { definition, repository }`, which is what lets the single shared
 reindex processor resolve a feature's repository without importing the feature.
 
+`register` runs before `ensure` so the shared processor can resolve the alias the moment it starts.
+`ensure` is the network call, and it must never abort bootstrap: an unreachable cluster defers to
+the next sweep, while a rejected mapping still fails loudly (see `sync-idempotent-index-creation`).
+
 Reference: [NestJS Modules](https://docs.nestjs.com/modules) | [NestJS Dynamic Modules](https://docs.nestjs.com/fundamentals/dynamic-modules)
