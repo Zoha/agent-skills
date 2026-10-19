@@ -1,0 +1,29 @@
+{
+  "title": "NestJS GraphQL Rate Limiting",
+  "version": "1.0.0",
+  "organization": "NestJS GraphQL Rate Limiting",
+  "author": "Zoha",
+  "license": "MIT",
+  "date": "October 2026",
+  "abstract": "Layered rate-limiting and demand-control guide for NestJS GraphQL (code-first) applications, designed for AI agents and LLMs. Covers the one-time wiring (a global ThrottlerModule, the GraphQL-aware guard, a shared storage, one kill switch, fail-open behaviour, file placement), how to choose the limit unit (per operation rather than per HTTP POST, cost- or complexity-based), depth and cost control (depth-limit and query-complexity validation rules, self-referential depth, breadth and alias caps, introspection and persisted queries), field-level control (per-field cost weights, list multipliers, hot-field budgets), the declarative decorator surface (@RateLimit/@SkipRateLimit/@RateLimitCost and named windows), client identity (verified user over API key over tenant over IP, real client IP behind Cloudflare and other proxies, anonymous fallback), edge/Cloudflare deployment (defense in depth, CF-Connecting-IP trust, Cloudflare rate-limiting rules and the Workers Rate Limiting binding, Durable Objects versus KV for exact counters), error and observability shape (GraphQL 429 errors with extensions, RateLimit and Retry-After headers, metrics and a per-request trace), testing on outcomes with an in-memory store and frozen time, and the driver/version reality across Express, Fastify/Mercurius and Apollo v4/v5.",
+  "references": [
+    "https://docs.nestjs.com/security/rate-limiting",
+    "https://docs.nestjs.com/graphql/resolvers",
+    "https://docs.nestjs.com/graphql/other-features",
+    "https://github.com/nestjs/throttler",
+    "https://www.npmjs.com/package/@nest-lab/throttler-storage-redis",
+    "https://www.npmjs.com/package/graphql-depth-limit",
+    "https://github.com/graphile/depth-limit",
+    "https://github.com/slicknode/graphql-query-complexity",
+    "https://www.apollographql.com/docs/apollo-server/",
+    "https://escape.tech/graphql-armor/",
+    "https://graphql.org/learn/performance/",
+    "https://expressjs.com/en/guide/behind-proxies.html",
+    "https://developers.cloudflare.com/waf/rate-limiting-rules/",
+    "https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/",
+    "https://developers.cloudflare.com/durable-objects/",
+    "https://developers.cloudflare.com/fundamentals/reference/http-headers/",
+    "https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After",
+    "https://redis.io/commands/incr"
+  ]
+}

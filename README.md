@@ -10,8 +10,9 @@ A structured repository of agent skills (rule-based coding guidelines) with a bu
 | `nestjs-graphql-structure` | File placement and anatomy for a feature-first, code-first GraphQL app, plus module-resolution rules. |
 | `nestjs-elasticsearch` | Elasticsearch-backed search: index ownership, sync and reindex, ID-only queries with MongoDB hydration, cursor pagination, the optional-backend seam. |
 | `nestjs-graphql-swr-caching` | Stale-while-revalidate caching of GraphQL reads: module wiring, the five knobs, leak safety, tag invalidation, observability, driver reality. |
+| `nestjs-graphql-rate-limiting` | Layered GraphQL demand control: per-operation and cost-based limits, depth/complexity ceilings, per-field budgets, decorators, real client IP behind Cloudflare and other proxies, edge/Workers enforcement, GraphQL error/header contract, and deterministic testing. |
 
-The last three cross-reference `nestjs-best-practices` for behavioural depth.
+Every skill except `nestjs-best-practices` cross-references it for behavioural depth; the GraphQL skills cross-reference each other for structure, caching and demand control.
 
 ## Structure
 
